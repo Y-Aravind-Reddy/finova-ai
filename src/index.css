@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --soft-black: #121212;
+    --graphite: #262626;
+    --slate-charcoal: #3A3A3A;
+    --primary-gold: #D4A017;
+    --copper: #B87333;
+    --champagne: #E6C78B;
+    --warm-ivory: #FAF7F0;
+    --soft-cream: #F3EBDD;
+    --muted-gray: #9CA3AF;
+    --dark-text: #1A1A1A;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #121212;
+    color: #FAF7F0;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, .font-cinzel {
+    font-family: 'Cinzel', serif;
+  }
+
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom Luxury Gold & Graphite Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #121212;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3A3A3A;
+  border-radius: 9999px;
+  border: 1px solid #262626;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #D4A017;
+}
+
+/* Luxury 3D Perspective & Shadows */
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.perspective-1200 {
+  perspective: 1200px;
+}
+
+.transform-style-3d {
+  transform-style: preserve-3d;
+}
+
+.gold-glow {
+  box-shadow: 0 0 25px rgba(212, 160, 23, 0.25);
+}
+
+.gold-glow-lg {
+  box-shadow: 0 0 40px rgba(245, 197, 66, 0.35);
+}
+
+.gold-glow-subtle {
+  box-shadow: 0 8px 32px 0 rgba(107, 62, 0, 0.22);
+}
+
+.gold-border-gradient {
+  border-image: linear-gradient(135deg, #F5C542, #D4A017, #6B3E00) 1;
+}
+
+.gold-metallic-text {
+  background: linear-gradient(135deg, #FAF7F0 0%, #E6C78B 35%, #D4A017 70%, #B87333 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gold-gradient-bg {
+  background: linear-gradient(135deg, #D4A017 0%, #E6C78B 50%, #D4A017 100%);
+}
+
+.copper-gradient-bg {
+  background: linear-gradient(135deg, #B87333 0%, #D4A017 50%, #B87333 100%);
+}
+
+.bronze-gradient-bg {
+  background: linear-gradient(135deg, #262626 0%, #3A3A3A 50%, #121212 100%);
+}
+
+/* Glassmorphism Classes */
+.glass-gold-dark {
+  background: rgba(38, 38, 38, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(212, 160, 23, 0.25);
+}
+
+.glass-gold-cream {
+  background: rgba(243, 235, 221, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(212, 160, 23, 0.35);
+}

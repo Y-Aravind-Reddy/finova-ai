@@ -1,0 +1,6 @@
+{
+  "name": "Finova AI - Luxury Enterprise FinTech Platform",
+  "description": "Finova AI: Data. Intelligence. Better Decisions. Luxury enterprise FinTech analytics platform featuring Bloomberg and Goldman Sachs-grade 3D financial intelligence, role-based governance, and real-time fraud monitoring.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
