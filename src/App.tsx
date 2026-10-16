@@ -638,7 +638,7 @@ export default function App() {
         case '/admin/transaction-classification':
           return <TransactionClassificationPage />;
         case '/admin/kyc-verification':
-          return <KycVerificationPage />;
+          return <KycVerificationPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
         case '/admin/fraud-aml':
           return <FraudAmlPage />;
         case '/admin/case-management':
@@ -670,13 +670,13 @@ export default function App() {
             />
           );
         case '/finance/transaction-analytics':
-          return <FinanceTransactionAnalyticsPage />;
+          return <FinanceTransactionAnalyticsPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
         case '/finance/fraud-detection':
-          return <FinanceFraudDetectionPage />;
+          return <FinanceFraudDetectionPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
         case '/finance/aml-monitoring':
           return <FinanceAmlMonitoringPage />;
         case '/finance/kyc-verification':
-          return <KycVerificationPage />;
+          return <KycVerificationPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
         case '/finance/risk-scoring':
           return <FinanceRiskScoringPage />;
         case '/finance/customer-financial-insights':
@@ -721,7 +721,7 @@ export default function App() {
             />
           );
         case '/support/tickets':
-          return <SupportTicketsPage />;
+          return <SupportTicketsPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
         case '/support/customer-queries':
           return <SupportCustomerQueriesPage />;
         case '/support/complaint-resolution':
@@ -773,9 +773,9 @@ export default function App() {
         case '/customer/cards':
           return <CustomerCardsView customerName={currentUser.name} />;
         case '/customer/kyc':
-          return <CustomerKycPage />;
+          return <CustomerKycPage tenantId={currentUser?.tenantId} onNavigateSection={(route) => navigateTo(route)} />;
         case '/customer/documents':
-          return <CustomerDocumentsPage />;
+          return <CustomerDocumentsPage tenantId={currentUser?.tenantId} />;
         case '/customer/ai-assistant':
           return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} />;
         case '/customer/support':

@@ -164,3 +164,29 @@ export async function checkSupabaseConnection(): Promise<ConnectionStatus> {
     };
   }
 }
+
+/**
+ * Initiates Google OAuth with Supabase Auth
+ */
+export async function signInWithGoogleOAuth(): Promise<{ url?: string; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    return { error: 'Supabase client is not configured with active credentials.' };
+  }
+  try {
+    const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+      },
+    });
+    if (error) {
+      return { error: error.message };
+    }
+    return { url: data?.url || undefined };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { error: msg };
+  }
+}
+

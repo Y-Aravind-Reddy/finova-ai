@@ -6,6 +6,7 @@ import {
   UserRole,
 } from '../../data/finovaDatasets';
 import { getStoredTenants, getTenantById } from '../../data/tenantStore';
+import { saveProfileToDb } from '../../services/finovaDatabase';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
@@ -122,13 +123,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         alert('Governance Violation: Cannot edit Super Admin accounts.');
         return;
       }
+      saveProfileToDb({ ...editingUser, ...userData, tenantId });
       const updated = users.map((u) =>
-        u.id === editingUser.id ? ({ ...u, ...userData, tenantId, authSource: 'supabase' } as UserAccount) : u
+        u.id === editingUser.id ? ({ ...u, ...userData, tenantId, authSource: editingUser.authSource } as UserAccount) : u
       );
       onUpdateUsers(updated);
     } else {
+      const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
       const newUser: UserAccount = {
-        id: `USR-${Math.floor(1000 + Math.random() * 9000)}`,
+        id: newId,
         name: userData.name || 'New Staff',
         email: userData.email || '',
         role: userData.role || 'CUSTOMER',
@@ -142,8 +145,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         tenantId,
         tenantName: companyName,
         notes: userData.notes || `Created via ${companyName} Admin Operations Center`,
-        authSource: 'supabase',
+        authSource: 'local',
       };
+      saveProfileToDb(newUser);
       onUpdateUsers([newUser, ...users]);
     }
     setEditingUser(null);

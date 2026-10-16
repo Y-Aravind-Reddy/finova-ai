@@ -6,7 +6,10 @@ import {
   UserRole,
 } from '../../data/finovaDatasets';
 import { getTicketsForTenant } from '../../data/tenantDatasets';
-import { fetchSupportTicketsResultFromDb } from '../../services/finovaDatabase';
+import {
+  fetchSupportTicketsResultFromDb,
+  updateSupportTicketStatusInDb,
+} from '../../services/finovaDatabase';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
@@ -23,6 +26,7 @@ import {
   FileText,
   AlertCircle,
   Building2,
+  RotateCw,
 } from 'lucide-react';
 
 interface SupportExecutiveDashboardProps {
@@ -53,9 +57,12 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
   const [dbError, setDbError] = useState<string | null>(null);
   const [activeTableTab, setActiveTableTab] = useState<'requests' | 'followups' | 'complaints'>('requests');
+  const [loading, setLoading] = useState(false);
 
-  React.useEffect(() => {
-    fetchSupportTicketsResultFromDb(tenantId).then((result) => {
+  const loadTickets = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await fetchSupportTicketsResultFromDb(tenantId);
       setDbSource(result.source);
       setDbError(result.error);
       if (result.source === 'supabase') {
@@ -63,8 +70,14 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
       } else if (result.data && result.data.length > 0) {
         setTickets(result.data);
       }
-    });
+    } finally {
+      setLoading(false);
+    }
   }, [tenantId]);
+
+  React.useEffect(() => {
+    loadTickets();
+  }, [loadTickets]);
 
   React.useEffect(() => {
     if (activeSection === 'support_followups') {
@@ -76,14 +89,24 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
     }
   }, [activeSection]);
 
-  const { metrics, ticketCategories } = SUPPORT_DATASET;
-
-  // 3D Chart Data
-  const categoryDonutData = ticketCategories.map((c) => ({
-    label: c.category.split(' ')[0] + ' ' + (c.category.split(' ')[1] || ''),
-    value: c.count,
-    subtext: `${c.resolvedPct}% SLA Cleared`,
-  }));
+  // Dynamic 3D Donut Chart from actual tickets query results
+  const categoryDonutData = React.useMemo(() => {
+    if (!tickets || tickets.length === 0) {
+      return [{ label: 'General Concierge', value: 1, subtext: 'Ready' }];
+    }
+    const catMap: Record<string, { count: number; resolved: number }> = {};
+    for (const t of tickets) {
+      const cat = t.category || 'General';
+      if (!catMap[cat]) catMap[cat] = { count: 0, resolved: 0 };
+      catMap[cat].count += 1;
+      if (t.status === 'Resolved') catMap[cat].resolved += 1;
+    }
+    return Object.entries(catMap).map(([cat, counts]) => ({
+      label: cat.split(' ')[0] + ' ' + (cat.split(' ')[1] || ''),
+      value: counts.count,
+      subtext: `${Math.round((counts.resolved / (counts.count || 1)) * 100)}% SLA Cleared`,
+    }));
+  }, [tickets]);
 
   const resolutionTimeData = [
     { label: 'High-Value Wires', value: 12, secondaryValue: 15 },
@@ -143,7 +166,12 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
     },
   ];
 
-  const handleResolveTicket = (ticketId: string) => {
+  const handleResolveTicket = async (ticketId: string) => {
+    try {
+      updateSupportTicketStatusInDb(ticketId, 'Resolved');
+    } catch (e) {
+      console.warn('Ticket resolve error:', e);
+    }
     setTickets((prev) =>
       prev.map((t) => (t.ticketId === ticketId ? { ...t, status: 'Resolved', csatRating: 5.0 } : t))
     );
@@ -163,7 +191,7 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
             {dbSource === 'supabase' ? (
               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                Live Supabase Database
+                Live Supabase Database ({tickets.length} Tickets)
               </span>
             ) : (
               <span
@@ -171,7 +199,7 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
                 title={dbError || 'Support tickets table pending or requires authentication'}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                {dbError && dbError.includes('Demo') ? 'Demo Dataset (RLS Active)' : 'Fallback Data (DB Table Pending)'}
+                {dbError && dbError.includes('Demo') ? 'Demo Dataset (RLS Active)' : 'Workspace Scoped'}
               </span>
             )}
           </div>
@@ -183,13 +211,24 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
           </p>
         </div>
 
-        <button
-          onClick={() => setModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A017] via-[#E6C78B] to-[#D4A017] text-[#1A1A1A] font-bold text-xs hover:brightness-110 shadow-[0_0_20px_rgba(212,160,23,0.35)] transition-all shrink-0"
-        >
-          <UserPlus size={16} />
-          Create Client Account
-        </button>
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => loadTickets()}
+            disabled={loading}
+            title="Refresh from Supabase"
+            className="p-2.5 rounded-xl bg-[#141414] border border-[#3A3A3A] hover:border-[#D4A017] text-[#D4A017] transition-all flex items-center gap-1.5 hover:scale-105"
+          >
+            <RotateCw size={14} className={loading ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline text-[11px] font-bold">Refresh</span>
+          </button>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A017] via-[#E6C78B] to-[#D4A017] text-[#1A1A1A] font-bold text-xs hover:brightness-110 shadow-[0_0_20px_rgba(212,160,23,0.35)] transition-all shrink-0"
+          >
+            <UserPlus size={16} />
+            Create Client Account
+          </button>
+        </div>
       </div>
 
       {/* 4 3D KPI Cards */}

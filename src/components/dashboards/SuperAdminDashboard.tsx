@@ -13,7 +13,7 @@ import {
   getPlatformSaaSMetrics,
   getTenantById,
 } from '../../data/tenantStore';
-import { deleteProfileFromDb } from '../../services/finovaDatabase';
+import { deleteProfileFromDb, saveProfileToDb } from '../../services/finovaDatabase';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
@@ -128,14 +128,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   // User CRUD
   const handleSaveUser = (userData: Partial<UserAccount>) => {
     if (editingUser) {
+      saveProfileToDb({ ...editingUser, ...userData });
       const updated = users.map((u) =>
-        u.id === editingUser.id ? ({ ...u, ...userData, authSource: 'supabase' } as UserAccount) : u
+        u.id === editingUser.id ? ({ ...u, ...userData, authSource: editingUser.authSource } as UserAccount) : u
       );
       onUpdateUsers(updated);
     } else {
       const targetTenant = getTenantById(userData.tenantId);
+      const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
       const newUser: UserAccount = {
-        id: `USR-${Math.floor(1000 + Math.random() * 9000)}`,
+        id: newId,
         name: userData.name || 'New Staff',
         email: userData.email || '',
         role: userData.role || 'ADMIN',
@@ -149,8 +151,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         tenantId: userData.tenantId || 'tenant_apex_bank',
         tenantName: targetTenant?.name || 'Apex Global Bank',
         notes: userData.notes || 'Created via Super Admin SaaS Panel',
-        authSource: 'supabase',
+        authSource: 'local',
       };
+      saveProfileToDb(newUser);
       onUpdateUsers([newUser, ...users]);
     }
     setEditingUser(null);

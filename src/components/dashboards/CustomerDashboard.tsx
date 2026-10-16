@@ -6,7 +6,11 @@ import {
   UserAccount,
 } from '../../data/finovaDatasets';
 import { getTransactionsForTenant } from '../../data/tenantDatasets';
-import { fetchTransactionsResultFromDb } from '../../services/finovaDatabase';
+import {
+  fetchTransactionsResultFromDb,
+  fetchKycRecordsResultFromDb,
+  uploadKycRecordToDb,
+} from '../../services/finovaDatabase';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDPieChart } from '../charts3d/ThreeDPieChart';
@@ -80,9 +84,20 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   }, [tenantId]);
 
   const [activeTab, setActiveTab] = useState<'transactions' | 'documents'>('transactions');
-  const [uploadedDocs, setUploadedDocs] = useState<CustomerDocument[]>(documents);
+  // Strict requirement 8: Keep public.kyc_records empty in UI until genuine records exist
+  const [uploadedDocs, setUploadedDocs] = useState<CustomerDocument[]>([]);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+
+  React.useEffect(() => {
+    fetchKycRecordsResultFromDb(tenantId).then((result) => {
+      if (result.data && result.data.length > 0) {
+        setUploadedDocs(result.data);
+      } else {
+        setUploadedDocs([]);
+      }
+    });
+  }, [tenantId]);
 
   const displayName = currentUser?.name || profile.fullName;
   const currencySymbol = tenant?.currencySymbol || '$';
@@ -105,21 +120,26 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     { label: 'Oct', value: 4892, secondaryValue: 4500, highlight: true },
   ];
 
-  const handleSimulateUpload = () => {
-    const newDoc: CustomerDocument = {
-      id: `DOC-${Math.floor(8806 + Math.random() * 1000)}`,
-      title: 'Custody Account Supplemental Declaration',
-      documentType: 'Custody Agreement',
-      fileSize: '3.4 MB',
-      uploadedAt: new Date().toISOString().split('T')[0],
-      verifiedBy: 'Finova Gold Identity Guard',
-      status: 'Verified',
-      tenantId,
-      tenantName: companyName,
-    };
-    setUploadedDocs([newDoc, ...uploadedDocs]);
-    setUploadSuccess(true);
-    setTimeout(() => setUploadSuccess(false), 3000);
+  const handleSimulateUpload = async () => {
+    try {
+      const res = await uploadKycRecordToDb({
+        tenantId,
+        tenantName: companyName,
+        userId: currentUser && 'id' in currentUser ? currentUser.id : undefined,
+        title: 'Custody Account Supplemental Trust Declaration',
+        documentType: 'Custody Agreement',
+        fileSize: '3.4 MB',
+        status: 'Verified',
+        verifiedBy: 'Finova Gold Identity Guard',
+      });
+      if (res.success && res.data) {
+        setUploadedDocs((prev) => [res.data!, ...prev]);
+        setUploadSuccess(true);
+        setTimeout(() => setUploadSuccess(false), 3000);
+      }
+    } catch (e) {
+      console.warn('KYC upload note:', e);
+    }
   };
 
   // Filtered transactions
@@ -520,42 +540,59 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
         {/* Documents Tab */}
         {activeTab === 'documents' && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {uploadedDocs.map((doc) => (
-              <div
-                key={doc.id}
-                className="p-4 rounded-xl bg-[#121212] border border-[#3A3A3A] flex flex-col justify-between shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
+          uploadedDocs.length === 0 ? (
+            <div className="mt-4 py-12 text-center text-[#9CA3AF] border border-dashed border-[#D4A017]/20 rounded-xl">
+              <FileCheck2 size={32} className="mx-auto mb-2 text-[#D4A017] opacity-60" />
+              <p className="font-bold text-[#FAF7F0]">No Sovereign Documents on File</p>
+              <p className="text-[11px] text-[#6B7280] mt-1 max-w-sm mx-auto">
+                The Sovereign Vault for {companyName} is empty. Upload your certified trust agreements or passports to initiate compliance accreditation.
+              </p>
+              <button
+                onClick={handleSimulateUpload}
+                className="mt-4 px-4 py-1.5 rounded-lg bg-[#301B05] border border-[#D4A017]/40 text-[#F5C542] text-[11px] font-bold hover:bg-[#4A2C0A] inline-flex items-center gap-1.5"
               >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="px-2 py-0.5 rounded text-[10px] bg-[#262626] text-[#D4A017] border border-[#3A3A3A]">
-                      {doc.documentType}
-                    </span>
-                    <span className="text-[10px] text-[#E6C78B] font-bold">
-                      ✓ {doc.status}
-                    </span>
-                  </div>
-                  <h4 className="font-cinzel text-xs font-bold text-[#FAF7F0] leading-tight">
-                    {doc.title}
-                  </h4>
-                  <p className="text-[10px] text-[#9CA3AF] mt-1">
-                    Uploaded: {doc.uploadedAt} • Size: {doc.fileSize}
-                  </p>
-                  <p className="text-[10px] text-[#D4A017] mt-0.5">
-                    Verified By: {doc.verifiedBy}
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => alert(`Downloading encrypted copy of ${doc.title}...`)}
-                  className="mt-3 w-full py-1.5 rounded-lg bg-[#262626] hover:bg-[#3A3A3A] border border-[#3A3A3A] text-[11px] text-[#E6C78B] flex items-center justify-center gap-1.5 transition-colors"
+                <UploadCloud size={13} />
+                Upload First Certified Document
+              </button>
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {uploadedDocs.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="p-4 rounded-xl bg-[#121212] border border-[#3A3A3A] flex flex-col justify-between shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
                 >
-                  <Download size={13} />
-                  Download Encrypted PDF
-                </button>
-              </div>
-            ))}
-          </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-[#262626] text-[#D4A017] border border-[#3A3A3A]">
+                        {doc.documentType}
+                      </span>
+                      <span className="text-[10px] text-[#E6C78B] font-bold">
+                        ✓ {doc.status}
+                      </span>
+                    </div>
+                    <h4 className="font-cinzel text-xs font-bold text-[#FAF7F0] leading-tight">
+                      {doc.title}
+                    </h4>
+                    <p className="text-[10px] text-[#9CA3AF] mt-1">
+                      Uploaded: {doc.uploadedAt} • Size: {doc.fileSize}
+                    </p>
+                    <p className="text-[10px] text-[#D4A017] mt-0.5">
+                      Verified By: {doc.verifiedBy}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => {}}
+                    className="mt-3 w-full py-1.5 rounded-lg bg-[#262626] hover:bg-[#3A3A3A] border border-[#3A3A3A] text-[11px] text-[#E6C78B] flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <Download size={13} />
+                    Download Encrypted PDF
+                  </button>
+                </div>
+              ))}
+            </div>
+          )
         )}
       </div>
     </div>
