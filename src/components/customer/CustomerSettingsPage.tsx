@@ -1,9 +1,14 @@
 import React, { useState } from 'react';
 import { Lock, Shield, Key, Smartphone, Save, Check } from 'lucide-react';
-import { CUSTOMER_DATASET } from '../../data/finovaDatasets';
+import { UserAccount } from '../../data/finovaDatasets';
+import { getStoredSession } from '../../data/authStore';
 
-export const CustomerSettingsPage: React.FC = () => {
-  const profile = CUSTOMER_DATASET.profile;
+interface CustomerSettingsPageProps {
+  currentUser?: UserAccount;
+}
+
+export const CustomerSettingsPage: React.FC<CustomerSettingsPageProps> = ({ currentUser: propUser }) => {
+  const activeUser = propUser || getStoredSession()?.user;
   const [biometricEnabled, setBiometricEnabled] = useState(true);
   const [smsAlerts, setSmsAlerts] = useState(true);
   const [hardwareKey, setHardwareKey] = useState(true);
@@ -22,7 +27,7 @@ export const CustomerSettingsPage: React.FC = () => {
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#D4A017] text-[#111111] uppercase tracking-wider">
               Enclave Security
             </span>
-            <span className="text-xs text-[#D4A017]">Client #{profile.accountNumber}</span>
+            <span className="text-xs text-[#D4A017]">{activeUser?.email || 'Verified Account'}</span>
           </div>
           <h1 className="font-cinzel text-xl sm:text-2xl md:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017] mt-1">
             Account & Security Settings
@@ -76,7 +81,7 @@ export const CustomerSettingsPage: React.FC = () => {
           <div>
             <span className="font-bold text-[#FFF8E7] block">Encrypted Wire SMS Bulletins</span>
             <span className="text-[11px] text-[#6B7280]">
-              Instant text notification to {profile.phone || '+41 79 555 8849'} on wire releases.
+              Instant text notification to {activeUser?.phone || '+1 (212) 555-0100'} on wire releases.
             </span>
           </div>
           <input

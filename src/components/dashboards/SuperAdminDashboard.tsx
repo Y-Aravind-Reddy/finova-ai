@@ -1,8 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  ADMIN_DATASET,
-  FINANCE_ANALYST_DATASET,
-  SUPPORT_DATASET,
   UserAccount,
   UserRole,
 } from '../../data/finovaDatasets';
@@ -13,7 +10,13 @@ import {
   getPlatformSaaSMetrics,
   getTenantById,
 } from '../../data/tenantStore';
-import { deleteProfileFromDb, saveProfileToDb } from '../../services/finovaDatabase';
+import {
+  deleteProfileFromDb,
+  saveProfileToDb,
+  fetchTenantWorkspacesResultFromDb,
+  fetchFraudCasesResultFromDb,
+  fetchTransactionsResultFromDb,
+} from '../../services/finovaDatabase';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
@@ -68,12 +71,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
   const [filterRole, setFilterRole] = useState<string>('ALL');
 
-  React.useEffect(() => {
-    if (onRefreshUsers) {
-      onRefreshUsers();
-    }
-  }, [onRefreshUsers]);
-
   // Multi-Tenant Inspector State
   const [tenants, setTenants] = useState<TenantWorkspace[]>(getStoredTenants());
   const [internalTenantId, setInternalTenantId] = useState<string>('ALL');
@@ -81,6 +78,43 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
   const currentInspectedTenant = activeTenantId !== 'ALL' ? getTenantById(activeTenantId) : undefined;
   const saasMetrics = getPlatformSaaSMetrics();
+
+  // Real Database Metrics State
+  const [dbFraudPrevented, setDbFraudPrevented] = useState<number>(0);
+  const [dbFraudCaseCount, setDbFraudCaseCount] = useState<number>(0);
+  const [dbLoading, setDbLoading] = useState<boolean>(false);
+
+  const loadSuperAdminData = useCallback(async () => {
+    setDbLoading(true);
+    try {
+      const [wRes, fRes] = await Promise.all([
+        fetchTenantWorkspacesResultFromDb(),
+        fetchFraudCasesResultFromDb('ALL'),
+      ]);
+
+      if (wRes.data && wRes.data.length > 0) {
+        setTenants(wRes.data);
+      }
+
+      const fraudData = fRes.data || [];
+      const prevented = fraudData
+        .filter((f) => f.status === 'Frozen Escrow' || f.status === 'Flagged')
+        .reduce((acc, f) => acc + (Number(f.amount) || 0), 0);
+      setDbFraudPrevented(prevented);
+      setDbFraudCaseCount(fraudData.length);
+    } catch (e) {
+      console.warn('Super Admin DB query note:', e);
+    } finally {
+      setDbLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSuperAdminData();
+    if (onRefreshUsers) {
+      onRefreshUsers();
+    }
+  }, [loadSuperAdminData, onRefreshUsers]);
 
   // Count live Supabase records vs demo
   const liveCount = users.filter((u) => u.authSource === 'supabase').length;
@@ -97,12 +131,22 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     }
   };
 
-  // 3D Chart Data
-  const roleDonutData = ADMIN_DATASET.roleDistribution.map((r) => ({
-    label: r.role.replace(' (Private Wealth)', ''),
-    value: r.count,
-    subtext: `${r.pct}% share`,
-  }));
+  // 3D Role Distribution Chart dynamically calculated from real users array
+  const roleDonutData = React.useMemo(() => {
+    if (users.length === 0) {
+      return [{ label: 'No Users', value: 1, subtext: '0 identities' }];
+    }
+    const rMap: Record<string, number> = {};
+    for (const u of users) {
+      const r = u.role || 'CUSTOMER';
+      rMap[r] = (rMap[r] || 0) + 1;
+    }
+    return Object.entries(rMap).map(([role, count]) => ({
+      label: role.replace('_', ' '),
+      value: count,
+      subtext: `${Math.round((count / users.length) * 100)}% share`,
+    }));
+  }, [users]);
 
   const userGrowthData = [
     { label: 'Q1 24', value: 82400 },
@@ -279,18 +323,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <ThreeDKpiCard
           title="Active Workspaces"
-          value={`${saasMetrics.activeTenants} / ${saasMetrics.totalTenants}`}
+          value={`${tenants.filter((t) => t.status === 'Active').length} / ${tenants.length}`}
           subValue="Banks & NBFCs"
           change="+1 Q4"
           trend="up"
           tag="Multi-Tenant"
           icon={<Building2 size={20} />}
-          sparkline={[1, 2, 2, 3, 3, 4, 4]}
+          sparkline={[1, 2, 2, 3, 3, 4, tenants.length]}
         />
         <ThreeDKpiCard
           title="Platform MRR"
-          value={`$${(saasMetrics.totalMrr / 1000).toFixed(1)}k`}
-          subValue={`ARR: $${(saasMetrics.totalArr / 1000000).toFixed(2)}M`}
+          value={`$${(tenants.reduce((acc, t) => acc + (t.mrr || 0), 0) / 1000).toFixed(1)}k`}
+          subValue={`ARR: $${((tenants.reduce((acc, t) => acc + (t.mrr || 0), 0) * 12) / 1000000).toFixed(2)}M`}
           change="+28.4%"
           trend="up"
           tag="SaaS Revenue"
@@ -310,23 +354,23 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         />
         <ThreeDKpiCard
           title="Fraud Prevented"
-          value="$4.82M"
-          subValue="142 Cases Stopped"
-          change="99.88% Safe"
+          value={`$${dbFraudPrevented >= 1000000 ? (dbFraudPrevented / 1000000).toFixed(2) + 'M' : dbFraudPrevented.toLocaleString()}`}
+          subValue={`${dbFraudCaseCount} Cases in Database`}
+          change={dbFraudPrevented > 0 ? 'Surveillance Active' : 'Clean Ledger'}
           trend="up"
           tag="Sentinel Engine"
           icon={<ShieldAlert size={20} />}
-          sparkline={[40, 32, 28, 22, 18, 14, 11]}
+          sparkline={dbFraudPrevented > 0 ? [10, 20, 25, 30] : [0, 0, 0, 0]}
         />
         <ThreeDKpiCard
           title="Enrolled Users"
-          value={saasMetrics.aggregateUsers.toLocaleString()}
-          subValue="Across 4 Companies"
-          change="99.2% Active"
+          value={users.length.toLocaleString()}
+          subValue={`${liveCount} Live DB Accounts`}
+          change="Real-time"
           trend="up"
           tag="Identities"
           icon={<Users size={20} />}
-          sparkline={[120, 140, 160, 175, 190, 205, 213]}
+          sparkline={[Math.max(1, users.length - 2), Math.max(1, users.length - 1), users.length]}
         />
         <ThreeDKpiCard
           title="Platform SLA"

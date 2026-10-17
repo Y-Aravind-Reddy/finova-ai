@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  SUPPORT_DATASET,
   SupportTicket,
   UserAccount,
   UserRole,
@@ -51,9 +50,7 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
   const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
 
   // Load tenant-isolated tickets
-  const [tickets, setTickets] = useState<SupportTicket[]>(() =>
-    getTicketsForTenant(tenantId)
-  );
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
   const [dbError, setDbError] = useState<string | null>(null);
   const [activeTableTab, setActiveTableTab] = useState<'requests' | 'followups' | 'complaints'>('requests');
@@ -65,11 +62,7 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
       const result = await fetchSupportTicketsResultFromDb(tenantId);
       setDbSource(result.source);
       setDbError(result.error);
-      if (result.source === 'supabase') {
-        setTickets(result.data);
-      } else if (result.data && result.data.length > 0) {
-        setTickets(result.data);
-      }
+      setTickets(result.data);
     } finally {
       setLoading(false);
     }
@@ -92,7 +85,7 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
   // Dynamic 3D Donut Chart from actual tickets query results
   const categoryDonutData = React.useMemo(() => {
     if (!tickets || tickets.length === 0) {
-      return [{ label: 'General Concierge', value: 1, subtext: 'Ready' }];
+      return [{ label: 'No Tickets Logged', value: 1, subtext: 'Ready' }];
     }
     const catMap: Record<string, { count: number; resolved: number }> = {};
     for (const t of tickets) {
@@ -108,63 +101,72 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
     }));
   }, [tickets]);
 
-  const resolutionTimeData = [
-    { label: 'High-Value Wires', value: 12, secondaryValue: 15 },
-    { label: 'Card Issuance', value: 14, secondaryValue: 20 },
-    { label: 'KYC Verification', value: 22, secondaryValue: 30 },
-    { label: 'Tax Document', value: 18, secondaryValue: 25 },
-    { label: 'Disputes', value: 26, secondaryValue: 35, highlight: true },
-  ];
+  const resolutionTimeData = React.useMemo(() => {
+    if (!tickets || tickets.length === 0) {
+      return [{ label: 'Current', value: 0, secondaryValue: 0 }];
+    }
+    const catMap: Record<string, { count: number; hours: number }> = {};
+    for (const t of tickets) {
+      const cat = t.category || 'General';
+      if (!catMap[cat]) catMap[cat] = { count: 0, hours: 0 };
+      catMap[cat].count += 1;
+      catMap[cat].hours += (t.hoursOpen || 1);
+    }
+    return Object.entries(catMap).slice(0, 5).map(([cat, val]) => ({
+      label: cat.split(' ')[0],
+      value: Math.round(val.hours / (val.count || 1)),
+      secondaryValue: 4,
+    }));
+  }, [tickets]);
 
-  // Follow-ups queue for this tenant
-  const followUpQueue = [
-    {
-      id: `FOL-${tenantId.slice(7, 10).toUpperCase()}-8821`,
-      client: tenantId === 'tenant_crest_capital' ? 'Elena Rostova' : tenantId === 'tenant_vanguard_wealth' ? 'Lucian Sterling' : 'Harrison Croft',
-      subject: `Courier delivery confirmation of Black Sovereign Card to client residence`,
-      dueDate: 'Today, 14:00 UTC',
-      priority: 'Urgent',
-      status: 'In Transit',
-    },
-    {
-      id: `FOL-${tenantId.slice(7, 10).toUpperCase()}-8822`,
-      client: 'Marcus Aurelius Sterling',
-      subject: 'IRS W-8BEN notarized document resubmission verification check',
-      dueDate: 'Today, 17:30 UTC',
-      priority: 'High',
-      status: 'Awaiting Client',
-    },
-    {
-      id: `FOL-${tenantId.slice(7, 10).toUpperCase()}-8823`,
-      client: 'Victoria Habsburg',
-      subject: `High-value wire dual authorization callback verification (${tenant?.currencySymbol || '$'}1.8M)`,
-      dueDate: 'Tomorrow, 09:00 UTC',
-      priority: 'Urgent',
-      status: 'Callback Scheduled',
-    },
-  ];
+  // Follow-ups queue for this tenant derived from active tickets
+  const followUpQueue = React.useMemo(() => {
+    return tickets
+      .filter((t) => t.status === 'In Progress' || t.status === 'Pending Client' || t.priority === 'Urgent')
+      .map((t) => ({
+        id: `FOL-${t.ticketId}`,
+        client: t.customerName,
+        subject: `${t.category} review for ${t.accountTier}`,
+        dueDate: `${t.slaTargetHours}h SLA Target`,
+        priority: t.priority,
+        status: t.status,
+      }));
+  }, [tickets]);
 
-  // Complaints queue
-  const complaintQueue = [
-    {
-      id: `CMP-${tenantId.slice(7, 10).toUpperCase()}-104`,
-      client: 'Genevieve Dupont',
-      subject: 'Delayed SWIFT GPI notification on Paris real estate escrow release',
-      severity: 'Medium',
-      openedAt: 'Yesterday 16:20',
-      status: 'Under Investigation',
-      assigned: currentUser?.name || 'Claire Montgomery',
-    },
-    {
-      id: `CMP-${tenantId.slice(7, 10).toUpperCase()}-105`,
-      client: 'Kenji Takahashi',
-      subject: 'International roaming dual-factor SMS delay at Tokyo Narita',
-      severity: 'Low',
-      openedAt: '2 days ago',
-      status: 'Resolved via Hardware Key',
-      assigned: currentUser?.name || 'Claire Montgomery',
-    },
-  ];
+  // Complaints / Escalations queue
+  const complaintQueue = React.useMemo(() => {
+    return tickets
+      .filter((t) => t.priority === 'Urgent' || t.priority === 'High')
+      .map((t) => ({
+        id: `CMP-${t.ticketId}`,
+        client: t.customerName,
+        subject: `Priority inquiry: ${t.category}`,
+        severity: t.priority,
+        openedAt: t.openedAt,
+        status: t.status,
+        assigned: t.assignedExecutive,
+      }));
+  }, [tickets]);
+
+  const avgResolutionTime = React.useMemo(() => {
+    const resolved = tickets.filter((t) => t.status === 'Resolved' && t.hoursOpen);
+    if (resolved.length === 0) return 'N/A';
+    const avg = resolved.reduce((acc, t) => acc + (t.hoursOpen || 0), 0) / resolved.length;
+    return `${avg.toFixed(1)} hrs`;
+  }, [tickets]);
+
+  const csatScore = React.useMemo(() => {
+    const rated = tickets.filter((t) => t.csatRating !== undefined && t.csatRating > 0);
+    if (rated.length === 0) return 'N/A';
+    const avg = rated.reduce((acc, t) => acc + (t.csatRating || 0), 0) / rated.length;
+    return `${avg.toFixed(2)} / 5.0`;
+  }, [tickets]);
+
+  const slaCompliancePct = React.useMemo(() => {
+    if (tickets.length === 0) return 'N/A';
+    const compliant = tickets.filter((t) => (t.hoursOpen || 0) <= (t.slaTargetHours || 4)).length;
+    return `${Math.round((compliant / tickets.length) * 100)}%`;
+  }, [tickets]);
 
   const handleResolveTicket = async (ticketId: string) => {
     try {
@@ -245,9 +247,9 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
         />
         <ThreeDKpiCard
           title="Avg Resolution Time"
-          value="18.4 min"
+          value={avgResolutionTime}
           subValue="Target < 30 min SLA"
-          change="-4.2 min"
+          change={tickets.length > 0 ? "Under SLA" : "No Records"}
           trend="up"
           tag="Fast Track"
           variant="gold-accent"
@@ -256,9 +258,9 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
         />
         <ThreeDKpiCard
           title="CSAT Rating"
-          value="4.94 / 5.0"
+          value={csatScore}
           subValue="Client Satisfaction"
-          change="+0.06 pts"
+          change={tickets.length > 0 ? "Audited" : "No Records"}
           trend="up"
           tag="Top Tier"
           icon={<Star size={20} />}
@@ -266,9 +268,9 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
         />
         <ThreeDKpiCard
           title="SLA Compliance"
-          value="99.2%"
+          value={slaCompliancePct}
           subValue="Sovereign Grade"
-          change="Optimal"
+          change={tickets.length > 0 ? "Active" : "No Records"}
           trend="up"
           tag="Compliance"
           icon={<CheckCircle size={20} />}
@@ -283,7 +285,7 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
           subtitle={`Ticket Types Managed for ${companyName}`}
           segments={categoryDonutData}
           centerLabel="Total Tickets"
-          centerValue="3,420"
+          centerValue={`${tickets.length}`}
           height={320}
         />
         <ThreeDColumnChart
@@ -292,7 +294,7 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
           data={resolutionTimeData}
           height={280}
           valuePrefix=""
-          valueSuffix=" min"
+          valueSuffix=" h"
           dualSeries={true}
           primaryLabel="Actual Resolution"
           secondaryLabel="SLA Benchmark"
@@ -358,53 +360,74 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                  {tickets.map((t) => (
-                    <tr key={t.ticketId} className="hover:bg-[#121212]/50 transition-colors">
-                      <td className="py-2.5 font-bold text-[#E6C78B]">{t.ticketId}</td>
-                      <td className="py-2.5">
-                        <p className="font-semibold text-[#FAF7F0]">{t.customerName}</p>
-                        <p className="text-[10px] text-[#9CA3AF]">{t.accountTier}</p>
-                      </td>
-                      <td className="py-2.5 text-[#D4A017]">{t.category}</td>
-                      <td className="py-2.5">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            t.priority === 'Urgent'
-                              ? 'bg-[#121212] text-[#B87333] border border-[#B87333]'
-                              : t.priority === 'High'
-                              ? 'bg-[#121212] text-[#D4A017] border border-[#D4A017]'
-                              : 'bg-[#121212] text-[#9CA3AF] border border-[#3A3A3A]'
-                          }`}
-                        >
-                          {t.priority}
-                        </span>
-                      </td>
-                      <td className="py-2.5">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            t.status === 'Resolved'
-                              ? 'bg-[#121212] text-[#E6C78B] border border-[#D4A017]/40'
-                              : 'bg-[#121212] text-[#FAF7F0] border border-[#3A3A3A]'
-                          }`}
-                        >
-                          {t.status}
-                        </span>
-                      </td>
-                      <td className="py-2.5 text-[11px] text-[#9CA3AF]">{t.assignedExecutive}</td>
-                      <td className="py-2.5 text-right">
-                        {t.status !== 'Resolved' ? (
+                  {tickets.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-[#9CA3AF]">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Headphones size={28} className="text-[#D4A017]" />
+                          <p className="text-sm font-bold text-[#FAF7F0]">No Support Tickets Logged</p>
+                          <p className="text-xs text-[#9CA3AF] max-w-md">
+                            {dbError || `No support tickets found for ${companyName} in public.support_tickets.`}
+                          </p>
                           <button
-                            onClick={() => handleResolveTicket(t.ticketId)}
-                            className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-[#D4A017] to-[#E6C78B] text-[#1A1A1A] font-bold text-[10px] hover:brightness-110 shadow-sm"
+                            onClick={() => loadTickets()}
+                            className="mt-2 px-3 py-1.5 rounded-lg bg-[#121212] border border-[#D4A017] text-[#D4A017] text-xs hover:bg-[#262626] flex items-center gap-1.5"
                           >
-                            Resolve & Sign Off
+                            <RotateCw size={12} className={loading ? 'animate-spin' : ''} />
+                            <span>Retry Query</span>
                           </button>
-                        ) : (
-                          <span className="text-[10px] text-[#E6C78B] font-bold">Resolved (5.0 ★)</span>
-                        )}
+                        </div>
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    tickets.map((t) => (
+                      <tr key={t.ticketId} className="hover:bg-[#121212]/50 transition-colors">
+                        <td className="py-2.5 font-bold text-[#E6C78B]">{t.ticketId}</td>
+                        <td className="py-2.5">
+                          <p className="font-semibold text-[#FAF7F0]">{t.customerName}</p>
+                          <p className="text-[10px] text-[#9CA3AF]">{t.accountTier}</p>
+                        </td>
+                        <td className="py-2.5 text-[#D4A017]">{t.category}</td>
+                        <td className="py-2.5">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              t.priority === 'Urgent'
+                                ? 'bg-[#121212] text-[#B87333] border border-[#B87333]'
+                                : t.priority === 'High'
+                                ? 'bg-[#121212] text-[#D4A017] border border-[#D4A017]'
+                                : 'bg-[#121212] text-[#9CA3AF] border border-[#3A3A3A]'
+                            }`}
+                          >
+                            {t.priority}
+                          </span>
+                        </td>
+                        <td className="py-2.5">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              t.status === 'Resolved'
+                                ? 'bg-[#121212] text-[#E6C78B] border border-[#D4A017]/40'
+                                : 'bg-[#121212] text-[#FAF7F0] border border-[#3A3A3A]'
+                            }`}
+                          >
+                            {t.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 text-[11px] text-[#9CA3AF]">{t.assignedExecutive}</td>
+                        <td className="py-2.5 text-right">
+                          {t.status !== 'Resolved' ? (
+                            <button
+                              onClick={() => handleResolveTicket(t.ticketId)}
+                              className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-[#D4A017] to-[#E6C78B] text-[#1A1A1A] font-bold text-[10px] hover:brightness-110 shadow-sm"
+                            >
+                              Resolve & Sign Off
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-[#E6C78B] font-bold">Resolved (5.0 ★)</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -424,15 +447,23 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                  {followUpQueue.map((f) => (
-                    <tr key={f.id} className="hover:bg-[#121212]/50">
-                      <td className="py-2.5 font-bold text-[#E6C78B]">{f.id}</td>
-                      <td className="py-2.5 font-semibold text-[#FAF7F0]">{f.client}</td>
-                      <td className="py-2.5 text-[#9CA3AF]">{f.subject}</td>
-                      <td className="py-2.5 text-[#D4A017]">{f.dueDate}</td>
-                      <td className="py-2.5 text-right font-bold text-[#E6C78B]">{f.status}</td>
+                  {followUpQueue.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-[#9CA3AF]">
+                        No active follow-up tasks pending in database.
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    followUpQueue.map((f) => (
+                      <tr key={f.id} className="hover:bg-[#121212]/50">
+                        <td className="py-2.5 font-bold text-[#E6C78B]">{f.id}</td>
+                        <td className="py-2.5 font-semibold text-[#FAF7F0]">{f.client}</td>
+                        <td className="py-2.5 text-[#9CA3AF]">{f.subject}</td>
+                        <td className="py-2.5 text-[#D4A017]">{f.dueDate}</td>
+                        <td className="py-2.5 text-right font-bold text-[#E6C78B]">{f.status}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -452,15 +483,23 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                  {complaintQueue.map((c) => (
-                    <tr key={c.id} className="hover:bg-[#121212]/50">
-                      <td className="py-2.5 font-bold text-[#E6C78B]">{c.id}</td>
-                      <td className="py-2.5 font-semibold text-[#FAF7F0]">{c.client}</td>
-                      <td className="py-2.5 text-[#9CA3AF]">{c.subject}</td>
-                      <td className="py-2.5 text-[#B87333] font-bold">{c.severity}</td>
-                      <td className="py-2.5 text-right font-semibold text-[#FAF7F0]">{c.status}</td>
+                  {complaintQueue.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-[#9CA3AF]">
+                        No escalated complaints filed for {companyName}.
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    complaintQueue.map((c) => (
+                      <tr key={c.id} className="hover:bg-[#121212]/50">
+                        <td className="py-2.5 font-bold text-[#E6C78B]">{c.id}</td>
+                        <td className="py-2.5 font-semibold text-[#FAF7F0]">{c.client}</td>
+                        <td className="py-2.5 text-[#9CA3AF]">{c.subject}</td>
+                        <td className="py-2.5 text-[#B87333] font-bold">{c.severity}</td>
+                        <td className="py-2.5 text-right font-semibold text-[#FAF7F0]">{c.status}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

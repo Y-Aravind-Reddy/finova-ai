@@ -41,6 +41,7 @@ export interface QueryFilterOptions {
   priority?: string;
   currency?: string;
   rolesOnly?: UserRole[];
+  userId?: string;
 }
 
 export interface DatabaseQueryResult<T> {
@@ -117,40 +118,18 @@ export async function fetchTransactionsResultFromDb(
       state: 'unconfigured',
       details: 'Supabase credentials are not configured in the application environment.',
     };
-    let fallback = getTransactionsForTenant(tenantId);
-    if (options?.search) {
-      const s = options.search.toLowerCase();
-      fallback = fallback.filter((t) => t.merchant.toLowerCase().includes(s) || t.referenceNo.toLowerCase().includes(s) || t.category.toLowerCase().includes(s));
-    }
-    if (options?.category && options.category !== 'ALL') {
-      fallback = fallback.filter((t) => t.category === options.category);
-    }
-    if (options?.type && options.type !== 'ALL') {
-      fallback = fallback.filter((t) => t.type === options.type);
-    }
-    if (options?.status && options.status !== 'ALL') {
-      fallback = fallback.filter((t) => t.status === options.status);
-    }
-    if (options?.startDate) {
-      fallback = fallback.filter((t) => t.date >= options.startDate!);
-    }
-    if (options?.endDate) {
-      fallback = fallback.filter((t) => t.date <= options.endDate!);
-    }
-    const totalCount = fallback.length;
-    const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
     return {
-      data: paginated,
+      data: [],
       source: 'fallback',
       error: errorMsg,
-      count: paginated.length,
-      totalCount,
+      count: 0,
+      totalCount: 0,
       state: 'unconfigured',
-      details: 'Supabase client is not configured; using local tenant demo dataset.',
+      details: 'Supabase client is not configured; no live records available.',
       hasAuthSession: false,
-      page,
+      page: 1,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+      totalPages: 1,
     };
   }
 
@@ -162,6 +141,10 @@ export async function fetchTransactionsResultFromDb(
 
     if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
       query = query.eq('tenant_id', tenantId);
+    }
+
+    if (options?.userId) {
+      query = query.eq('user_id', options.userId);
     }
 
     if (options?.search) {
@@ -204,25 +187,18 @@ export async function fetchTransactionsResultFromDb(
         state: 'query_error',
         details: error.message,
       };
-      let fallback = getTransactionsForTenant(tenantId);
-      if (options?.search) {
-        const s = options.search.toLowerCase();
-        fallback = fallback.filter((t) => t.merchant.toLowerCase().includes(s) || t.referenceNo.toLowerCase().includes(s) || t.category.toLowerCase().includes(s));
-      }
-      const totalCount = fallback.length;
-      const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
       return {
-        data: paginated,
+        data: [],
         source: 'fallback',
         error: errorMsg,
-        count: paginated.length,
-        totalCount,
+        count: 0,
+        totalCount: 0,
         state: 'query_error',
         details: `Supabase query failed: ${error.message}`,
         hasAuthSession: false,
         page,
         pageSize,
-        totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+        totalPages: 1,
       };
     }
 
@@ -267,72 +243,34 @@ export async function fetchTransactionsResultFromDb(
       };
     }
 
-    // Case 2: Supabase query succeeded with 0 records
-    if (hasAuthSession) {
-      databaseStatusStore.transactions = {
-        source: 'supabase',
-        error: null,
-        state: 'zero_records',
-        details: `Live Supabase table queried successfully; 0 records exist for tenant ${tenantId}.`,
-      };
-      return {
-        data: [],
-        source: 'supabase',
-        error: null,
-        count: 0,
-        totalCount: 0,
-        state: 'zero_records',
-        details: `Authenticated query returned 0 records from Supabase transactions table for tenant ${tenantId}.`,
-        hasAuthSession: true,
-        page,
-        pageSize,
-        totalPages: 1,
-      };
-    } else {
-      // Demo session without Supabase Auth session: RLS policy restricts anon queries to 0 rows.
-      const notice = 'Demo session active: Supabase RLS requires an authenticated Supabase user session to read live rows.';
-      databaseStatusStore.transactions = {
-        source: 'fallback',
-        error: notice,
-        state: 'demo_session_rls',
-        details: 'Postgres RLS restricts anon queries. Sign in with Supabase Auth credentials to view live rows.',
-      };
-      let fallback = getTransactionsForTenant(tenantId);
-      if (options?.search) {
-        const s = options.search.toLowerCase();
-        fallback = fallback.filter((t) => t.merchant.toLowerCase().includes(s) || t.referenceNo.toLowerCase().includes(s) || t.category.toLowerCase().includes(s));
-      }
-      if (options?.category && options.category !== 'ALL') {
-        fallback = fallback.filter((t) => t.category === options.category);
-      }
-      if (options?.type && options.type !== 'ALL') {
-        fallback = fallback.filter((t) => t.type === options.type);
-      }
-      if (options?.status && options.status !== 'ALL') {
-        fallback = fallback.filter((t) => t.status === options.status);
-      }
-      if (options?.startDate) {
-        fallback = fallback.filter((t) => t.date >= options.startDate!);
-      }
-      if (options?.endDate) {
-        fallback = fallback.filter((t) => t.date <= options.endDate!);
-      }
-      const totalCount = fallback.length;
-      const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
-      return {
-        data: paginated,
-        source: 'fallback',
-        error: notice,
-        count: paginated.length,
-        totalCount,
-        state: 'demo_session_rls',
-        details: 'Supabase table is connected, but RLS restricts unauthenticated/demo queries. Displaying verified demo dataset.',
-        hasAuthSession: false,
-        page,
-        pageSize,
-        totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
-      };
-    }
+    // Case 2: Supabase query returned 0 records (or restricted by RLS for unauthenticated users)
+    const notice = hasAuthSession
+      ? null
+      : 'Unauthenticated session: Supabase Row-Level Security (RLS) restricts access to confirmed users.';
+    databaseStatusStore.transactions = {
+      source: hasAuthSession ? 'supabase' : 'fallback',
+      error: notice,
+      state: hasAuthSession ? 'zero_records' : 'demo_session_rls',
+      details: hasAuthSession
+        ? `Live Supabase table queried successfully; 0 records exist for tenant ${tenantId}.`
+        : 'Postgres RLS restricts anon queries to 0 rows. Authenticate with an active Supabase Auth session to access protected records.',
+    };
+
+    return {
+      data: [],
+      source: hasAuthSession ? 'supabase' : 'fallback',
+      error: notice,
+      count: 0,
+      totalCount: 0,
+      state: hasAuthSession ? 'zero_records' : 'demo_session_rls',
+      details: hasAuthSession
+        ? `Authenticated query returned 0 records from Supabase transactions table for tenant ${tenantId}.`
+        : 'Supabase table is connected, but RLS restricts unauthenticated queries to 0 rows.',
+      hasAuthSession,
+      page,
+      pageSize,
+      totalPages: 1,
+    };
   } catch (err: any) {
     const errorMsg = err?.message || 'Network error querying Supabase';
     databaseStatusStore.transactions = {
@@ -341,21 +279,18 @@ export async function fetchTransactionsResultFromDb(
       state: 'query_error',
       details: errorMsg,
     };
-    let fallback = getTransactionsForTenant(tenantId);
-    const totalCount = fallback.length;
-    const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
     return {
-      data: paginated,
+      data: [],
       source: 'fallback',
       error: errorMsg,
-      count: paginated.length,
-      totalCount,
+      count: 0,
+      totalCount: 0,
       state: 'query_error',
       details: `Unexpected error querying Supabase: ${errorMsg}`,
       hasAuthSession: false,
       page,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+      totalPages: 1,
     };
   }
 }
@@ -393,31 +328,18 @@ export async function fetchFraudCasesResultFromDb(
       state: 'unconfigured',
       details: 'Supabase credentials are not configured in the application environment.',
     };
-    let fallback = getFraudTransactionsForTenant(tenantId);
-    if (options?.search) {
-      const s = options.search.toLowerCase();
-      fallback = fallback.filter((f) => f.customerName.toLowerCase().includes(s) || f.ruleTriggered.toLowerCase().includes(s) || f.amlFlag.toLowerCase().includes(s) || f.id.toLowerCase().includes(s));
-    }
-    if (options?.status && options.status !== 'ALL') {
-      fallback = fallback.filter((f) => f.status === options.status);
-    }
-    if (options?.currency && options.currency !== 'ALL') {
-      fallback = fallback.filter((f) => f.currency === options.currency);
-    }
-    const totalCount = fallback.length;
-    const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
     return {
-      data: paginated,
+      data: [],
       source: 'fallback',
       error: errorMsg,
-      count: paginated.length,
-      totalCount,
+      count: 0,
+      totalCount: 0,
       state: 'unconfigured',
-      details: 'Supabase client is not configured; using local tenant demo dataset.',
+      details: 'Supabase client is not configured; no live fraud cases available.',
       hasAuthSession: false,
-      page,
+      page: 1,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+      totalPages: 1,
     };
   }
 
@@ -458,25 +380,18 @@ export async function fetchFraudCasesResultFromDb(
         state: 'query_error',
         details: error.message,
       };
-      let fallback = getFraudTransactionsForTenant(tenantId);
-      if (options?.search) {
-        const s = options.search.toLowerCase();
-        fallback = fallback.filter((f) => f.customerName.toLowerCase().includes(s) || f.ruleTriggered.toLowerCase().includes(s) || f.amlFlag.toLowerCase().includes(s) || f.id.toLowerCase().includes(s));
-      }
-      const totalCount = fallback.length;
-      const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
       return {
-        data: paginated,
+        data: [],
         source: 'fallback',
         error: errorMsg,
-        count: paginated.length,
-        totalCount,
+        count: 0,
+        totalCount: 0,
         state: 'query_error',
         details: `Supabase query failed: ${error.message}`,
         hasAuthSession: false,
         page,
         pageSize,
-        totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+        totalPages: 1,
       };
     }
 
@@ -524,61 +439,33 @@ export async function fetchFraudCasesResultFromDb(
       };
     }
 
-    if (hasAuthSession) {
-      databaseStatusStore.fraudCases = {
-        source: 'supabase',
-        error: null,
-        state: 'zero_records',
-        details: `Live Supabase table queried successfully; 0 records exist for tenant ${tenantId}.`,
-      };
-      return {
-        data: [],
-        source: 'supabase',
-        error: null,
-        count: 0,
-        totalCount: 0,
-        state: 'zero_records',
-        details: `Authenticated query returned 0 records from Supabase fraud_cases table for tenant ${tenantId}.`,
-        hasAuthSession: true,
-        page,
-        pageSize,
-        totalPages: 1,
-      };
-    } else {
-      const notice = 'Demo session active: Supabase RLS requires an authenticated Supabase user session to read live rows.';
-      databaseStatusStore.fraudCases = {
-        source: 'fallback',
-        error: notice,
-        state: 'demo_session_rls',
-        details: 'Postgres RLS restricts anon queries. Sign in with Supabase Auth credentials to view live rows.',
-      };
-      let fallback = getFraudTransactionsForTenant(tenantId);
-      if (options?.search) {
-        const s = options.search.toLowerCase();
-        fallback = fallback.filter((f) => f.customerName.toLowerCase().includes(s) || f.ruleTriggered.toLowerCase().includes(s) || f.amlFlag.toLowerCase().includes(s) || f.id.toLowerCase().includes(s));
-      }
-      if (options?.status && options.status !== 'ALL') {
-        fallback = fallback.filter((f) => f.status === options.status);
-      }
-      if (options?.currency && options.currency !== 'ALL') {
-        fallback = fallback.filter((f) => f.currency === options.currency);
-      }
-      const totalCount = fallback.length;
-      const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
-      return {
-        data: paginated,
-        source: 'fallback',
-        error: notice,
-        count: paginated.length,
-        totalCount,
-        state: 'demo_session_rls',
-        details: 'Supabase table is connected, but RLS restricts unauthenticated/demo queries. Displaying verified demo dataset.',
-        hasAuthSession: false,
-        page,
-        pageSize,
-        totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
-      };
-    }
+    const notice = hasAuthSession
+      ? null
+      : 'Unauthenticated session: Supabase Row-Level Security (RLS) restricts access to confirmed users.';
+    databaseStatusStore.fraudCases = {
+      source: hasAuthSession ? 'supabase' : 'fallback',
+      error: notice,
+      state: hasAuthSession ? 'zero_records' : 'demo_session_rls',
+      details: hasAuthSession
+        ? `Live Supabase table queried successfully; 0 records exist for tenant ${tenantId}.`
+        : 'Postgres RLS restricts anon queries to 0 rows. Authenticate with an active Supabase Auth session to access protected records.',
+    };
+
+    return {
+      data: [],
+      source: hasAuthSession ? 'supabase' : 'fallback',
+      error: notice,
+      count: 0,
+      totalCount: 0,
+      state: hasAuthSession ? 'zero_records' : 'demo_session_rls',
+      details: hasAuthSession
+        ? `Authenticated query returned 0 records from Supabase fraud_cases table for tenant ${tenantId}.`
+        : 'Supabase table is connected, but RLS restricts unauthenticated queries to 0 rows.',
+      hasAuthSession,
+      page,
+      pageSize,
+      totalPages: 1,
+    };
   } catch (err: any) {
     const errorMsg = err?.message || 'Network error querying Supabase';
     databaseStatusStore.fraudCases = {
@@ -587,21 +474,18 @@ export async function fetchFraudCasesResultFromDb(
       state: 'query_error',
       details: errorMsg,
     };
-    let fallback = getFraudTransactionsForTenant(tenantId);
-    const totalCount = fallback.length;
-    const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
     return {
-      data: paginated,
+      data: [],
       source: 'fallback',
       error: errorMsg,
-      count: paginated.length,
-      totalCount,
+      count: 0,
+      totalCount: 0,
       state: 'query_error',
       details: `Unexpected error querying Supabase: ${errorMsg}`,
       hasAuthSession: false,
       page,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+      totalPages: 1,
     };
   }
 }
@@ -636,34 +520,18 @@ export async function fetchSupportTicketsResultFromDb(
       state: 'unconfigured',
       details: 'Supabase credentials are not configured in the application environment.',
     };
-    let fallback = getTicketsForTenant(tenantId);
-    if (options?.search) {
-      const s = options.search.toLowerCase();
-      fallback = fallback.filter((t) => t.customerName.toLowerCase().includes(s) || ((t as any).subject && String((t as any).subject).toLowerCase().includes(s)) || t.ticketId.toLowerCase().includes(s) || t.category.toLowerCase().includes(s));
-    }
-    if (options?.priority && options.priority !== 'ALL') {
-      fallback = fallback.filter((t) => t.priority === options.priority);
-    }
-    if (options?.status && options.status !== 'ALL') {
-      fallback = fallback.filter((t) => t.status === options.status);
-    }
-    if (options?.category && options.category !== 'ALL') {
-      fallback = fallback.filter((t) => t.category === options.category);
-    }
-    const totalCount = fallback.length;
-    const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
     return {
-      data: paginated,
+      data: [],
       source: 'fallback',
       error: errorMsg,
-      count: paginated.length,
-      totalCount,
+      count: 0,
+      totalCount: 0,
       state: 'unconfigured',
-      details: 'Supabase client is not configured; using local tenant demo dataset.',
+      details: 'Supabase client is not configured; no live support tickets available.',
       hasAuthSession: false,
-      page,
+      page: 1,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+      totalPages: 1,
     };
   }
 
@@ -675,6 +543,10 @@ export async function fetchSupportTicketsResultFromDb(
 
     if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
       query = query.eq('tenant_id', tenantId);
+    }
+
+    if (options?.userId) {
+      query = query.eq('user_id', options.userId);
     }
 
     if (options?.search) {
@@ -708,25 +580,18 @@ export async function fetchSupportTicketsResultFromDb(
         state: 'query_error',
         details: error.message,
       };
-      let fallback = getTicketsForTenant(tenantId);
-      if (options?.search) {
-        const s = options.search.toLowerCase();
-        fallback = fallback.filter((t) => t.customerName.toLowerCase().includes(s) || ((t as any).subject && String((t as any).subject).toLowerCase().includes(s)) || t.ticketId.toLowerCase().includes(s) || t.category.toLowerCase().includes(s));
-      }
-      const totalCount = fallback.length;
-      const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
       return {
-        data: paginated,
+        data: [],
         source: 'fallback',
         error: errorMsg,
-        count: paginated.length,
-        totalCount,
+        count: 0,
+        totalCount: 0,
         state: 'query_error',
         details: `Supabase query failed: ${error.message}`,
         hasAuthSession: false,
         page,
         pageSize,
-        totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+        totalPages: 1,
       };
     }
 
@@ -772,64 +637,33 @@ export async function fetchSupportTicketsResultFromDb(
       };
     }
 
-    if (hasAuthSession) {
-      databaseStatusStore.supportTickets = {
-        source: 'supabase',
-        error: null,
-        state: 'zero_records',
-        details: `Live Supabase table queried successfully; 0 records exist for tenant ${tenantId}.`,
-      };
-      return {
-        data: [],
-        source: 'supabase',
-        error: null,
-        count: 0,
-        totalCount: 0,
-        state: 'zero_records',
-        details: `Authenticated query returned 0 records from Supabase support_tickets table for tenant ${tenantId}.`,
-        hasAuthSession: true,
-        page,
-        pageSize,
-        totalPages: 1,
-      };
-    } else {
-      const notice = 'Demo session active: Supabase RLS requires an authenticated Supabase user session to read live rows.';
-      databaseStatusStore.supportTickets = {
-        source: 'fallback',
-        error: notice,
-        state: 'demo_session_rls',
-        details: 'Postgres RLS restricts anon queries. Sign in with Supabase Auth credentials to view live rows.',
-      };
-      let fallback = getTicketsForTenant(tenantId);
-      if (options?.search) {
-        const s = options.search.toLowerCase();
-        fallback = fallback.filter((t) => t.customerName.toLowerCase().includes(s) || ((t as any).subject && String((t as any).subject).toLowerCase().includes(s)) || t.ticketId.toLowerCase().includes(s) || t.category.toLowerCase().includes(s));
-      }
-      if (options?.priority && options.priority !== 'ALL') {
-        fallback = fallback.filter((t) => t.priority === options.priority);
-      }
-      if (options?.status && options.status !== 'ALL') {
-        fallback = fallback.filter((t) => t.status === options.status);
-      }
-      if (options?.category && options.category !== 'ALL') {
-        fallback = fallback.filter((t) => t.category === options.category);
-      }
-      const totalCount = fallback.length;
-      const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
-      return {
-        data: paginated,
-        source: 'fallback',
-        error: notice,
-        count: paginated.length,
-        totalCount,
-        state: 'demo_session_rls',
-        details: 'Supabase table is connected, but RLS restricts unauthenticated/demo queries. Displaying verified demo dataset.',
-        hasAuthSession: false,
-        page,
-        pageSize,
-        totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
-      };
-    }
+    const notice = hasAuthSession
+      ? null
+      : 'Unauthenticated session: Supabase Row-Level Security (RLS) restricts access to confirmed users.';
+    databaseStatusStore.supportTickets = {
+      source: hasAuthSession ? 'supabase' : 'fallback',
+      error: notice,
+      state: hasAuthSession ? 'zero_records' : 'demo_session_rls',
+      details: hasAuthSession
+        ? `Live Supabase table queried successfully; 0 records exist for tenant ${tenantId}.`
+        : 'Postgres RLS restricts anon queries to 0 rows. Authenticate with an active Supabase Auth session to access protected records.',
+    };
+
+    return {
+      data: [],
+      source: hasAuthSession ? 'supabase' : 'fallback',
+      error: notice,
+      count: 0,
+      totalCount: 0,
+      state: hasAuthSession ? 'zero_records' : 'demo_session_rls',
+      details: hasAuthSession
+        ? `Authenticated query returned 0 records from Supabase support_tickets table for tenant ${tenantId}.`
+        : 'Supabase table is connected, but RLS restricts unauthenticated queries to 0 rows.',
+      hasAuthSession,
+      page,
+      pageSize,
+      totalPages: 1,
+    };
   } catch (err: any) {
     const errorMsg = err?.message || 'Network error querying Supabase';
     databaseStatusStore.supportTickets = {
@@ -838,21 +672,18 @@ export async function fetchSupportTicketsResultFromDb(
       state: 'query_error',
       details: errorMsg,
     };
-    let fallback = getTicketsForTenant(tenantId);
-    const totalCount = fallback.length;
-    const paginated = fallback.slice((page - 1) * pageSize, page * pageSize);
     return {
-      data: paginated,
+      data: [],
       source: 'fallback',
       error: errorMsg,
-      count: paginated.length,
-      totalCount,
+      count: 0,
+      totalCount: 0,
       state: 'query_error',
       details: `Unexpected error querying Supabase: ${errorMsg}`,
       hasAuthSession: false,
       page,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+      totalPages: 1,
     };
   }
 }
@@ -1690,17 +1521,16 @@ export async function fetchTenantWorkspacesResultFromDb(): Promise<DatabaseQuery
     const hasSession = await checkHasSupabaseAuthSession(supabase);
 
     if (error) {
-      const fallback = getStoredTenants();
       databaseStatusStore.tenantWorkspaces = {
         source: 'fallback',
         error: error.message,
         state: 'query_error',
       };
       return {
-        data: fallback,
+        data: [],
         source: 'fallback',
         error: error.message,
-        count: fallback.length,
+        count: 0,
         state: 'query_error',
         hasAuthSession: hasSession,
       };

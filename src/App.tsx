@@ -767,9 +767,9 @@ export default function App() {
         case '/customer/profile':
           return <ProfileView currentRole={userRole} userName={currentUser.name} currentUser={currentUser} onUpdateUser={handleProfileUpdated} />;
         case '/customer/accounts':
-          return <CustomerAccountsPage />;
+          return <CustomerAccountsPage currentUser={currentUser} />;
         case '/customer/transactions':
-          return <CustomerTransactionsPage />;
+          return <CustomerTransactionsPage currentUser={currentUser} />;
         case '/customer/cards':
           return <CustomerCardsView customerName={currentUser.name} />;
         case '/customer/kyc':
@@ -779,11 +779,11 @@ export default function App() {
         case '/customer/ai-assistant':
           return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} />;
         case '/customer/support':
-          return <CustomerSupportPage />;
+          return <CustomerSupportPage currentUser={currentUser} />;
         case '/customer/notifications':
           return <CustomerNotificationsPage />;
         case '/customer/settings':
-          return <CustomerSettingsPage />;
+          return <CustomerSettingsPage currentUser={currentUser} />;
 
         default:
           return (

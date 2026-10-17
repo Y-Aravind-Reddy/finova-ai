@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  FINANCE_ANALYST_DATASET,
   FinanceFraudTransaction,
   UserAccount,
   UserRole,
@@ -56,11 +55,9 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
   const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
 
   // Load tenant-isolated fraud, transaction, and KYC records
-  const [transactions, setTransactions] = useState<FinanceFraudTransaction[]>(() =>
-    getFraudTransactionsForTenant(tenantId)
-  );
-  const [monitoredTxnCount, setMonitoredTxnCount] = useState<number>(52000);
-  const [monitoredTxnVolume, setMonitoredTxnVolume] = useState<number>(248900000);
+  const [transactions, setTransactions] = useState<FinanceFraudTransaction[]>([]);
+  const [monitoredTxnCount, setMonitoredTxnCount] = useState<number>(0);
+  const [monitoredTxnVolume, setMonitoredTxnVolume] = useState<number>(0);
   const [kycQueueCount, setKycQueueCount] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
@@ -74,22 +71,18 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
       const fResult = await fetchFraudCasesResultFromDb(tenantId);
       setDbSource(fResult.source);
       setDbError(fResult.error);
-      if (fResult.source === 'supabase') {
-        setTransactions(fResult.data);
-      } else if (fResult.data && fResult.data.length > 0) {
-        setTransactions(fResult.data);
-      }
+      setTransactions(fResult.data);
 
       // 2. Load monitored transactions count & volume from transactions table
       try {
         const tResult = await fetchTransactionsResultFromDb(tenantId, { pageSize: 100 });
-        if (tResult.totalCount !== undefined && tResult.totalCount > 0) {
-          setMonitoredTxnCount(tResult.totalCount);
-          const vol = tResult.data.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-          if (vol > 0) setMonitoredTxnVolume(vol * Math.ceil(tResult.totalCount / (tResult.data.length || 1)));
-        }
+        setMonitoredTxnCount(tResult.totalCount ?? tResult.count ?? 0);
+        const vol = tResult.data.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+        setMonitoredTxnVolume(vol);
       } catch (tErr) {
         console.warn('Transactions count notice:', tErr);
+        setMonitoredTxnCount(0);
+        setMonitoredTxnVolume(0);
       }
 
       // 3. Load genuine KYC records count (guaranteed empty until records exist per Req 8)
@@ -98,6 +91,7 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
         setKycQueueCount(kResult.totalCount ?? kResult.count ?? 0);
       } catch (kErr) {
         console.warn('KYC count notice:', kErr);
+        setKycQueueCount(0);
       }
     } finally {
       setLoading(false);
@@ -129,7 +123,7 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
     const avgScore =
       transactions.length > 0
         ? (transactions.reduce((acc, t) => acc + (Number(t.riskScore) || 50), 0) / transactions.length).toFixed(1)
-        : '16.4';
+        : '0.0';
 
     return {
       totalFraudCases,
@@ -162,79 +156,58 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
     ];
   }, [transactions, tenant]);
 
-  const fraudAnalyticsData = [
-    { label: 'May', value: 680, secondaryValue: 720 },
-    { label: 'Jun', value: 890, secondaryValue: 840 },
-    { label: 'Jul', value: 1120, secondaryValue: 1050 },
-    { label: 'Aug', value: 980, secondaryValue: 920 },
-    { label: 'Sep', value: 1340, secondaryValue: 1200 },
-    { label: 'Oct', value: 1480, secondaryValue: 1420, highlight: true },
-  ];
+  const fraudAnalyticsData = React.useMemo(() => {
+    if (!transactions || transactions.length === 0) {
+      return [
+        { label: 'Current', value: 0, secondaryValue: 0 },
+      ];
+    }
+    const flagged = transactions.filter((t) => t.status === 'Flagged').length;
+    const prevented = transactions.filter((t) => t.status === 'Frozen Escrow' || t.status === 'Cleared').length;
+    return [
+      { label: 'Active Queue', value: flagged, secondaryValue: prevented, highlight: true },
+    ];
+  }, [transactions]);
 
-  const transactionVolumeData = [
-    { label: '08:00', value: 24500 },
-    { label: '10:00', value: 68200 },
-    { label: '12:00', value: 94800 },
-    { label: '14:00', value: 89100 },
-    { label: '16:00', value: 112400 },
-    { label: '18:00', value: 64200 },
-  ];
+  const transactionVolumeData = React.useMemo(() => {
+    if (!transactions || transactions.length === 0) {
+      return [
+        { label: 'Current', value: 0 },
+      ];
+    }
+    return [
+      { label: 'Monitored', value: monitoredTxnCount },
+      { label: 'Flagged', value: transactions.length },
+    ];
+  }, [transactions, monitoredTxnCount]);
 
-  // High Risk Customers from dataset for this company
-  const highRiskCustomers = [
-    {
-      id: `${tenantId === 'tenant_crest_capital' ? 'CRV' : tenantId === 'tenant_vanguard_wealth' ? 'VGW' : 'FNV'}-CUST-9104`,
-      name: tenantId === 'tenant_crest_capital' ? 'Caledonian Maritime Asset HoldCo' : tenantId === 'tenant_vanguard_wealth' ? 'Helvetia Trust Holdings Anstalt' : 'Aegis Offshore Holdings Ltd',
-      riskScore: 94,
-      flaggedVolume: `${tenant?.currencySymbol || '$'}1,240,000`,
-      jurisdiction: tenantId === 'tenant_crest_capital' ? 'Edinburgh / Isle of Man' : tenantId === 'tenant_vanguard_wealth' ? 'Vaduz / Nicosia' : 'Nassau / Limassol',
-      status: 'Escrow Frozen',
-    },
-    {
-      id: `${tenantId === 'tenant_crest_capital' ? 'CRV' : tenantId === 'tenant_vanguard_wealth' ? 'VGW' : 'FNV'}-CUST-3902`,
-      name: 'Veloce Global Syndicate',
-      riskScore: 82,
-      flaggedVolume: `${tenant?.currencySymbol || '€'}890,000`,
-      jurisdiction: 'Seychelles Relay',
-      status: 'Under Review',
-    },
-    {
-      id: `${tenantId === 'tenant_crest_capital' ? 'CRV' : tenantId === 'tenant_vanguard_wealth' ? 'VGW' : 'FNV'}-CUST-6621`,
-      name: 'Alpha Orion Capital LLC',
-      riskScore: 88,
-      flaggedVolume: `${tenant?.currencySymbol || '$'}675,000`,
-      jurisdiction: 'Panama / Delaware',
-      status: 'Enhanced Due Diligence',
-    },
-  ];
+  // High Risk Customers derived directly from active transactions for this tenant
+  const highRiskCustomers = React.useMemo(() => {
+    return transactions
+      .filter((t) => (t.riskScore || 0) >= 70)
+      .map((t) => ({
+        id: t.customerId || t.id,
+        name: t.customerName,
+        riskScore: t.riskScore,
+        flaggedVolume: `${tenant?.currencySymbol || '$'}${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+        jurisdiction: t.location || 'Global Rail',
+        status: t.status,
+      }));
+  }, [transactions, tenant]);
 
-  // Risk Reports for this tenant
-  const riskReports = [
-    {
-      id: `REP-${tenantId.slice(7, 10).toUpperCase()}-2026-08`,
-      title: 'Cross-Border Layering Anomaly Analysis #481',
-      date: '2026-10-08',
-      analyst: currentUser?.name || 'Julian Thorne',
-      threatLevel: 'Elevated Threat',
-      status: 'Escalated to Desk Lead',
-    },
-    {
-      id: `REP-${tenantId.slice(7, 10).toUpperCase()}-2026-07`,
-      title: 'Offshore Geolocation Spoofing Cluster Investigation',
-      date: '2026-10-07',
-      analyst: currentUser?.name || 'Julian Thorne',
-      threatLevel: 'Critical Anomaly',
-      status: `SAR Prepared for ${tenant?.licenseNo?.split(' ')[0] || 'Regulator'}`,
-    },
-    {
-      id: `REP-${tenantId.slice(7, 10).toUpperCase()}-2026-06`,
-      title: 'Quarterly False Positive Audit (0.12% Benchmark)',
-      date: '2026-10-05',
-      analyst: 'Risk Modeling Officer',
-      threatLevel: 'Nominal Cleared',
-      status: 'Archived Verified',
-    },
-  ];
+  // Risk Reports for this tenant derived from confirmed flagged anomalies
+  const riskReports = React.useMemo(() => {
+    return transactions
+      .filter((t) => t.status === 'Frozen Escrow' || t.riskScore >= 80)
+      .map((t, idx) => ({
+        id: `REP-${tenantId.slice(7, 10).toUpperCase()}-2026-${String(idx + 1).padStart(2, '0')}`,
+        title: `${t.ruleTriggered} Surveillance Investigation`,
+        date: t.timestamp?.split(' ')[0] || new Date().toISOString().split('T')[0],
+        analyst: currentUser?.name || 'Julian Thorne',
+        threatLevel: t.riskScore >= 85 ? 'Critical Anomaly' : 'Elevated Threat',
+        status: t.status === 'Frozen Escrow' ? 'Escrow Frozen' : 'SAR Documented',
+      }));
+  }, [transactions, tenantId, currentUser]);
 
   const handleEscalateOrFreeze = (txnId: string, action: 'Freeze' | 'Clear') => {
     setTransactions((prev) =>
@@ -444,69 +417,90 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                {transactions.map((t) => (
-                  <tr key={t.id} className="hover:bg-[#121212]/50 transition-colors">
-                    <td className="py-3">
-                      <p className="font-bold text-[#E6C78B]">{t.id}</p>
-                      <p className="text-[10px] text-[#9CA3AF]">{t.timestamp}</p>
-                    </td>
-                    <td className="py-3">
-                      <p className="font-semibold text-[#FAF7F0]">{t.customerName}</p>
-                      <p className="text-[10px] text-[#9CA3AF]">{t.customerId} • {t.location}</p>
-                    </td>
-                    <td className="py-3 font-bold text-[#FAF7F0]">
-                      {t.currency} {t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-3">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          t.riskScore > 75
-                            ? 'bg-[#121212] text-[#B87333] border border-[#B87333]'
-                            : t.riskScore > 40
-                            ? 'bg-[#121212] text-[#D4A017] border border-[#D4A017]'
-                            : 'bg-[#121212] text-[#E6C78B] border border-[#3A3A3A]'
-                        }`}
-                      >
-                        {t.riskScore} / 100
-                      </span>
-                    </td>
-                    <td className="py-3 text-[11px] text-[#D4A017]">
-                      <p className="font-semibold text-[#FAF7F0]">{t.amlFlag}</p>
-                      <p className="text-[10px] text-[#9CA3AF] max-w-xs truncate">{t.ruleTriggered}</p>
-                    </td>
-                    <td className="py-3 text-[11px] text-[#FAF7F0]">{t.paymentChannel}</td>
-                    <td className="py-3">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          t.status === 'Frozen Escrow'
-                            ? 'bg-[#121212] text-[#B87333] border border-[#B87333]'
-                            : t.status === 'Flagged'
-                            ? 'bg-[#121212] text-[#D4A017] border border-[#D4A017]'
-                            : 'bg-[#121212] text-[#E6C78B] border border-[#3A3A3A]'
-                        }`}
-                      >
-                        {t.status}
-                      </span>
-                    </td>
-                    <td className="py-3 text-right">
-                      {t.status !== 'Frozen Escrow' ? (
+                {transactions.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-[#9CA3AF]">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <ShieldAlert size={28} className="text-[#D4A017]" />
+                        <p className="text-sm font-bold text-[#FAF7F0]">No Fraud / AML Cases Recorded</p>
+                        <p className="text-xs text-[#9CA3AF] max-w-md">
+                          {dbError || `No records found in public.fraud_cases for ${companyName}.`}
+                        </p>
                         <button
-                          onClick={() => handleEscalateOrFreeze(t.id, 'Freeze')}
-                          className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-[#D4A017] to-[#B87333] hover:brightness-110 text-[#1A1A1A] text-[10px] font-bold shadow-sm"
+                          onClick={() => loadAllData()}
+                          className="mt-2 px-3 py-1.5 rounded-lg bg-[#121212] border border-[#D4A017] text-[#D4A017] text-xs hover:bg-[#262626] flex items-center gap-1.5"
                         >
-                          Freeze Escrow
+                          <RotateCw size={12} className={loading ? 'animate-spin' : ''} />
+                          <span>Retry Query</span>
                         </button>
-                      ) : (
-                        <button
-                          onClick={() => handleEscalateOrFreeze(t.id, 'Clear')}
-                          className="px-2.5 py-1 rounded-lg bg-[#121212] text-[#E6C78B] border border-[#D4A017] text-[10px] font-bold hover:bg-[#262626]"
-                        >
-                          Clear Escrow
-                        </button>
-                      )}
+                      </div>
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  transactions.map((t) => (
+                    <tr key={t.id} className="hover:bg-[#121212]/50 transition-colors">
+                      <td className="py-3">
+                        <p className="font-bold text-[#E6C78B]">{t.id}</p>
+                        <p className="text-[10px] text-[#9CA3AF]">{t.timestamp}</p>
+                      </td>
+                      <td className="py-3">
+                        <p className="font-semibold text-[#FAF7F0]">{t.customerName}</p>
+                        <p className="text-[10px] text-[#9CA3AF]">{t.customerId} • {t.location}</p>
+                      </td>
+                      <td className="py-3 font-bold text-[#FAF7F0]">
+                        {t.currency} {t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            t.riskScore > 75
+                              ? 'bg-[#121212] text-[#B87333] border border-[#B87333]'
+                              : t.riskScore > 40
+                              ? 'bg-[#121212] text-[#D4A017] border border-[#D4A017]'
+                              : 'bg-[#121212] text-[#E6C78B] border border-[#3A3A3A]'
+                          }`}
+                        >
+                          {t.riskScore} / 100
+                        </span>
+                      </td>
+                      <td className="py-3 text-[11px] text-[#D4A017]">
+                        <p className="font-semibold text-[#FAF7F0]">{t.amlFlag}</p>
+                        <p className="text-[10px] text-[#9CA3AF] max-w-xs truncate">{t.ruleTriggered}</p>
+                      </td>
+                      <td className="py-3 text-[11px] text-[#FAF7F0]">{t.paymentChannel}</td>
+                      <td className="py-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            t.status === 'Frozen Escrow'
+                              ? 'bg-[#121212] text-[#B87333] border border-[#B87333]'
+                              : t.status === 'Flagged'
+                              ? 'bg-[#121212] text-[#D4A017] border border-[#D4A017]'
+                              : 'bg-[#121212] text-[#E6C78B] border border-[#3A3A3A]'
+                          }`}
+                        >
+                          {t.status}
+                        </span>
+                      </td>
+                      <td className="py-3 text-right">
+                        {t.status !== 'Frozen Escrow' ? (
+                          <button
+                            onClick={() => handleEscalateOrFreeze(t.id, 'Freeze')}
+                            className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-[#D4A017] to-[#B87333] hover:brightness-110 text-[#1A1A1A] text-[10px] font-bold shadow-sm"
+                          >
+                            Freeze Escrow
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleEscalateOrFreeze(t.id, 'Clear')}
+                            className="px-2.5 py-1 rounded-lg bg-[#121212] text-[#E6C78B] border border-[#D4A017] text-[10px] font-bold hover:bg-[#262626]"
+                          >
+                            Clear Escrow
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -527,24 +521,32 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                {highRiskCustomers.map((cust) => (
-                  <tr key={cust.id} className="hover:bg-[#121212]/50">
-                    <td className="py-2.5 font-bold text-[#E6C78B]">{cust.id}</td>
-                    <td className="py-2.5 font-semibold text-[#FAF7F0]">{cust.name}</td>
-                    <td className="py-2.5">
-                      <span className="px-2 py-0.5 rounded font-bold bg-[#121212] text-[#B87333] border border-[#B87333]">
-                        {cust.riskScore} / 100
-                      </span>
-                    </td>
-                    <td className="py-2.5 font-bold text-[#FAF7F0]">{cust.flaggedVolume}</td>
-                    <td className="py-2.5 text-[#D4A017]">{cust.jurisdiction}</td>
-                    <td className="py-2.5 text-right">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#121212] text-[#E6C78B] border border-[#3A3A3A]">
-                        {cust.status}
-                      </span>
+                {highRiskCustomers.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-[#9CA3AF]">
+                      No high-risk counterparties detected in database query.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  highRiskCustomers.map((cust) => (
+                    <tr key={cust.id} className="hover:bg-[#121212]/50">
+                      <td className="py-2.5 font-bold text-[#E6C78B]">{cust.id}</td>
+                      <td className="py-2.5 font-semibold text-[#FAF7F0]">{cust.name}</td>
+                      <td className="py-2.5">
+                        <span className="px-2 py-0.5 rounded font-bold bg-[#121212] text-[#B87333] border border-[#B87333]">
+                          {cust.riskScore} / 100
+                        </span>
+                      </td>
+                      <td className="py-2.5 font-bold text-[#FAF7F0]">{cust.flaggedVolume}</td>
+                      <td className="py-2.5 text-[#D4A017]">{cust.jurisdiction}</td>
+                      <td className="py-2.5 text-right">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#121212] text-[#E6C78B] border border-[#3A3A3A]">
+                          {cust.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -565,16 +567,24 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                {riskReports.map((rep) => (
-                  <tr key={rep.id} className="hover:bg-[#121212]/50">
-                    <td className="py-2.5 font-bold text-[#E6C78B]">{rep.id}</td>
-                    <td className="py-2.5 text-[#FAF7F0]">{rep.title}</td>
-                    <td className="py-2.5 text-[#D4A017]">{rep.analyst}</td>
-                    <td className="py-2.5 text-[#B87333]">{rep.threatLevel}</td>
-                    <td className="py-2.5 text-[#9CA3AF]">{rep.date}</td>
-                    <td className="py-2.5 text-right font-bold text-[#E6C78B]">{rep.status}</td>
+                {riskReports.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-[#9CA3AF]">
+                      No forensic reports filed in database for {companyName}.
+                    </td>
                   </tr>
-                ))}
+                ) : (
+                  riskReports.map((rep) => (
+                    <tr key={rep.id} className="hover:bg-[#121212]/50">
+                      <td className="py-2.5 font-bold text-[#E6C78B]">{rep.id}</td>
+                      <td className="py-2.5 text-[#FAF7F0]">{rep.title}</td>
+                      <td className="py-2.5 text-[#D4A017]">{rep.analyst}</td>
+                      <td className="py-2.5 text-[#B87333]">{rep.threatLevel}</td>
+                      <td className="py-2.5 text-[#9CA3AF]">{rep.date}</td>
+                      <td className="py-2.5 text-right font-bold text-[#E6C78B]">{rep.status}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
