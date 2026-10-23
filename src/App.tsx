@@ -96,6 +96,7 @@ import {
   Lock,
   Building2,
   Globe,
+  AlertTriangle,
 } from 'lucide-react';
 
 export default function App() {
@@ -238,12 +239,60 @@ export default function App() {
       refreshUsersListAsync();
     };
 
-    const handleProfileUpdatedEvent = () => {
+    const handleProfileUpdatedEvent = (e: Event) => {
+      const customEv = e as CustomEvent<UserAccount>;
+      if (customEv?.detail) {
+        const updated = customEv.detail;
+        setSession((prevSession) => {
+          if (!prevSession) return prevSession;
+          if (
+            prevSession.user.id === updated.id ||
+            prevSession.user.email.toLowerCase() === updated.email.toLowerCase()
+          ) {
+            const newRole = updated.role;
+            const updatedUser = { ...prevSession.user, ...updated };
+            const updatedSession = { ...prevSession, user: updatedUser };
+            saveSession(updatedSession);
+
+            // Re-validate current route for the new role!
+            const currentPath = window.location.pathname;
+            if (!isRouteAllowed(currentPath, newRole)) {
+              navigateTo(ROLE_DEFAULT_ROUTES[newRole], true);
+            }
+            return updatedSession;
+          }
+          return prevSession;
+        });
+      }
       refreshUsersListAsync();
+    };
+
+    const handleWindowFocus = async () => {
+      if (isSupabaseConfigured()) {
+        try {
+          const profileRes = await loadCurrentUserProfileAsync();
+          if (!isCancelled && profileRes.success && profileRes.session) {
+            setSession((prevSession) => {
+              if (!prevSession) return profileRes.session;
+              if (prevSession.user.role !== profileRes.session!.user.role) {
+                const newRole = profileRes.session!.user.role;
+                const currentPath = window.location.pathname;
+                if (!isRouteAllowed(currentPath, newRole)) {
+                  navigateTo(ROLE_DEFAULT_ROUTES[newRole], true);
+                }
+              }
+              return profileRes.session;
+            });
+          }
+        } catch (err) {
+          console.warn('Profile sync on focus check:', err);
+        }
+      }
     };
 
     window.addEventListener('finova:user_registered', handleRegisteredEvent);
     window.addEventListener('finova:profile_updated', handleProfileUpdatedEvent);
+    window.addEventListener('focus', handleWindowFocus);
 
     // Listen for Supabase session changes without causing event loops
     if (isSupabaseConfigured()) {
@@ -286,6 +335,7 @@ export default function App() {
         isCancelled = true;
         window.removeEventListener('finova:user_registered', handleRegisteredEvent);
         window.removeEventListener('finova:profile_updated', handleProfileUpdatedEvent);
+        window.removeEventListener('focus', handleWindowFocus);
         authSubscription?.subscription?.unsubscribe();
       };
     }
@@ -294,6 +344,7 @@ export default function App() {
       isCancelled = true;
       window.removeEventListener('finova:user_registered', handleRegisteredEvent);
       window.removeEventListener('finova:profile_updated', handleProfileUpdatedEvent);
+      window.removeEventListener('focus', handleWindowFocus);
     };
   }, [navigateTo, refreshUsersListAsync]);
 
@@ -551,9 +602,9 @@ export default function App() {
         case '/super-admin/system-configuration':
           return <SuperAdminSystemConfigPage />;
         case '/super-admin/ai-configuration':
-          return <SuperAdminAiConfigPage />;
+          return <SuperAdminAiConfigPage currentUser={currentUser} />;
         case '/super-admin/audit-logs':
-          return <SuperAdminAuditLogsPage />;
+          return <SuperAdminAuditLogsPage currentUser={currentUser} />;
         case '/super-admin/enterprise-analytics':
           return <SuperAdminEnterpriseAnalyticsPage />;
         case '/super-admin/reports':
@@ -928,6 +979,24 @@ export default function App() {
               className="px-3 py-1 rounded-lg bg-gradient-to-r from-[#D4A017] to-[#F5C542] text-[#111111] font-bold text-[11px] hover:brightness-110 shadow-[0_0_10px_rgba(212,160,23,0.4)]"
             >
               ← Return to Super Admin Master Settings
+            </button>
+          </div>
+        )}
+
+        {/* Offline Sandbox Simulation Warning Banner */}
+        {((session?.isDemoMode || session?.source === 'local') && isSupabaseConfigured()) && (
+          <div className="bg-amber-950/85 border-b border-amber-600/60 px-4 sm:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-amber-200 shadow-sm">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+              <span>
+                <strong>Offline Sandbox Mode:</strong> Real Supabase authentication is active on this instance. Demo persona sessions do NOT have a PostgreSQL session and cannot access RLS-protected production financial data.
+              </span>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="px-2.5 py-1 rounded bg-amber-900/70 hover:bg-amber-800 text-amber-100 border border-amber-600/60 text-[11px] font-semibold transition-colors shrink-0"
+            >
+              Sign In with Supabase Auth
             </button>
           </div>
         )}

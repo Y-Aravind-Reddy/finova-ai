@@ -24,6 +24,7 @@ export const SignupPage: React.FC<SignupPageProps> = ({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus | null>(null);
 
@@ -40,6 +41,7 @@ export const SignupPage: React.FC<SignupPageProps> = ({
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setSuccessMessage('');
 
     if (password !== confirmPassword) {
       setErrorMessage('Passwords do not match. Please re-enter.');
@@ -66,6 +68,11 @@ export const SignupPage: React.FC<SignupPageProps> = ({
 
       if (res.success && res.session) {
         onSignupSuccess(res.session.user);
+      } else if (res.requiresEmailConfirmation || (res.success && !res.session)) {
+        setSuccessMessage(
+          res.error ||
+            'Account registration submitted to Supabase Auth! Please check your email to confirm your account, then sign in.'
+        );
       } else {
         setErrorMessage(res.error || 'Registration failed. Please try again.');
       }
@@ -125,6 +132,25 @@ export const SignupPage: React.FC<SignupPageProps> = ({
           </div>
 
           <form onSubmit={handleSignup} className="mt-5 space-y-4 font-mono text-xs">
+            {successMessage && (
+              <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-500/50 text-emerald-200 text-xs space-y-2">
+                <div className="font-bold flex items-center gap-1.5 text-emerald-300">
+                  <span>✓</span>
+                  <span>Institutional Account Registration Submitted</span>
+                </div>
+                <div className="text-[11px] text-emerald-200/90 leading-relaxed">
+                  {successMessage}
+                </div>
+                <button
+                  type="button"
+                  onClick={onGoToLogin}
+                  className="mt-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-colors"
+                >
+                  Proceed to Sign In →
+                </button>
+              </div>
+            )}
+
             {errorMessage && (
               <div className="p-3 rounded-xl bg-[#262626] border border-[#B87333] text-[#FAF7F0] text-xs">
                 ⚠ {errorMessage}

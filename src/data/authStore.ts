@@ -8,6 +8,7 @@ export interface AuthSession {
   user: UserAccount;
   expiresAt: number;
   source?: 'supabase' | 'local';
+  isDemoMode?: boolean;
 }
 
 export interface StoredUser extends UserAccount {
@@ -440,6 +441,7 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             user: authUser,
             expiresAt: sbSession.expires_at ? sbSession.expires_at * 1000 : Date.now() + 86400000,
             source: 'supabase',
+            isDemoMode: false,
           };
           saveSession(session);
           return { success: true, session, source: 'supabase' };
@@ -453,7 +455,8 @@ export async function loadCurrentUserProfileAsync(): Promise<{
               .replace(/[._-]/g, ' ')
               .replace(/\b\w/g, (c: string) => c.toUpperCase());
           }
-          const metaRole = (sbSession.user.user_metadata?.role as UserRole) || 'CUSTOMER';
+          // Strict security: Default to CUSTOMER per signup policy
+          const safeRole: UserRole = 'CUSTOMER';
           const metaTenantId = sbSession.user.user_metadata?.tenant_id || 'tenant_apex_bank';
           const metaTenantName = sbSession.user.user_metadata?.tenant_name || getTenantById(metaTenantId)?.name || 'Apex Global Bank';
 
@@ -461,7 +464,7 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             id: sbSession.user.id,
             name: cleanName || 'Apex Customer',
             email,
-            role: metaRole,
+            role: safeRole,
             status: 'Active',
             tier: 'Private Wealth Tier 3',
             createdDate: sbSession.user.created_at ? sbSession.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
@@ -471,7 +474,7 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             twoFactorEnabled: true,
             tenantId: metaTenantId,
             tenantName: metaTenantName,
-            notes: 'Authenticated via live Supabase Auth session',
+            notes: 'Authenticated via live Supabase Auth session (Default Customer Role)',
             authSource: 'supabase',
           };
 
@@ -480,6 +483,7 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             user: fallbackProfile,
             expiresAt: sbSession.expires_at ? sbSession.expires_at * 1000 : Date.now() + 86400000,
             source: 'supabase',
+            isDemoMode: false,
           };
           saveSession(session);
           return { success: true, session, source: 'supabase' };
@@ -490,7 +494,7 @@ export async function loadCurrentUserProfileAsync(): Promise<{
     }
   }
 
-  // Fallback to local stored session (for demo personas)
+  // Fallback to local stored session (for isolated demo personas)
   const stored = getStoredSession();
   if (stored) {
     return { success: true, session: stored, source: stored.source || 'local' };
@@ -500,7 +504,29 @@ export async function loadCurrentUserProfileAsync(): Promise<{
 }
 
 /**
- * Async Authentication with Supabase Auth priority and seeded persona fallback
+ * Dedicated Sandbox Simulation Login
+ * Explicitly isolates demo sessions from real production auth.
+ * Sets isDemoMode = true and source = 'local' so the application knows this is an offline mockup.
+ */
+export function authenticateDemoPersona(email: string): {
+  success: boolean;
+  session?: AuthSession;
+  error?: string;
+} {
+  const localRes = authenticateUser(email, 'finova2026');
+  if (localRes.success && localRes.session) {
+    localRes.session.isDemoMode = true;
+    localRes.session.source = 'local';
+    localRes.session.user.authSource = 'local';
+    saveSession(localRes.session);
+  }
+  return localRes;
+}
+
+/**
+ * Async Authentication with Supabase Auth priority
+ * Production login strictly requires a genuine Supabase Auth session.
+ * Does NOT silently convert failed login attempts into local demo sessions.
  */
 export async function authenticateUserAsync(
   email: string,
@@ -508,7 +534,7 @@ export async function authenticateUserAsync(
 ): Promise<{ success: boolean; session?: AuthSession; error?: string; source?: 'supabase' | 'local' }> {
   const normalizedEmail = email.trim().toLowerCase();
 
-  // 1. If Supabase is configured with an active key, attempt real Supabase Auth
+  // 1. If Supabase is configured with an active key, enforce real Supabase Auth
   if (isSupabaseConfigured()) {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -517,14 +543,14 @@ export async function authenticateUserAsync(
       });
 
       if (!error && data.user && data.session) {
-        // Retrieve real profile from profiles table via fetchCurrentUserProfileResultFromDb
+        // Retrieve verified profile from profiles table via fetchCurrentUserProfileResultFromDb
         const profileRes = await fetchCurrentUserProfileResultFromDb();
         let authenticatedUser: UserAccount;
 
         if (profileRes.profile) {
           authenticatedUser = profileRes.profile;
         } else {
-          // Construct safely from auth metadata
+          // Construct safely from auth user data with strict CUSTOMER fallback
           const userEmail = data.user.email || normalizedEmail;
           let cleanName = (data.user.user_metadata?.name || '').trim();
           if (!cleanName && userEmail) {
@@ -533,7 +559,7 @@ export async function authenticateUserAsync(
               .replace(/[._-]/g, ' ')
               .replace(/\b\w/g, (c: string) => c.toUpperCase());
           }
-          const userRole: UserRole = (data.user.user_metadata?.role as UserRole) || 'CUSTOMER';
+          const userRole: UserRole = 'CUSTOMER';
           const tenantId = data.user.user_metadata?.tenant_id || 'tenant_apex_bank';
           const tenantName = data.user.user_metadata?.tenant_name || getTenantById(tenantId)?.name || 'Apex Global Bank';
 
@@ -561,33 +587,28 @@ export async function authenticateUserAsync(
           user: authenticatedUser,
           expiresAt: data.session.expires_at ? data.session.expires_at * 1000 : Date.now() + 86400000,
           source: 'supabase',
+          isDemoMode: false,
         };
 
         saveSession(session);
         return { success: true, session, source: 'supabase' };
       }
 
-      // If Supabase returned an invalid credentials error, check if this is one of our seeded demo personas
-      const localUsers = getStoredUsers();
-      const localMatch = localUsers.find((u) => u.email.toLowerCase() === normalizedEmail);
-      if (localMatch) {
-        // Fallback to local credential match for verified demo persona
-        const localRes = authenticateUser(email, password);
-        if (localRes.success) {
-          return { ...localRes, source: 'local' };
-        }
-      }
-
+      // DO NOT silently convert failed login attempts into local demo sessions!
       return {
         success: false,
-        error: error?.message || 'Supabase authentication failed. Please check your credentials.',
+        error: error?.message || 'Authentication failed. Please verify institutional credentials in Supabase Auth.',
       };
-    } catch (err) {
+    } catch (err: any) {
       console.error('Supabase signInWithPassword exception:', err);
+      return {
+        success: false,
+        error: err?.message || 'An unexpected error occurred during Supabase authentication.',
+      };
     }
   }
 
-  // Fallback to local authentication
+  // Fallback to local authentication ONLY when Supabase is completely unconfigured
   const localRes = authenticateUser(email, password);
   return { ...localRes, source: 'local' };
 }
@@ -601,7 +622,13 @@ export async function registerCustomerAsync(params: {
   phone: string;
   password: string;
   tenantId?: string;
-}): Promise<{ success: boolean; session?: AuthSession; error?: string; source?: 'supabase' | 'local' }> {
+}): Promise<{
+  success: boolean;
+  session?: AuthSession;
+  error?: string;
+  source?: 'supabase' | 'local';
+  requiresEmailConfirmation?: boolean;
+}> {
   const normalizedEmail = params.email.trim().toLowerCase();
   const selectedTenantId = params.tenantId || 'tenant_apex_bank';
   const tenantMeta = getTenantById(selectedTenantId);
@@ -691,10 +718,20 @@ export async function registerCustomerAsync(params: {
         ];
         saveStoredUsers(updatedStored);
 
+        // If Supabase did not return an active session, email verification is required by project policy
+        if (!data.session) {
+          return {
+            success: true,
+            requiresEmailConfirmation: true,
+            source: 'supabase',
+            error: 'Account registered with Supabase Auth. Email verification is required by platform policy before you can sign in. Please verify your email or request activation from an administrator.',
+          };
+        }
+
         const session: AuthSession = {
-          token: data.session?.access_token || `jwt_${userId}`,
+          token: data.session.access_token,
           user: cleanUser,
-          expiresAt: Date.now() + 86400000,
+          expiresAt: data.session.expires_at ? data.session.expires_at * 1000 : Date.now() + 86400000,
           source: 'supabase',
         };
 

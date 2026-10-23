@@ -9,7 +9,11 @@ import {
   fetchTransactionsResultFromDb,
   fetchKycRecordsResultFromDb,
   uploadKycRecordToDb,
+  fetchTransactionAggregatesResultFromDb,
+  TransactionAggregates,
 } from '../../services/finovaDatabase';
+import { convertToUsd, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
+
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDPieChart } from '../charts3d/ThreeDPieChart';
@@ -64,6 +68,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
   // Live customer transactions strictly scoped to database
   const [tenantTransactions, setTenantTransactions] = useState<CustomerTransaction[]>([]);
+  const [customerAggregates, setCustomerAggregates] = useState<TransactionAggregates | null>(null);
   const [loadingTransactions, setLoadingTransactions] = useState<boolean>(true);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
   const [dbError, setDbError] = useState<string | null>(null);
@@ -73,16 +78,19 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     try {
       const customerUserId = currentUser && 'id' in currentUser ? (currentUser as any).id : undefined;
       // Scoped query for authenticated customer: historical imported records have user_id = NULL
-      const result = await fetchTransactionsResultFromDb(tenantId, {
-        userId: customerUserId,
-      });
+      const [result, aggResult] = await Promise.all([
+        fetchTransactionsResultFromDb(tenantId, { userId: customerUserId }),
+        fetchTransactionAggregatesResultFromDb(tenantId, { userId: customerUserId }),
+      ]);
       setDbSource(result.source);
       setDbError(result.error);
       setTenantTransactions(result.data || []);
+      setCustomerAggregates(aggResult);
     } catch (err: any) {
       setDbSource('fallback');
       setDbError(err?.message || 'Failed to query customer transactions');
       setTenantTransactions([]);
+      setCustomerAggregates(null);
     } finally {
       setLoadingTransactions(false);
     }
@@ -115,27 +123,48 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   const currencySymbol = tenant?.currencySymbol || '$';
   const currencyCode = tenant?.currency || 'USD';
 
-  // Compute live customer balances strictly from database results
+  // Compute live customer balances strictly from unpaginated database aggregates
   const metrics = React.useMemo(() => {
-    const credits = tenantTransactions
-      .filter((t) => t.type === 'Credit' && t.status === 'Settled')
-      .reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-    const debits = tenantTransactions
-      .filter((t) => t.type === 'Debit' && t.status === 'Settled')
-      .reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-    const liquidBalance = Math.max(0, credits - debits);
-    const totalTransactions = tenantTransactions.length;
-    const settledTransactions = tenantTransactions.filter((t) => t.status === 'Settled').length;
+    let liquidBalanceUsd = 0;
+    let liquidBalanceOriginal = 0;
+    let totalTransactions = 0;
+    let settledTransactions = 0;
+
+    if (customerAggregates && customerAggregates.totalCount > 0) {
+      liquidBalanceUsd = Math.max(0, customerAggregates.netLiquidBalanceUsd);
+      totalTransactions = customerAggregates.totalCount;
+      settledTransactions = customerAggregates.settledCount;
+      const currEntry = customerAggregates.volumeByCurrency[currencyCode];
+      liquidBalanceOriginal = currEntry ? Math.max(0, currEntry.original) : liquidBalanceUsd;
+    } else {
+      const credits = tenantTransactions
+        .filter((t) => t.type === 'Credit' && t.status === 'Settled')
+        .reduce((acc, t) => acc + (t.amountUsd ?? convertToUsd(t.amount, t.currency || currencyCode).amountUsd), 0);
+      const debits = tenantTransactions
+        .filter((t) => t.type === 'Debit' && t.status === 'Settled')
+        .reduce((acc, t) => acc + (t.amountUsd ?? convertToUsd(t.amount, t.currency || currencyCode).amountUsd), 0);
+      liquidBalanceUsd = Math.max(0, Math.round((credits - debits) * 100) / 100);
+      totalTransactions = tenantTransactions.length;
+      settledTransactions = tenantTransactions.filter((t) => t.status === 'Settled').length;
+      liquidBalanceOriginal = liquidBalanceUsd;
+    }
 
     return {
-      liquidBalance,
+      liquidBalanceUsd,
+      liquidBalanceOriginal,
+      liquidBalance: liquidBalanceUsd,
       totalTransactions,
       settledTransactions,
-      portfolioNav: liquidBalance,
-      creditLimit: liquidBalance > 0 ? liquidBalance * 0.25 : 0,
+      portfolioNav: liquidBalanceUsd,
+      portfolioNavUsd: liquidBalanceUsd,
+      creditLimit: liquidBalanceUsd > 0 ? Math.round(liquidBalanceUsd * 0.25 * 100) / 100 : 0,
+      creditLimitUsd: liquidBalanceUsd > 0 ? Math.round(liquidBalanceUsd * 0.25 * 100) / 100 : 0,
       creditUsed: 0,
+      creditUsedUsd: 0,
     };
-  }, [tenantTransactions]);
+
+  }, [customerAggregates, tenantTransactions, currencyCode]);
+
 
   // Spending 3D Pie Data dynamically calculated from transactions
   const spendingPieData = React.useMemo(() => {
@@ -242,24 +271,34 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="p-6 rounded-2xl bg-[#262626] border border-[#3A3A3A] shadow-lg">
-            <span className="text-xs text-[#D4A017] font-semibold">LIQUID OPERATING VAULT</span>
+            <span className="text-xs text-[#D4A017] font-semibold">LIQUID OPERATING VAULT (USD BASE)</span>
             <h3 className="font-cinzel text-2xl font-bold text-[#E6C78B] mt-1">
-              {currencySymbol}{metrics.liquidBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencyCode}
+              ${metrics.liquidBalanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })} USD
             </h3>
+            {currencyCode !== 'USD' && (
+              <p className="text-xs text-[#E6C78B]/80 mt-1">
+                Custody Currency: {currencySymbol}{metrics.liquidBalanceOriginal.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencyCode}
+              </p>
+            )}
             <p className="text-xs text-[#9CA3AF] mt-2">
               {metrics.settledTransactions > 0 ? `${metrics.settledTransactions} Verified Settlements` : '0 Settled Transactions'}
             </p>
             <div className="mt-4 pt-3 border-t border-[#3A3A3A] flex items-center justify-between text-xs">
-              <span className="text-[#9CA3AF]">Status: {metrics.liquidBalance > 0 ? 'Active Funds' : 'Awaiting Settlement'}</span>
+              <span className="text-[#9CA3AF]">Status: {metrics.liquidBalanceUsd > 0 ? 'Active Funds' : 'Awaiting Settlement'}</span>
               <span className="text-[#D4A017] font-bold">Ledger Verified</span>
             </div>
           </div>
 
           <div className="p-6 rounded-2xl bg-[#262626] border border-[#3A3A3A] shadow-lg">
-            <span className="text-xs text-[#D4A017] font-semibold">SECURITIES & CUSTODY</span>
+            <span className="text-xs text-[#D4A017] font-semibold">SECURITIES & CUSTODY (USD BASE)</span>
             <h3 className="font-cinzel text-2xl font-bold text-[#FAF7F0] mt-1">
-              {currencySymbol}{metrics.portfolioNav.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencyCode}
+              ${metrics.portfolioNavUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })} USD
             </h3>
+            {currencyCode !== 'USD' && (
+              <p className="text-xs text-[#E6C78B]/80 mt-1">
+                Custody Currency: {currencySymbol}{metrics.liquidBalanceOriginal.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencyCode}
+              </p>
+            )}
             <p className="text-xs text-[#9CA3AF] mt-2">Custody: {companyName} Prime</p>
             <div className="mt-4 pt-3 border-t border-[#3A3A3A] flex items-center justify-between text-xs">
               <span className="text-[#9CA3AF]">Holdings: {metrics.totalTransactions > 0 ? `${metrics.totalTransactions} Custody Orders` : 'None Allocated'}</span>
@@ -268,13 +307,14 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
           </div>
 
           <div className="p-6 rounded-2xl bg-[#262626] border border-[#3A3A3A] shadow-lg">
-            <span className="text-xs text-[#D4A017] font-semibold">SOVEREIGN CREDIT FACILITY</span>
+            <span className="text-xs text-[#D4A017] font-semibold">SOVEREIGN CREDIT FACILITY (USD BASE)</span>
             <h3 className="font-cinzel text-2xl font-bold text-[#E6C78B] mt-1">
-              {currencySymbol}{metrics.creditLimit.toLocaleString(undefined, { minimumFractionDigits: 2 })} Limit
+              ${metrics.creditLimitUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })} Limit
             </h3>
             <p className="text-xs text-[#9CA3AF] mt-2">
-              Used: {currencySymbol}0.00 (0.0%)
+              Used: $0.00 (0.0%)
             </p>
+
             <div className="mt-4 pt-3 border-t border-[#3A3A3A] flex items-center justify-between text-xs">
               <span className="text-[#9CA3AF]">Covenant: Strict Risk Cap</span>
               <span className="text-[#D4A017] font-bold">Unencumbered</span>
@@ -372,32 +412,40 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <ThreeDKpiCard
           title="Liquid Cash Balance"
-          value={`${currencySymbol}${metrics.liquidBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-          subValue={`${metrics.settledTransactions} Verified Settlements`}
-          change={metrics.liquidBalance > 0 ? '+100%' : '0.0%'}
+          value={`$${metrics.liquidBalanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+          subValue={
+            currencyCode !== 'USD'
+              ? `${currencySymbol}${metrics.liquidBalanceOriginal.toLocaleString(undefined, { minimumFractionDigits: 2 })} ${currencyCode} • ${metrics.settledTransactions} Settlements`
+              : `${metrics.settledTransactions} Verified Settlements`
+          }
+          change={metrics.liquidBalanceUsd > 0 ? '+100%' : '0.0%'}
           trend="up"
-          tag="Operating Cash"
+          tag="USD Base"
           variant="gold-accent"
           icon={<Wallet size={20} />}
-          sparkline={metrics.liquidBalance > 0 ? [10, 20, 40, 60, 80, 95, 100] : [0, 0, 0, 0, 0, 0, 0]}
+          sparkline={metrics.liquidBalanceUsd > 0 ? [10, 20, 40, 60, 80, 95, 100] : [0, 0, 0, 0, 0, 0, 0]}
         />
         <ThreeDKpiCard
           title="Total Portfolio NAV"
-          value={`${currencySymbol}${metrics.portfolioNav.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-          subValue="Multi-Asset Custody"
-          change={metrics.portfolioNav > 0 ? '+100%' : '0.0%'}
+          value={`$${metrics.portfolioNavUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+          subValue={
+            currencyCode !== 'USD'
+              ? `${currencySymbol}${metrics.liquidBalanceOriginal.toLocaleString(undefined, { minimumFractionDigits: 2 })} ${currencyCode} Custody`
+              : "Multi-Asset Custody (USD)"
+          }
+          change={metrics.portfolioNavUsd > 0 ? '+100%' : '0.0%'}
           trend="up"
-          tag="Securities & PE"
+          tag="USD Base"
           icon={<Building size={20} />}
-          sparkline={metrics.portfolioNav > 0 ? [10, 25, 45, 65, 85, 95, 100] : [0, 0, 0, 0, 0, 0, 0]}
+          sparkline={metrics.portfolioNavUsd > 0 ? [10, 25, 45, 65, 85, 95, 100] : [0, 0, 0, 0, 0, 0, 0]}
         />
         <ThreeDKpiCard
           title="Sovereign Credit Line"
-          value={`${currencySymbol}${metrics.creditLimit.toLocaleString(undefined, { minimumFractionDigits: 2 })} Limit`}
-          subValue={`${currencySymbol}0.00 Used (0.0%)`}
+          value={`$${metrics.creditLimitUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })} Limit`}
+          subValue="$0.00 Used (USD Base)"
           change="Optimal 0.0%"
           trend="up"
-          tag="Zero Penalty"
+          tag="USD Base"
           icon={<CreditCard size={20} />}
           sparkline={[0, 0, 0, 0, 0, 0, 0]}
         />
@@ -632,9 +680,19 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           {tx.type}
                         </span>
                       </td>
-                      <td className="py-2.5 font-bold text-sm text-[#FAF7F0]">
-                        {tx.type === 'Credit' ? '+' : '-'}{currencySymbol}{tx.amount.toLocaleString()} {currencyCode}
+                      <td className="py-2.5 font-bold text-[#FAF7F0]">
+                        <div>
+                          <span>
+                            {tx.type === 'Credit' ? '+' : '-'}${(tx.amountUsd ?? convertToUsd(tx.amount, tx.currency || currencyCode).amountUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                          </span>
+                          {currencyCode !== 'USD' && (
+                            <span className="block text-[10px] text-[#9CA3AF] font-normal">
+                              {tx.type === 'Credit' ? '+' : '-'}{currencySymbol}{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencyCode} @ {(tx.exchangeRate ?? 1).toFixed(4)}
+                            </span>
+                          )}
+                        </div>
                       </td>
+
                       <td className="py-2.5 text-right">
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#121212] text-[#E6C78B] border border-[#3A3A3A]">
                           {tx.status}

@@ -254,6 +254,11 @@ Key Observation: System health is nominal at 99.992%. High-value escrow transact
             Execute
           </button>
         </div>
+
+        {/* Compliance & Heuristic Benchmark Disclaimer */}
+        <div className="px-3 py-1.5 bg-[#0D0D0D] border-t border-[#3A3A3A] text-[9px] font-mono text-[#9CA3AF] text-center">
+          Heuristic benchmark synthesis. Not legally binding or automated financial advice. AML flags require compliance officer adjudication.
+        </div>
       </div>
     </div>
   );

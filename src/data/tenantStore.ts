@@ -1,4 +1,5 @@
 import { UserRole } from './finovaDatasets';
+import { convertToUsd } from '../services/currencyService';
 
 export interface TenantWorkspace {
   id: string; // e.g. 'tenant_apex_bank'
@@ -298,19 +299,42 @@ export interface PlatformSaaSMetrics {
   suspendedTenants: number;
   totalMrr: number;
   totalArr: number;
+  totalMrrUsd: number;
+  totalArrUsd: number;
   aggregateUsers: number;
   aggregateVolumeYTD: number;
+  aggregateVolumeYtdUsd: number;
+  mrrByCurrency: Record<string, number>;
   platformUptime: number;
   averageComplianceScore: number;
   systemUptime: string;
   aiQueriesToday: number;
   apiErrorRate: string;
+  reportingBaseCurrency: 'USD';
 }
 
 export function getPlatformSaaSMetrics(): PlatformSaaSMetrics {
   const tenants = getStoredTenants();
   const activeTenants = tenants.filter((t) => t.status === 'Active');
   const suspendedTenants = tenants.filter((t) => t.status === 'Suspended');
+
+  let totalMrrUsd = 0;
+  let aggregateVolumeYtdUsd = 0;
+  const mrrByCurrency: Record<string, number> = {};
+
+  tenants.forEach((t) => {
+    if (t.status === 'Active') {
+      const convMrr = convertToUsd(t.mrr, t.currency);
+      totalMrrUsd += convMrr.amountUsd;
+      mrrByCurrency[t.currency] = (mrrByCurrency[t.currency] || 0) + t.mrr;
+    }
+    const convVol = convertToUsd(t.transactionVolumeYTD, t.currency);
+    aggregateVolumeYtdUsd += convVol.amountUsd;
+  });
+
+  totalMrrUsd = Math.round(totalMrrUsd * 100) / 100;
+  aggregateVolumeYtdUsd = Math.round(aggregateVolumeYtdUsd * 100) / 100;
+  const totalArrUsd = Math.round(totalMrrUsd * 12 * 100) / 100;
 
   const totalMrr = tenants.reduce((acc, t) => acc + (t.status === 'Active' ? t.mrr : 0), 0);
   const totalArr = totalMrr * 12;
@@ -326,12 +350,18 @@ export function getPlatformSaaSMetrics(): PlatformSaaSMetrics {
     suspendedTenants: suspendedTenants.length,
     totalMrr,
     totalArr,
+    totalMrrUsd,
+    totalArrUsd,
     aggregateUsers,
     aggregateVolumeYTD,
+    aggregateVolumeYtdUsd,
+    mrrByCurrency,
     platformUptime: 99.992,
     averageComplianceScore: avgCompliance,
     systemUptime: '99.992%',
     aiQueriesToday: 34280,
     apiErrorRate: '0.008%',
+    reportingBaseCurrency: 'USD',
   };
 }
+

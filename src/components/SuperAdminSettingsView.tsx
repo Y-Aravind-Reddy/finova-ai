@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { FinovaLogo } from './FinovaLogo';
 import { UserAccount, UserRole, ADMIN_DATASET } from '../data/finovaDatasets';
 import { UserManagementModal } from './UserManagementModal';
@@ -16,7 +16,17 @@ import {
   Lock,
   CheckCircle,
   RotateCw,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
+import {
+  fetchAiConfigurationResultFromDb,
+  saveAiConfigurationToDb,
+  fetchAuditLogsResultFromDb,
+  AuditLogEntry,
+  DEFAULT_AI_CONFIGURATION,
+} from '../services/finovaDatabase';
+import { getStoredSession } from '../data/authStore';
 
 interface SuperAdminSettingsViewProps {
   users: UserAccount[];
@@ -42,6 +52,59 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
   const [filterRole, setFilterRole] = useState<string>(initialRoleFilter);
 
+  // AI Configuration State (Persistent with Supabase)
+  const [aiSettings, setAiSettings] = useState({
+    sentinelConfidenceThreshold: DEFAULT_AI_CONFIGURATION.sentinelConfidenceThreshold,
+    autoFreezeThreshold: DEFAULT_AI_CONFIGURATION.autoFreezeThreshold,
+    maxDailyWireVelocity: DEFAULT_AI_CONFIGURATION.maxDailyWireVelocity,
+    dualKeySignoffEnabled: DEFAULT_AI_CONFIGURATION.dualKeySignoffEnabled,
+    realTimeAuditLogging: DEFAULT_AI_CONFIGURATION.realTimeAuditLogging,
+  });
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiSaved, setAiSaved] = useState(false);
+  const [aiSaveError, setAiSaveError] = useState<string | null>(null);
+
+  // Audit Logs State (Persistent with Supabase public.audit_logs)
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  const loadAiConfig = useCallback(async () => {
+    setAiLoading(true);
+    setAiSaveError(null);
+    try {
+      const res = await fetchAiConfigurationResultFromDb();
+      setAiSettings({
+        sentinelConfidenceThreshold: res.config.sentinelConfidenceThreshold,
+        autoFreezeThreshold: res.config.autoFreezeThreshold,
+        maxDailyWireVelocity: res.config.maxDailyWireVelocity,
+        dualKeySignoffEnabled: res.config.dualKeySignoffEnabled,
+        realTimeAuditLogging: res.config.realTimeAuditLogging,
+      });
+    } catch (err: any) {
+      setAiSaveError(err?.message || 'Failed to reload AI configuration from Supabase storage.');
+    } finally {
+      setAiLoading(false);
+    }
+  }, []);
+
+  const loadAuditLogs = useCallback(async () => {
+    setAuditLoading(true);
+    setAuditError(null);
+    try {
+      const res = await fetchAuditLogsResultFromDb();
+      setAuditLogs(res.logs);
+      if (res.error && !res.isDbConnected) {
+        setAuditError(res.error);
+      }
+    } catch (err: any) {
+      setAuditError(err?.message || 'Failed to query public.audit_logs from Supabase.');
+    } finally {
+      setAuditLoading(false);
+    }
+  }, []);
+
   React.useEffect(() => {
     if (initialTab) {
       setActiveTab(initialTab);
@@ -54,15 +117,13 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
     }
   }, [initialTab, initialRoleFilter, onRefreshUsers]);
 
-  // AI Configuration State
-  const [aiSettings, setAiSettings] = useState({
-    sentinelConfidenceThreshold: 92,
-    autoFreezeThreshold: 85,
-    maxDailyWireVelocity: 5000000,
-    dualKeySignoffEnabled: true,
-    realTimeAuditLogging: true,
-  });
-  const [aiSaved, setAiSaved] = useState(false);
+  React.useEffect(() => {
+    if (activeTab === 'ai_config') {
+      loadAiConfig();
+    } else if (activeTab === 'audit_logs') {
+      loadAuditLogs();
+    }
+  }, [activeTab, loadAiConfig, loadAuditLogs]);
 
   const handleSaveUser = (userData: Partial<UserAccount>) => {
     if (editingUser) {
@@ -96,10 +157,34 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
     }
   };
 
-  const handleSaveAiConfig = (e: React.FormEvent) => {
+  const handleSaveAiConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAiSaved(true);
-    setTimeout(() => setAiSaved(false), 3000);
+    setAiSaving(true);
+    setAiSaved(false);
+    setAiSaveError(null);
+
+    const caller = getStoredSession()?.user || {
+      role: 'SUPER_ADMIN',
+      name: 'Alexander Vance',
+      email: 'superadmin@finova.ai',
+    };
+
+    try {
+      const result = await saveAiConfigurationToDb(aiSettings, caller);
+      if (!result.success) {
+        // Disclose real error - strictly prevent false success
+        setAiSaveError(result.error || 'Failed to save configuration to Supabase.');
+        setAiSaved(false);
+      } else {
+        setAiSaved(true);
+        setTimeout(() => setAiSaved(false), 4000);
+      }
+    } catch (err: any) {
+      setAiSaveError(err?.message || 'Unexpected exception saving AI parameters.');
+      setAiSaved(false);
+    } finally {
+      setAiSaving(false);
+    }
   };
 
   const adminAuthorizedUsers = users.filter((u) => u.role === 'SUPER_ADMIN' || u.role === 'ADMIN');
@@ -342,16 +427,36 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
           ======================================================== */}
       {activeTab === 'ai_config' && (
         <div className="rounded-2xl bg-[#1E1E1E]/95 border border-[#D4A017]/30 p-6 shadow-[0_12px_36px_rgba(0,0,0,0.6)]">
-          <h3 className="font-cinzel text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
-            Finova Sentinel AI Configuration
-          </h3>
-          <p className="font-mono text-xs text-[#D4A017]/70 mt-1">
-            Global autonomous risk thresholds, escrow freeze triggers, and wire velocity limits.
-          </p>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="font-cinzel text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
+                Finova Sentinel AI Configuration
+              </h3>
+              <p className="font-mono text-xs text-[#D4A017]/70 mt-1">
+                Global autonomous risk thresholds, escrow freeze triggers, and wire velocity limits persisted in Supabase.
+              </p>
+            </div>
+            <button
+              onClick={loadAiConfig}
+              disabled={aiLoading || aiSaving}
+              className="px-3 py-1.5 rounded-xl bg-[#141414] border border-[#D4A017]/40 text-[#FAF7F0] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              title="Reload from Supabase"
+            >
+              <RefreshCw size={12} className={aiLoading ? 'animate-spin text-[#D4A017]' : 'text-[#D4A017]'} />
+              <span>Reload</span>
+            </button>
+          </div>
+
+          {aiSaveError && (
+            <div className="mt-4 p-3 rounded-xl bg-[#2D0A0A] border border-[#EF4444]/60 text-xs font-mono text-[#FCA5A5] flex items-center gap-2">
+              <AlertTriangle size={15} className="text-[#EF4444] shrink-0" />
+              <span>Configuration save failed: {aiSaveError}</span>
+            </div>
+          )}
 
           {aiSaved && (
             <div className="mt-4 p-3 rounded-xl bg-[#C08A00]/20 border border-[#C08A00] text-xs font-mono text-[#F5C542] flex items-center gap-2">
-              <CheckCircle size={15} /> Neural parameters updated and cryptographically deployed.
+              <CheckCircle size={15} /> Neural parameters updated and cryptographically deployed to Supabase storage.
             </div>
           )}
 
@@ -369,6 +474,7 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
                 onChange={(e) =>
                   setAiSettings({ ...aiSettings, sentinelConfidenceThreshold: Number(e.target.value) })
                 }
+                disabled={aiLoading || aiSaving}
                 className="w-full accent-[#F5C542]"
               />
             </div>
@@ -386,6 +492,7 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
                 onChange={(e) =>
                   setAiSettings({ ...aiSettings, autoFreezeThreshold: Number(e.target.value) })
                 }
+                disabled={aiLoading || aiSaving}
                 className="w-full accent-[#F5C542]"
               />
             </div>
@@ -398,6 +505,7 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
                   onChange={(e) =>
                     setAiSettings({ ...aiSettings, dualKeySignoffEnabled: e.target.checked })
                   }
+                  disabled={aiLoading || aiSaving}
                   className="rounded bg-[#111111] border-[#D4A017]/40 text-[#D4A017]"
                 />
                 <span className="text-[#FAF7F0]">Enforce Dual-Key Super Admin Signoff for Wires &gt; $5,000,000 USD</span>
@@ -410,17 +518,19 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
                   onChange={(e) =>
                     setAiSettings({ ...aiSettings, realTimeAuditLogging: e.target.checked })
                   }
+                  disabled={aiLoading || aiSaving}
                   className="rounded bg-[#111111] border-[#D4A017]/40 text-[#D4A017]"
                 />
-                <span className="text-[#FAF7F0]">Real-time Cryptographic Audit Trail to cleaned_admin_data_pandas.xls</span>
+                <span className="text-[#FAF7F0]">Real-time Cryptographic Audit Trail Stream to public.audit_logs</span>
               </label>
             </div>
 
             <button
               type="submit"
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A017] to-[#F5C542] text-[#111111] font-bold text-xs hover:brightness-110 shadow-[0_0_15px_rgba(212,160,23,0.35)]"
+              disabled={aiLoading || aiSaving}
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A017] to-[#F5C542] text-[#111111] font-bold text-xs hover:brightness-110 shadow-[0_0_15px_rgba(212,160,23,0.35)] disabled:opacity-50"
             >
-              Deploy AI Parameters
+              {aiSaving ? 'Deploying to Supabase...' : 'Deploy AI Parameters'}
             </button>
           </form>
         </div>
@@ -431,12 +541,32 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
           ======================================================== */}
       {activeTab === 'audit_logs' && (
         <div className="rounded-2xl bg-[#1E1E1E]/95 border border-[#D4A017]/30 p-5 shadow-[0_12px_36px_rgba(0,0,0,0.6)]">
-          <h3 className="font-cinzel text-lg font-bold text-[#FFF8E7]">
-            Immutable System Audit Logs
-          </h3>
-          <p className="font-mono text-xs text-[#D4A017]/70 mt-1">
-            Permanent record from cleaned_admin_data_pandas.xls
-          </p>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="font-cinzel text-lg font-bold text-[#FFF8E7]">
+                Immutable System Audit Logs
+              </h3>
+              <p className="font-mono text-xs text-[#D4A017]/70 mt-1">
+                Permanent cryptographic ledger verified from Supabase public.audit_logs
+              </p>
+            </div>
+            <button
+              onClick={loadAuditLogs}
+              disabled={auditLoading}
+              className="px-3 py-1.5 rounded-xl bg-[#141414] border border-[#D4A017]/40 text-[#FAF7F0] text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              title="Refresh Audit Logs"
+            >
+              <RefreshCw size={12} className={auditLoading ? 'animate-spin text-[#D4A017]' : 'text-[#D4A017]'} />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          {auditError && (
+            <div className="mt-3 p-3 rounded-xl bg-[#2D0A0A] border border-[#EF4444]/60 text-xs font-mono text-[#FCA5A5] flex items-center gap-2">
+              <AlertTriangle size={15} className="text-[#EF4444] shrink-0" />
+              <span>Audit Query Notice: {auditError}</span>
+            </div>
+          )}
 
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-left font-mono text-xs">
@@ -444,27 +574,46 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
                 <tr className="border-b border-[#D4A017]/20 text-[#D4A017]/80 text-[11px]">
                   <th className="pb-2">Audit ID</th>
                   <th className="pb-2">Timestamp</th>
-                  <th className="pb-2">Actor</th>
+                  <th className="pb-2">Actor & Role</th>
                   <th className="pb-2">Action</th>
+                  <th className="pb-2">Target</th>
                   <th className="pb-2">IP Node</th>
                   <th className="pb-2 text-right">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#D4A017]/10 text-[#FAF7F0]">
-                {ADMIN_DATASET.systemAuditLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-[#301B05]/20">
-                    <td className="py-2.5 font-bold text-[#F5C542]">{log.id}</td>
-                    <td className="py-2.5 text-[#6B7280]">{log.timestamp}</td>
-                    <td className="py-2.5 text-[#FFF8E7]">{log.actor}</td>
-                    <td className="py-2.5 text-[#D4A017]">{log.action}</td>
-                    <td className="py-2.5 text-[#6B7280]">{log.ipAddress}</td>
-                    <td className="py-2.5 text-right">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#C08A00]/20 text-[#F5C542] border border-[#C08A00]">
-                        {log.status}
-                      </span>
+                {auditLoading && auditLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-[#9CA3AF]">
+                      Loading audit records from Supabase...
                     </td>
                   </tr>
-                ))}
+                ) : auditLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-[#9CA3AF]">
+                      No audit events recorded in database yet.
+                    </td>
+                  </tr>
+                ) : (
+                  auditLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-[#301B05]/20">
+                      <td className="py-2.5 font-bold text-[#F5C542]">{log.id}</td>
+                      <td className="py-2.5 text-[#6B7280]">{log.timestamp}</td>
+                      <td className="py-2.5 text-[#FFF8E7]">
+                        <span>{log.actor}</span>
+                        <span className="block text-[10px] text-[#9CA3AF]">{log.role}</span>
+                      </td>
+                      <td className="py-2.5 text-[#D4A017]">{log.action}</td>
+                      <td className="py-2.5 text-[#FAF7F0]/80">{log.target}</td>
+                      <td className="py-2.5 text-[#6B7280]">{log.ipAddress}</td>
+                      <td className="py-2.5 text-right">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#C08A00]/20 text-[#F5C542] border border-[#C08A00]">
+                          {log.status || 'Authorized'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

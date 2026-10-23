@@ -16,7 +16,10 @@ import {
   fetchTenantWorkspacesResultFromDb,
   fetchFraudCasesResultFromDb,
   fetchTransactionsResultFromDb,
+  fetchFraudAggregatesResultFromDb,
 } from '../../services/finovaDatabase';
+import { convertToUsd, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
+
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
@@ -24,6 +27,7 @@ import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDRevenueViz } from '../charts3d/ThreeDRevenueViz';
 import { ThreeDProgressRing } from '../charts3d/ThreeDProgressRing';
 import { UserManagementModal } from '../UserManagementModal';
+import { ChangeRoleModal } from '../common/ChangeRoleModal';
 import {
   Users,
   Activity,
@@ -44,6 +48,7 @@ import {
   Filter,
   RotateCw,
   Database,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface SuperAdminDashboardProps {
@@ -69,6 +74,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
+  const [changeRoleUser, setChangeRoleUser] = useState<UserAccount | null>(null);
+  const [changeRoleOpen, setChangeRoleOpen] = useState(false);
   const [filterRole, setFilterRole] = useState<string>('ALL');
 
   // Multi-Tenant Inspector State
@@ -83,31 +90,35 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [dbFraudPrevented, setDbFraudPrevented] = useState<number>(0);
   const [dbFraudCaseCount, setDbFraudCaseCount] = useState<number>(0);
   const [dbLoading, setDbLoading] = useState<boolean>(false);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   const loadSuperAdminData = useCallback(async () => {
     setDbLoading(true);
+    setDbError(null);
     try {
-      const [wRes, fRes] = await Promise.all([
+      const [wRes, fAgg] = await Promise.all([
         fetchTenantWorkspacesResultFromDb(),
-        fetchFraudCasesResultFromDb('ALL'),
+        fetchFraudAggregatesResultFromDb('ALL'),
       ]);
 
       if (wRes.data && wRes.data.length > 0) {
         setTenants(wRes.data);
       }
 
-      const fraudData = fRes.data || [];
-      const prevented = fraudData
-        .filter((f) => f.status === 'Frozen Escrow' || f.status === 'Flagged')
-        .reduce((acc, f) => acc + (Number(f.amount) || 0), 0);
-      setDbFraudPrevented(prevented);
-      setDbFraudCaseCount(fraudData.length);
-    } catch (e) {
+      setDbFraudPrevented(fAgg.preventedVolumeUsd);
+      setDbFraudCaseCount(fAgg.totalCases);
+
+      if (wRes.error) {
+        setDbError(wRes.error);
+      }
+    } catch (e: any) {
       console.warn('Super Admin DB query note:', e);
+      setDbError(e?.message || 'Database query error');
     } finally {
       setDbLoading(false);
     }
   }, []);
+
 
   useEffect(() => {
     loadSuperAdminData();
@@ -169,36 +180,33 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     { label: 'Sun', value: 9800, secondaryValue: 8000, meta: 'Cold Ledger Sync' },
   ];
 
-  // User CRUD
-  const handleSaveUser = (userData: Partial<UserAccount>) => {
-    if (editingUser) {
-      saveProfileToDb({ ...editingUser, ...userData });
-      const updated = users.map((u) =>
-        u.id === editingUser.id ? ({ ...u, ...userData, authSource: editingUser.authSource } as UserAccount) : u
-      );
-      onUpdateUsers(updated);
-    } else {
-      const targetTenant = getTenantById(userData.tenantId);
-      const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
-      const newUser: UserAccount = {
-        id: newId,
-        name: userData.name || 'New Staff',
-        email: userData.email || '',
-        role: userData.role || 'ADMIN',
-        status: userData.status || 'Active',
-        tier: userData.tier || 'Executive Staff',
-        createdDate: new Date().toISOString().split('T')[0],
-        lastActive: 'Just now',
-        phone: userData.phone || '+1 (212) 555-0100',
-        country: userData.country || 'United States',
-        twoFactorEnabled: true,
-        tenantId: userData.tenantId || 'tenant_apex_bank',
-        tenantName: targetTenant?.name || 'Apex Global Bank',
-        notes: userData.notes || 'Created via Super Admin SaaS Panel',
-        authSource: 'local',
-      };
-      saveProfileToDb(newUser);
+  // User Provisioning (New Account)
+  const handleSaveUser = async (userData: Partial<UserAccount>) => {
+    const targetTenant = getTenantById(userData.tenantId);
+    const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newUser: UserAccount = {
+      id: newId,
+      name: userData.name || 'New Staff',
+      email: userData.email || '',
+      role: userData.role || 'ADMIN',
+      status: userData.status || 'Active',
+      tier: userData.tier || 'Executive Staff',
+      createdDate: new Date().toISOString().split('T')[0],
+      lastActive: 'Just now',
+      phone: userData.phone || '+1 (212) 555-0100',
+      country: userData.country || 'United States',
+      twoFactorEnabled: true,
+      tenantId: userData.tenantId || 'tenant_apex_bank',
+      tenantName: targetTenant?.name || 'Apex Global Bank',
+      notes: userData.notes || 'Created via Super Admin SaaS Panel',
+      authSource: 'local',
+    };
+    const res = await saveProfileToDb(newUser);
+    if (res.success) {
       onUpdateUsers([newUser, ...users]);
+      if (onRefreshUsers) onRefreshUsers();
+    } else {
+      alert(`Provisioning failed: ${res.error}`);
     }
     setEditingUser(null);
   };
@@ -319,6 +327,37 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         </div>
       )}
 
+      {/* Database / RLS Status Banner */}
+      {dbError && (
+        <div className="rounded-xl p-4 bg-[#1E1A10] border border-[#D4A017]/50 text-[#FAF7F0] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-start gap-3">
+            <ShieldAlert size={18} className="text-[#D4A017] shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-[#E6C78B] text-xs">
+                Platform Root Database Telemetry Notice
+              </p>
+              <p className="text-[11px] text-[#FAF7F0]/80 mt-0.5 max-w-3xl">
+                {dbError}
+              </p>
+              <p className="text-[10px] text-[#9CA3AF] mt-1">
+                PostgreSQL Row-Level Security restricts table queries to authenticated sessions. Authenticate with a confirmed <code className="text-[#E6C78B]">SUPER_ADMIN</code> account to stream live global telemetry.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              loadSuperAdminData();
+              if (onRefreshUsers) onRefreshUsers();
+            }}
+            disabled={dbLoading}
+            className="px-3 py-1.5 rounded-lg bg-[#121212] border border-[#D4A017]/60 text-[#D4A017] text-xs hover:bg-[#262626] flex items-center gap-1.5 shrink-0 transition-all disabled:opacity-50"
+          >
+            <RotateCw size={12} className={dbLoading ? 'animate-spin' : ''} />
+            <span>Retry Query</span>
+          </button>
+        </div>
+      )}
+
       {/* 6 Top 3D KPI Cards - Multi-Tenant SaaS Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <ThreeDKpiCard
@@ -333,32 +372,32 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         />
         <ThreeDKpiCard
           title="Platform MRR"
-          value={`$${(tenants.reduce((acc, t) => acc + (t.mrr || 0), 0) / 1000).toFixed(1)}k`}
-          subValue={`ARR: $${((tenants.reduce((acc, t) => acc + (t.mrr || 0), 0) * 12) / 1000000).toFixed(2)}M`}
+          value={`$${(saasMetrics.totalMrrUsd / 1000).toFixed(1)}k`}
+          subValue={`ARR: $${(saasMetrics.totalArrUsd / 1000000).toFixed(2)}M (USD Base)`}
           change="+28.4%"
           trend="up"
-          tag="SaaS Revenue"
+          tag="USD Base"
           variant="gold-accent"
           icon={<DollarSign size={20} />}
           sparkline={[65, 78, 85, 92, 102, 114, 123]}
         />
         <ThreeDKpiCard
           title="Total Assets"
-          value={`$${(saasMetrics.aggregateVolumeYTD / 1000000000).toFixed(2)}B`}
-          subValue="All Tenants YTD"
+          value={`$${(saasMetrics.aggregateVolumeYtdUsd / 1000000000).toFixed(2)}B`}
+          subValue="Cross-Tenant YTD (USD)"
           change="+34.8%"
           trend="up"
-          tag="Cross-Ledger"
+          tag="USD Normalized"
           icon={<Activity size={20} />}
           sparkline={[210, 280, 340, 410, 480, 510, 531]}
         />
         <ThreeDKpiCard
           title="Fraud Prevented"
           value={`$${dbFraudPrevented >= 1000000 ? (dbFraudPrevented / 1000000).toFixed(2) + 'M' : dbFraudPrevented.toLocaleString()}`}
-          subValue={`${dbFraudCaseCount} Cases in Database`}
+          subValue={`${dbFraudCaseCount} Cases (USD Base)`}
           change={dbFraudPrevented > 0 ? 'Surveillance Active' : 'Clean Ledger'}
           trend="up"
-          tag="Sentinel Engine"
+          tag="USD Base"
           icon={<ShieldAlert size={20} />}
           sparkline={dbFraudPrevented > 0 ? [10, 20, 25, 30] : [0, 0, 0, 0]}
         />
@@ -624,13 +663,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => {
-                            setEditingUser(u);
-                            setModalOpen(true);
+                            setChangeRoleUser(u);
+                            setChangeRoleOpen(true);
                           }}
-                          className="p-1.5 rounded-lg bg-[#121212] border border-[#3A3A3A] text-[#D4A017] hover:bg-[#3A3A3A]"
-                          title="Edit User"
+                          className="p-1.5 rounded-lg bg-[#121212] border border-[#3A3A3A] text-[#D4A017] hover:bg-[#3A3A3A] flex items-center gap-1 text-[11px] font-semibold"
+                          title="Change User Role (Institutional Governance)"
                         >
-                          <Edit size={14} />
+                          <ShieldCheck size={14} />
+                          <span className="hidden sm:inline">Role</span>
                         </button>
                         <button
                           onClick={() => handleDeleteUser(u.id)}
@@ -649,7 +689,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         </div>
       </div>
 
-      {/* User Management Modal */}
+      {/* User Provisioning Modal */}
       <UserManagementModal
         currentRole={currentRole}
         isOpen={modalOpen}
@@ -659,6 +699,20 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         }}
         onSave={handleSaveUser}
         editingUser={editingUser}
+      />
+
+      {/* Dedicated Change Role Modal */}
+      <ChangeRoleModal
+        isOpen={changeRoleOpen}
+        onClose={() => {
+          setChangeRoleOpen(false);
+          setChangeRoleUser(null);
+        }}
+        targetUser={changeRoleUser}
+        currentRole={currentRole}
+        onRoleChanged={() => {
+          if (onRefreshUsers) onRefreshUsers();
+        }}
       />
     </div>
   );

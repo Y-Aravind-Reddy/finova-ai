@@ -10,7 +10,11 @@ import {
   fetchTransactionsResultFromDb,
   fetchKycRecordsResultFromDb,
   updateFraudCaseStatusInDb,
+  fetchFraudAggregatesResultFromDb,
+  fetchTransactionAggregatesResultFromDb,
 } from '../../services/finovaDatabase';
+import { convertToUsd, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
+
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDTransactionHeatmap } from '../charts3d/ThreeDTransactionHeatmap';
@@ -57,7 +61,11 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
   // Load tenant-isolated fraud, transaction, and KYC records
   const [transactions, setTransactions] = useState<FinanceFraudTransaction[]>([]);
   const [monitoredTxnCount, setMonitoredTxnCount] = useState<number>(0);
-  const [monitoredTxnVolume, setMonitoredTxnVolume] = useState<number>(0);
+  const [monitoredTxnVolumeUsd, setMonitoredTxnVolumeUsd] = useState<number>(0);
+  const [monitoredTxnVolumeOriginal, setMonitoredTxnVolumeOriginal] = useState<number>(0);
+  const [fraudPreventedVolumeUsd, setFraudPreventedVolumeUsd] = useState<number>(0);
+  const [fraudPreventedVolumeOriginal, setFraudPreventedVolumeOriginal] = useState<number>(0);
+  const [fraudPreventedCount, setFraudPreventedCount] = useState<number>(0);
   const [kycQueueCount, setKycQueueCount] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
@@ -67,36 +75,35 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
   const loadAllData = React.useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Load fraud cases
-      const fResult = await fetchFraudCasesResultFromDb(tenantId);
+      // 1. Load fraud cases and unpaginated fraud & transaction aggregates
+      const [fResult, fAgg, tAgg, kResult] = await Promise.all([
+        fetchFraudCasesResultFromDb(tenantId),
+        fetchFraudAggregatesResultFromDb(tenantId),
+        fetchTransactionAggregatesResultFromDb(tenantId),
+        fetchKycRecordsResultFromDb(tenantId),
+      ]);
+
       setDbSource(fResult.source);
       setDbError(fResult.error);
       setTransactions(fResult.data);
 
-      // 2. Load monitored transactions count & volume from transactions table
-      try {
-        const tResult = await fetchTransactionsResultFromDb(tenantId, { pageSize: 100 });
-        setMonitoredTxnCount(tResult.totalCount ?? tResult.count ?? 0);
-        const vol = tResult.data.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-        setMonitoredTxnVolume(vol);
-      } catch (tErr) {
-        console.warn('Transactions count notice:', tErr);
-        setMonitoredTxnCount(0);
-        setMonitoredTxnVolume(0);
-      }
+      setFraudPreventedVolumeUsd(fAgg.preventedVolumeUsd);
+      setFraudPreventedVolumeOriginal(fAgg.preventedVolumeOriginal);
+      setFraudPreventedCount(fAgg.frozenCount);
 
-      // 3. Load genuine KYC records count (guaranteed empty until records exist per Req 8)
-      try {
-        const kResult = await fetchKycRecordsResultFromDb(tenantId);
-        setKycQueueCount(kResult.totalCount ?? kResult.count ?? 0);
-      } catch (kErr) {
-        console.warn('KYC count notice:', kErr);
-        setKycQueueCount(0);
-      }
+      setMonitoredTxnCount(tAgg.totalCount);
+      setMonitoredTxnVolumeUsd(tAgg.settledVolumeUsd);
+      setMonitoredTxnVolumeOriginal(tAgg.settledVolumeOriginal);
+
+      setKycQueueCount(kResult.totalCount ?? kResult.count ?? 0);
+    } catch (err: any) {
+      console.warn('Finance Analyst data load notice:', err);
+      setDbError(err?.message || 'Error loading live finance telemetry');
     } finally {
       setLoading(false);
     }
   }, [tenantId]);
+
 
   React.useEffect(() => {
     loadAllData();
@@ -285,20 +292,20 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
         <ThreeDKpiCard
           title="Monitored Transactions"
           value={monitoredTxnCount.toLocaleString()}
-          subValue={`${tenant?.currencySymbol || '$'}${(monitoredTxnVolume / 1000000).toFixed(1)}M Volume`}
+          subValue={`$${(monitoredTxnVolumeUsd / 1000000).toFixed(2)}M USD Base${tenant?.currency && tenant.currency !== 'USD' ? ` (${tenant.currencySymbol || ''}${(monitoredTxnVolumeOriginal / 1000000).toFixed(2)}M ${tenant.currency})` : ''}`}
           change="+18.5%"
           trend="up"
-          tag="Monitored"
+          tag="USD Base"
           icon={<DollarSign size={20} />}
           sparkline={[140, 160, 185, 200, 220, 235, 248]}
         />
         <ThreeDKpiCard
           title="Fraud Alerts Stopped"
-          value={`${tenant?.currencySymbol || '$'}${metrics.preventedVolume.toLocaleString()}`}
-          subValue={`${metrics.interceptedCount} Intercepted`}
+          value={`$${fraudPreventedVolumeUsd >= 1000000 ? (fraudPreventedVolumeUsd / 1000000).toFixed(2) + 'M' : fraudPreventedVolumeUsd.toLocaleString()}`}
+          subValue={`${fraudPreventedCount} Frozen${tenant?.currency && tenant.currency !== 'USD' ? ` (${tenant.currencySymbol || ''}${fraudPreventedVolumeOriginal.toLocaleString()} ${tenant.currency})` : ''}`}
           change="0.12% FP Rate"
           trend="up"
-          tag="Intercepted"
+          tag="USD Base"
           variant="gold-accent"
           icon={<ShieldAlert size={20} />}
           sparkline={[80, 110, 140, 165, 195, 220, 248]}
@@ -448,8 +455,16 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
                         <p className="text-[10px] text-[#9CA3AF]">{t.customerId} • {t.location}</p>
                       </td>
                       <td className="py-3 font-bold text-[#FAF7F0]">
-                        {t.currency} {t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <div>
+                          <span>${(t.amountUsd ?? convertToUsd(t.amount, t.currency).amountUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          {t.currency && t.currency !== 'USD' && (
+                            <span className="block text-[10px] text-[#9CA3AF] font-normal">
+                              {t.currency} {t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} @ {(t.exchangeRate ?? 1).toFixed(4)}
+                            </span>
+                          )}
+                        </div>
                       </td>
+
                       <td className="py-3">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold ${

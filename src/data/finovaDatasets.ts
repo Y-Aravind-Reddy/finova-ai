@@ -68,7 +68,12 @@ export interface CustomerTransaction {
   referenceNo: string;
   tenantId?: string;
   tenantName?: string;
+  currency?: string;
+  amountUsd?: number;
+  exchangeRate?: number;
+  exchangeRateDate?: string;
 }
+
 
 export interface CustomerDocument {
   id: string;
@@ -128,7 +133,11 @@ export interface FinanceFraudTransaction {
   aiConfidencePct: number;
   tenantId?: string;
   tenantName?: string;
+  amountUsd?: number;
+  exchangeRate?: number;
+  exchangeRateDate?: string;
 }
+
 
 export interface FinanceAnalystDataset {
   metrics: {

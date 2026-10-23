@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { FinovaLogo } from './FinovaLogo';
-import { authenticateUser, authenticateUserAsync } from '../data/authStore';
+import { authenticateUser, authenticateUserAsync, authenticateDemoPersona } from '../data/authStore';
 import { isSupabaseConfigured, SUPABASE_PROJECT_URL, checkSupabaseConnection, ConnectionStatus, signInWithGoogleOAuth } from '../lib/supabase';
 import { UserAccount } from '../data/finovaDatasets';
-import { Lock, Mail, Eye, EyeOff, ShieldCheck, Key, ArrowRight, Building2, Globe, CheckCircle2, Database, AlertCircle } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, ShieldCheck, Key, ArrowRight, Building2, Globe, CheckCircle2, Database, AlertCircle, Play } from 'lucide-react';
 
 interface LoginPageProps {
   onLoginSuccess: (user: UserAccount) => void;
@@ -32,7 +32,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     checkSupabaseConnection().then(setConnectionStatus);
   }, []);
 
-  // Submit Handler
+  // Submit Handler for Production Login
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -51,6 +51,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setLoading(false);
       const msg = err instanceof Error ? err.message : 'Authentication encountered an unexpected error.';
       setErrorMessage(msg);
+    }
+  };
+
+  // Launch explicit isolated demo sandbox persona
+  const handleLaunchDemo = (targetEmail: string) => {
+    setErrorMessage('');
+    const res = authenticateDemoPersona(targetEmail);
+    if (res.success && res.session) {
+      onLoginSuccess(res.session.user);
+    } else {
+      setErrorMessage(res.error || 'Demo persona could not be initialized.');
     }
   };
 
@@ -134,8 +145,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* Form */}
           <form onSubmit={handleLogin} className="mt-5 space-y-4 font-mono text-xs">
             {errorMessage && (
-              <div className="p-3 rounded-xl bg-[#262626] border border-[#B87333] text-[#FAF7F0] text-xs">
-                ⚠ {errorMessage}
+              <div className="p-3 rounded-xl bg-red-950/40 border border-red-500/50 text-red-200 text-xs">
+                <div className="flex items-start gap-2">
+                  <AlertCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="font-bold text-red-300">Authentication Failed</div>
+                    <div className="text-[11px] text-red-200/90 mt-0.5">{errorMessage}</div>
+                    {errorMessage.toLowerCase().includes('invalid login credentials') && (
+                      <div className="mt-2 text-[10px] text-zinc-400 border-t border-red-900/50 pt-1.5 font-mono">
+                        Notice: Production login strictly requires a registered Supabase Auth account. Failed logins are not silently converted to demo sessions. Use the Offline Sandbox below to simulate UI without a database session.
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -258,32 +280,55 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </button>
           </div>
 
-          {/* MULTI-TENANT DEMO PERSONAS MATRIX */}
+          {/* MULTI-TENANT DEMO PERSONAS & OFFLINE SANDBOX */}
           <div className="mt-5 pt-4 border-t border-[#3A3A3A]">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] font-mono font-bold text-[#E6C78B] flex items-center gap-1.5">
                 <Building2 size={13} className="text-[#D4A017]" />
-                Multi-Tenant Demo Quick Access (Password: finova2026)
+                Demo Personas & Offline Sandbox
+              </span>
+              <span className="text-[10px] font-mono text-[#9CA3AF]">
+                Default Pass: finova2026
               </span>
             </div>
 
+            {/* Offline Sandbox Isolation Notice */}
+            <div className="mb-3 p-2.5 rounded-xl bg-[#161208] border border-[#B87333]/40 text-[10px] font-mono text-[#FAF7F0] space-y-1">
+              <div className="flex items-center gap-1.5 text-[#E6C78B] font-bold">
+                <ShieldCheck size={12} className="text-[#D4A017] shrink-0" />
+                <span>Isolated Demo Mode Notice</span>
+              </div>
+              <p className="text-[#9CA3AF] leading-relaxed">
+                Demo personas run in an offline sandbox simulation with zero PostgreSQL session. They cannot access RLS-protected financial tables. Use <span className="text-[#FAF7F0] font-semibold">Fill</span> to pre-fill the form for Supabase Auth, or <span className="text-[#E6C78B] font-semibold">Sandbox</span> to preview UI without DB access.
+              </p>
+            </div>
+
             {/* Platform Super Admin */}
-            <div className="mb-2">
-              <button
-                type="button"
-                onClick={() => handleQuickFill('superadmin@finova.ai')}
-                className="w-full p-2 rounded-xl bg-[#121212] hover:bg-[#262626] border border-[#D4A017]/40 text-left flex items-center justify-between transition-all group"
-              >
-                <div>
-                  <span className="font-bold text-[#D4A017] text-[11px] group-hover:text-[#E6C78B]">
-                    Alexander Vance (Platform Super Admin)
-                  </span>
-                  <span className="block text-[10px] text-[#9CA3AF]">superadmin@finova.ai • Global SaaS Operator</span>
-                </div>
-                <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#D4A017] text-[#1A1A1A]">
-                  PLATFORM ROOT
+            <div className="mb-2 p-2 rounded-xl bg-[#121212] border border-[#D4A017]/40 flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <span className="font-bold text-[#D4A017] text-[11px] block truncate">
+                  Alexander Vance (Platform Super Admin)
                 </span>
-              </button>
+                <span className="block text-[10px] text-[#9CA3AF] truncate">superadmin@finova.ai • Global SaaS Operator</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('superadmin@finova.ai')}
+                  className="px-2 py-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] border border-[#3A3A3A] text-[10px] font-mono transition-colors"
+                  title="Fill email & password into form above"
+                >
+                  Fill
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLaunchDemo('superadmin@finova.ai')}
+                  className="px-2 py-1 rounded bg-amber-950/80 hover:bg-amber-900 text-amber-200 border border-amber-600/60 font-semibold text-[10px] font-mono transition-colors"
+                  title="Launch offline demo sandbox (no DB access)"
+                >
+                  Sandbox
+                </button>
+              </div>
             </div>
 
             {/* Tenant Accordions */}
@@ -294,38 +339,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   <span>Apex Global Bank</span>
                   <span className="text-[8px] px-1 rounded bg-[#262626] text-[#D4A017]">[USD $]</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('admin@finova.ai')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Eleanor (Admin)</span>
-                  <span className="text-[#D4A017]">admin@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('analyst@finova.ai')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Julian (Analyst)</span>
-                  <span className="text-[#B87333]">analyst@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('support@finova.ai')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Claire (Support)</span>
-                  <span className="text-[#9CA3AF]">support@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('customer@croftcapital.com')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Harrison (Cust)</span>
-                  <span className="text-[#E6C78B]">customer@</span>
-                </button>
+                {[
+                  { name: 'Eleanor (Admin)', email: 'admin@finova.ai' },
+                  { name: 'Julian (Analyst)', email: 'analyst@finova.ai' },
+                  { name: 'Claire (Support)', email: 'support@finova.ai' },
+                  { name: 'Harrison (Cust)', email: 'customer@croftcapital.com' },
+                ].map((p) => (
+                  <div key={p.email} className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickFill(p.email)}
+                      className="flex-1 text-left px-1.5 py-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between items-center transition-colors truncate"
+                      title="Fill into form for Supabase Auth"
+                    >
+                      <span className="truncate">{p.name}</span>
+                      <span className="text-[#D4A017] text-[9px] shrink-0 ml-1">Fill</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleLaunchDemo(p.email)}
+                      className="px-1.5 py-1 rounded bg-amber-950/50 hover:bg-amber-900/80 text-amber-300/80 hover:text-amber-200 border border-amber-800/40 text-[9px] font-mono transition-colors shrink-0"
+                      title="Launch offline sandbox simulation (no DB session)"
+                    >
+                      Box
+                    </button>
+                  </div>
+                ))}
               </div>
 
               {/* Tenant 2: Crestview Finance NBFC */}
@@ -334,38 +373,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   <span>Crestview NBFC</span>
                   <span className="text-[8px] px-1 rounded bg-[#262626] text-[#B87333]">[GBP £]</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('admin@crestviewfinance.com')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Marcus (Admin)</span>
-                  <span className="text-[#D4A017]">admin@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('analyst@crestviewfinance.com')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Sophia (Analyst)</span>
-                  <span className="text-[#B87333]">analyst@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('support@crestviewfinance.com')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">David (Support)</span>
-                  <span className="text-[#9CA3AF]">support@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('customer@rostovacapital.co.uk')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Elena (Cust)</span>
-                  <span className="text-[#E6C78B]">customer@</span>
-                </button>
+                {[
+                  { name: 'Marcus (Admin)', email: 'admin@crestviewfinance.com' },
+                  { name: 'Sophia (Analyst)', email: 'analyst@crestviewfinance.com' },
+                  { name: 'David (Support)', email: 'support@crestviewfinance.com' },
+                  { name: 'Elena (Cust)', email: 'customer@rostovacapital.co.uk' },
+                ].map((p) => (
+                  <div key={p.email} className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickFill(p.email)}
+                      className="flex-1 text-left px-1.5 py-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between items-center transition-colors truncate"
+                      title="Fill into form for Supabase Auth"
+                    >
+                      <span className="truncate">{p.name}</span>
+                      <span className="text-[#D4A017] text-[9px] shrink-0 ml-1">Fill</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleLaunchDemo(p.email)}
+                      className="px-1.5 py-1 rounded bg-amber-950/50 hover:bg-amber-900/80 text-amber-300/80 hover:text-amber-200 border border-amber-800/40 text-[9px] font-mono transition-colors shrink-0"
+                      title="Launch offline sandbox simulation (no DB session)"
+                    >
+                      Box
+                    </button>
+                  </div>
+                ))}
               </div>
 
               {/* Tenant 3: Vanguard Wealth */}
@@ -374,38 +407,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   <span>Vanguard Wealth</span>
                   <span className="text-[8px] px-1 rounded bg-[#262626] text-[#E6C78B]">[EUR €]</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('admin@vanguardwealth.eu')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Catherine (Admin)</span>
-                  <span className="text-[#D4A017]">admin@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('analyst@vanguardwealth.eu')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Rajesh (Analyst)</span>
-                  <span className="text-[#B87333]">analyst@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('support@vanguardwealth.eu')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Amara (Support)</span>
-                  <span className="text-[#9CA3AF]">support@</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('customer@sterlingsfo.ch')}
-                  className="w-full text-left p-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between"
-                >
-                  <span className="truncate">Lucian (Cust)</span>
-                  <span className="text-[#E6C78B]">customer@</span>
-                </button>
+                {[
+                  { name: 'Catherine (Admin)', email: 'admin@vanguardwealth.eu' },
+                  { name: 'Rajesh (Analyst)', email: 'analyst@vanguardwealth.eu' },
+                  { name: 'Amara (Support)', email: 'support@vanguardwealth.eu' },
+                  { name: 'Lucian (Cust)', email: 'customer@sterlingsfo.ch' },
+                ].map((p) => (
+                  <div key={p.email} className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickFill(p.email)}
+                      className="flex-1 text-left px-1.5 py-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between items-center transition-colors truncate"
+                      title="Fill into form for Supabase Auth"
+                    >
+                      <span className="truncate">{p.name}</span>
+                      <span className="text-[#D4A017] text-[9px] shrink-0 ml-1">Fill</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleLaunchDemo(p.email)}
+                      className="px-1.5 py-1 rounded bg-amber-950/50 hover:bg-amber-900/80 text-amber-300/80 hover:text-amber-200 border border-amber-800/40 text-[9px] font-mono transition-colors shrink-0"
+                      title="Launch offline sandbox simulation (no DB session)"
+                    >
+                      Box
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

@@ -10,13 +10,18 @@ import {
   fetchKycRecordsResultFromDb,
   fetchSupportTicketsResultFromDb,
   fetchFraudCasesResultFromDb,
+  fetchTransactionAggregatesResultFromDb,
+  TransactionAggregates,
 } from '../../services/finovaDatabase';
+import { convertToUsd, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
+
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDProgressRing } from '../charts3d/ThreeDProgressRing';
 import { UserManagementModal } from '../UserManagementModal';
+import { ChangeRoleModal } from '../common/ChangeRoleModal';
 import {
   Users,
   CheckCircle,
@@ -52,6 +57,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
+  const [changeRoleUser, setChangeRoleUser] = useState<UserAccount | null>(null);
+  const [changeRoleOpen, setChangeRoleOpen] = useState(false);
   const [filterRole, setFilterRole] = useState<string>('ALL');
 
   // Resolve current company workspace
@@ -80,7 +87,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Real database metrics state
   const [dbSettlementCount, setDbSettlementCount] = useState<number>(0);
-  const [dbSettlementVolume, setDbSettlementVolume] = useState<number>(0);
+  const [dbSettlementVolumeUsd, setDbSettlementVolumeUsd] = useState<number>(0);
+  const [dbSettlementVolumeOriginal, setDbSettlementVolumeOriginal] = useState<number>(0);
   const [dbKycCount, setDbKycCount] = useState<number>(0);
   const [dbOpenCasesCount, setDbOpenCasesCount] = useState<number>(0);
   const [dbLoading, setDbLoading] = useState<boolean>(true);
@@ -89,17 +97,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const loadAdminMetrics = useCallback(async () => {
     setDbLoading(true);
     try {
-      const [tRes, kRes, sRes, fRes] = await Promise.all([
-        fetchTransactionsResultFromDb(tenantId),
+      const [tAgg, kRes, sRes, fRes] = await Promise.all([
+        fetchTransactionAggregatesResultFromDb(tenantId),
         fetchKycRecordsResultFromDb(tenantId),
         fetchSupportTicketsResultFromDb(tenantId),
         fetchFraudCasesResultFromDb(tenantId),
       ]);
 
-      const tCount = tRes.totalCount ?? tRes.count ?? tRes.data?.length ?? 0;
-      const tVol = (tRes.data || []).reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-      setDbSettlementCount(tCount);
-      setDbSettlementVolume(tVol);
+      setDbSettlementCount(tAgg.totalCount);
+      setDbSettlementVolumeUsd(tAgg.settledVolumeUsd);
+      setDbSettlementVolumeOriginal(tAgg.settledVolumeOriginal);
 
       const kCount = kRes.totalCount ?? kRes.count ?? kRes.data?.length ?? 0;
       setDbKycCount(kCount);
@@ -108,13 +115,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const openFraud = (fRes.data || []).filter((f) => f.status !== 'Cleared').length;
       setDbOpenCasesCount(openTickets + openFraud);
 
-      setDbError(tRes.error || kRes.error || sRes.error || fRes.error);
+      setDbError(kRes.error || sRes.error || fRes.error);
     } catch (err: any) {
       setDbError(err?.message || 'Error querying database');
     } finally {
       setDbLoading(false);
     }
   }, [tenantId]);
+
 
   useEffect(() => {
     loadAdminMetrics();
@@ -128,9 +136,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return [{ label: 'Verified Records', value: dbKycCount, subtext: `${dbKycCount} in database` }];
   }, [dbKycCount]);
 
-  // Operations volume trend derived from settlement volume
+  // Operations volume trend derived from settlement volume (USD Base)
   const txnTrendData = React.useMemo(() => {
-    const base = dbSettlementVolume > 0 ? Math.round(dbSettlementVolume / 7) : 0;
+    const base = dbSettlementVolumeUsd > 0 ? Math.round(dbSettlementVolumeUsd / 7) : 0;
     return [
       { label: '08:00', value: Math.round(base * 0.4) },
       { label: '10:00', value: Math.round(base * 0.7) },
@@ -140,7 +148,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       { label: '18:00', value: Math.round(base * 0.6) },
       { label: '20:00', value: Math.round(base * 0.3) },
     ];
-  }, [dbSettlementVolume]);
+  }, [dbSettlementVolumeUsd]);
+
 
   // 3D Client Growth Curve based on company users
   const customerGrowthData = React.useMemo(() => {
@@ -162,43 +171,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     ];
   }, [dbOpenCasesCount, dbSettlementCount, dbKycCount]);
 
-  const handleSaveUser = (userData: Partial<UserAccount>) => {
-    if (userData.role === 'SUPER_ADMIN') {
-      alert('Governance Violation: Company Admins cannot create Super Admins.');
+  const handleSaveUser = async (userData: Partial<UserAccount>) => {
+    if (userData.role === 'SUPER_ADMIN' || userData.role === 'ADMIN') {
+      alert('Governance Violation: Company Admins cannot provision Admin or Super Admin accounts.');
       return;
     }
 
-    if (editingUser) {
-      if (editingUser.role === 'SUPER_ADMIN') {
-        alert('Governance Violation: Cannot edit Super Admin accounts.');
-        return;
-      }
-      saveProfileToDb({ ...editingUser, ...userData, tenantId });
-      const updated = users.map((u) =>
-        u.id === editingUser.id ? ({ ...u, ...userData, tenantId, authSource: editingUser.authSource } as UserAccount) : u
-      );
-      onUpdateUsers(updated);
-    } else {
-      const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
-      const newUser: UserAccount = {
-        id: newId,
-        name: userData.name || 'New Staff',
-        email: userData.email || '',
-        role: userData.role || 'CUSTOMER',
-        status: userData.status || 'Active',
-        tier: userData.tier || 'Private Wealth Tier 3',
-        createdDate: new Date().toISOString().split('T')[0],
-        lastActive: 'Just now',
-        phone: userData.phone || '+1 (212) 555-0100',
-        country: userData.country || 'United States',
-        twoFactorEnabled: true,
-        tenantId,
-        tenantName: companyName,
-        notes: userData.notes || `Created via ${companyName} Admin Operations Center`,
-        authSource: 'local',
-      };
-      saveProfileToDb(newUser);
+    const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newUser: UserAccount = {
+      id: newId,
+      name: userData.name || 'New Staff',
+      email: userData.email || '',
+      role: userData.role || 'CUSTOMER',
+      status: userData.status || 'Active',
+      tier: userData.tier || 'Private Wealth Tier 3',
+      createdDate: new Date().toISOString().split('T')[0],
+      lastActive: 'Just now',
+      phone: userData.phone || '+1 (212) 555-0100',
+      country: userData.country || 'United States',
+      twoFactorEnabled: true,
+      tenantId,
+      tenantName: companyName,
+      notes: userData.notes || `Created via ${companyName} Admin Operations Center`,
+      authSource: 'local',
+    };
+
+    const res = await saveProfileToDb(newUser);
+    if (res.success) {
       onUpdateUsers([newUser, ...users]);
+      if (onRefreshUsers) onRefreshUsers();
+    } else {
+      alert(`User provisioning failed: ${res.error}`);
     }
     setEditingUser(null);
   };
@@ -254,6 +257,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       </div>
 
+      {/* Database / RLS Status Notification Banner */}
+      {dbError && (
+        <div className="rounded-xl p-4 bg-[#1E1A10] border border-[#D4A017]/50 text-[#FAF7F0] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-start gap-3">
+            <AlertCircle size={18} className="text-[#D4A017] shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-[#E6C78B] text-xs">
+                Database Telemetry Notice — {companyName} Operations
+              </p>
+              <p className="text-[11px] text-[#FAF7F0]/80 mt-0.5 max-w-3xl">
+                {dbError}
+              </p>
+              <p className="text-[10px] text-[#9CA3AF] mt-1">
+                PostgreSQL Row-Level Security requires an authenticated staff session matching tenant <code className="text-[#E6C78B]">{tenantId}</code> to access protected settlement records.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              loadAdminMetrics();
+              if (onRefreshUsers) onRefreshUsers();
+            }}
+            disabled={dbLoading}
+            className="px-3 py-1.5 rounded-lg bg-[#121212] border border-[#D4A017]/60 text-[#D4A017] text-xs hover:bg-[#262626] flex items-center gap-1.5 shrink-0 transition-all disabled:opacity-50"
+          >
+            <RotateCw size={12} className={dbLoading ? 'animate-spin' : ''} />
+            <span>Retry Query</span>
+          </button>
+        </div>
+      )}
+
       {/* 4 3D KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <ThreeDKpiCard
@@ -268,11 +302,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         />
         <ThreeDKpiCard
           title="Daily Settlements"
-          value={`${tenant?.currencySymbol || '$'}${dbSettlementVolume >= 1000000 ? (dbSettlementVolume / 1000000).toFixed(2) + 'M' : dbSettlementVolume.toLocaleString()}`}
-          subValue={`${dbSettlementCount.toLocaleString()} Orders Cleared`}
+          value={`$${dbSettlementVolumeUsd >= 1000000 ? (dbSettlementVolumeUsd / 1000000).toFixed(2) + 'M' : dbSettlementVolumeUsd.toLocaleString()}`}
+          subValue={
+            dbSettlementCount > 0
+              ? `${tenant?.currency && tenant.currency !== 'USD' ? `${tenant.currencySymbol || ''}${dbSettlementVolumeOriginal.toLocaleString()} ${tenant.currency} • ` : ''}${dbSettlementCount.toLocaleString()} Orders`
+              : (dbError ? 'RLS Scoped / Auth Required' : '0 Orders Cleared')
+          }
           change={dbSettlementCount > 0 ? '+100%' : '0.0%'}
           trend="up"
-          tag="Clearing Desk"
+          tag="USD Base"
           variant="gold-accent"
           icon={<TrendingUp size={20} />}
           sparkline={dbSettlementCount > 0 ? [10, 30, 60, 85, 95, 110, 142] : [0, 0, 0, 0, 0, 0, 0]}
@@ -459,12 +497,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <td className="py-2.5 text-right">
                         <button
                           onClick={() => {
-                            setEditingUser(u);
-                            setModalOpen(true);
+                            setChangeRoleUser(u);
+                            setChangeRoleOpen(true);
                           }}
-                          className="px-2.5 py-1 rounded-lg bg-[#121212] border border-[#3A3A3A] text-[#D4A017] hover:text-[#E6C78B] hover:bg-[#262626] text-[11px]"
+                          className="px-2.5 py-1 rounded-lg bg-[#121212] border border-[#3A3A3A] text-[#D4A017] hover:text-[#E6C78B] hover:bg-[#262626] text-[11px] flex items-center gap-1 font-semibold ml-auto"
                         >
-                          Edit Permissions
+                          <ShieldCheck size={12} />
+                          Change Role
                         </button>
                       </td>
                     </tr>
@@ -486,6 +525,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         onSave={handleSaveUser}
         editingUser={editingUser}
         adminTenantId={tenantId}
+      />
+
+      <ChangeRoleModal
+        isOpen={changeRoleOpen}
+        onClose={() => {
+          setChangeRoleOpen(false);
+          setChangeRoleUser(null);
+        }}
+        targetUser={changeRoleUser}
+        currentRole={currentRole}
+        currentUserTenantId={tenantId}
+        onRoleChanged={() => {
+          if (onRefreshUsers) onRefreshUsers();
+        }}
       />
     </div>
   );
