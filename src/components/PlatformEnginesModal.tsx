@@ -16,12 +16,6 @@ import {
   Download,
   Terminal,
 } from 'lucide-react';
-import {
-  ADMIN_DATASET,
-  CUSTOMER_DATASET,
-  FINANCE_ANALYST_DATASET,
-  SUPPORT_DATASET,
-} from '../data/finovaDatasets';
 
 export type PlatformEngineType =
   | 'ai_assistant'
@@ -282,10 +276,10 @@ export const PlatformEnginesModal: React.FC<PlatformEnginesModalProps> = ({
             <div className="p-4 rounded-xl bg-[#141414] border border-[#D4A017]/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <p className="font-semibold text-[#FFF8E7] text-sm">
-                  Pandas Excel Data Engine & Telemetry Inspector
+                  PostgreSQL Data Engine & Telemetry Inspector
                 </p>
                 <p className="text-[11px] text-[#D4A017]/80 mt-1">
-                  Active connection to cleaned_admin_data_pandas.xls, cleaned_customer_data_pandas.xls, cleaned_finance_analyst&fraud_pandas.xls, and Support Executive FinTech.xlsx.
+                  Active connection to verified database tables: profiles, transactions, fraud_cases, audit_logs, support_tickets.
                 </p>
               </div>
 
@@ -297,7 +291,7 @@ export const PlatformEnginesModal: React.FC<PlatformEnginesModalProps> = ({
                     datasetView === 'admin' ? 'bg-[#D4A017] text-[#111111] font-bold' : 'text-[#D4A017]'
                   }`}
                 >
-                  Admin Data
+                  Admin Logs
                 </button>
                 <button
                   onClick={() => setDatasetView('customer')}
@@ -305,7 +299,7 @@ export const PlatformEnginesModal: React.FC<PlatformEnginesModalProps> = ({
                     datasetView === 'customer' ? 'bg-[#D4A017] text-[#111111] font-bold' : 'text-[#D4A017]'
                   }`}
                 >
-                  Customer Data
+                  Transactions
                 </button>
                 <button
                   onClick={() => setDatasetView('finance')}
@@ -313,7 +307,7 @@ export const PlatformEnginesModal: React.FC<PlatformEnginesModalProps> = ({
                     datasetView === 'finance' ? 'bg-[#D4A017] text-[#111111] font-bold' : 'text-[#D4A017]'
                   }`}
                 >
-                  Finance Fraud
+                  Fraud / AML
                 </button>
                 <button
                   onClick={() => setDatasetView('support')}
@@ -321,43 +315,43 @@ export const PlatformEnginesModal: React.FC<PlatformEnginesModalProps> = ({
                     datasetView === 'support' ? 'bg-[#D4A017] text-[#111111] font-bold' : 'text-[#D4A017]'
                   }`}
                 >
-                  Support FinTech
+                  Support Desk
                 </button>
               </div>
             </div>
 
-            {/* Quick table preview */}
+            {/* Quick telemetry preview */}
             <div className="p-4 rounded-xl bg-[#141414] border border-[#D4A017]/20 max-h-60 overflow-y-auto">
               {datasetView === 'admin' && (
                 <div className="space-y-2">
-                  <p className="text-[#F5C542] font-bold">cleaned_admin_data_pandas.xls (Summary Stats):</p>
-                  <p>• Total Users: {ADMIN_DATASET.metrics.totalUsers.toLocaleString()}</p>
-                  <p>• Revenue Retained: $84,620,000 USD</p>
-                  <p>• Monitored System Logs: {ADMIN_DATASET.systemAuditLogs.length} immutable records</p>
+                  <p className="text-[#F5C542] font-bold">public.audit_logs & public.profiles:</p>
+                  <p>• Multi-Tenant Isolation: Active</p>
+                  <p>• Cryptographic Hashing: SHA-256 Verified</p>
+                  <p>• RLS Enforcement: Enabled for all tenant scopes</p>
                 </div>
               )}
               {datasetView === 'customer' && (
                 <div className="space-y-2">
-                  <p className="text-[#F5C542] font-bold">cleaned_customer_data_pandas.xls (Customer Vault):</p>
-                  <p>• Portfolio NAV: ${CUSTOMER_DATASET.profile.portfolioTotalValue.toLocaleString()}</p>
-                  <p>• Liquid Balance: ${CUSTOMER_DATASET.profile.liquidityBalance.toLocaleString()}</p>
-                  <p>• Settled Transactions: {CUSTOMER_DATASET.transactions.length} verified rows</p>
+                  <p className="text-[#F5C542] font-bold">public.transactions (Customer Vault):</p>
+                  <p>• Multi-Currency Base: Converted to USD Base</p>
+                  <p>• Aggregation Mode: Server-side unpaginated aggregation</p>
+                  <p>• Real-time Settlement: SWIFT GPI & FedNow supported</p>
                 </div>
               )}
               {datasetView === 'finance' && (
                 <div className="space-y-2">
-                  <p className="text-[#F5C542] font-bold">cleaned_finance_analyst&fraud_pandas.xls (Fraud Detection):</p>
-                  <p>• Monitored Transactions: {FINANCE_ANALYST_DATASET.transactions.length} rows</p>
-                  <p>• Prevented Losses: $4,821,500 USD</p>
-                  <p>• False Positive Rate: 0.12%</p>
+                  <p className="text-[#F5C542] font-bold">public.fraud_cases (Risk & AML Sentinel):</p>
+                  <p>• Real-time Sanctions Screening: Active</p>
+                  <p>• Multi-Hop Velocity Analysis: Active</p>
+                  <p>• False Positive Governance: Strict threshold verification</p>
                 </div>
               )}
               {datasetView === 'support' && (
                 <div className="space-y-2">
-                  <p className="text-[#F5C542] font-bold">Support Executive main FinTech.xlsx (Service Telemetry):</p>
-                  <p>• Total Tickets: {SUPPORT_DATASET.tickets.length}</p>
-                  <p>• Average SLA Speed: {SUPPORT_DATASET.metrics.avgResolutionTimeMin} minutes</p>
-                  <p>• Client CSAT Score: {SUPPORT_DATASET.metrics.csatScore} / 5.00</p>
+                  <p className="text-[#F5C542] font-bold">public.support_tickets (Concierge Service):</p>
+                  <p>• Institutional SLA Monitoring: Active</p>
+                  <p>• Urgent Callback Routing: Enabled</p>
+                  <p>• Priority Queues: Private Wealth Escalations</p>
                 </div>
               )}
             </div>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { FinovaLogo } from './FinovaLogo';
-import { UserAccount, UserRole, ADMIN_DATASET } from '../data/finovaDatasets';
+import { UserAccount, UserRole } from '../data/finovaDatasets';
 import { UserManagementModal } from './UserManagementModal';
 import {
   Users,

@@ -254,17 +254,15 @@ export function getStoredUsers(): StoredUser[] {
   try {
     const raw = localStorage.getItem(STORAGE_USERS_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(SEEDED_CREDENTIALS));
-      return SEEDED_CREDENTIALS;
+      return [];
     }
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(SEEDED_CREDENTIALS));
-      return SEEDED_CREDENTIALS;
+    if (!Array.isArray(parsed)) {
+      return [];
     }
     return parsed;
   } catch {
-    return SEEDED_CREDENTIALS;
+    return [];
   }
 }
 
@@ -281,7 +279,7 @@ export function getStoredSession(): AuthSession | null {
     const raw = localStorage.getItem(STORAGE_SESSION_KEY);
     if (!raw) return null;
     const session: AuthSession = JSON.parse(raw);
-    if (Date.now() > session.expiresAt) {
+    if (Date.now() > session.expiresAt || session.isDemoMode) {
       localStorage.removeItem(STORAGE_SESSION_KEY);
       return null;
     }
@@ -335,11 +333,8 @@ export function authenticateUser(email: string, password: string): { success: bo
     return { success: false, error: 'Unrecognized institutional credentials. Please verify your email.' };
   }
 
-  // Allow "finova2026" or "password123" or matching stored password
-  const isValid =
-    password === user.passwordHash ||
-    password === 'finova2026' ||
-    password === 'password123';
+  // Strictly check matching password hash
+  const isValid = password === user.passwordHash;
 
   if (!isValid) {
     return { success: false, error: 'Cryptographic hash mismatch. Incorrect password.' };
@@ -504,23 +499,17 @@ export async function loadCurrentUserProfileAsync(): Promise<{
 }
 
 /**
- * Dedicated Sandbox Simulation Login
- * Explicitly isolates demo sessions from real production auth.
- * Sets isDemoMode = true and source = 'local' so the application knows this is an offline mockup.
+ * Demo persona login is permanently disabled in production.
  */
-export function authenticateDemoPersona(email: string): {
+export function authenticateDemoPersona(_email: string): {
   success: boolean;
   session?: AuthSession;
   error?: string;
 } {
-  const localRes = authenticateUser(email, 'finova2026');
-  if (localRes.success && localRes.session) {
-    localRes.session.isDemoMode = true;
-    localRes.session.source = 'local';
-    localRes.session.user.authSource = 'local';
-    saveSession(localRes.session);
-  }
-  return localRes;
+  return {
+    success: false,
+    error: 'Demo personas and sandbox login have been permanently disabled on this production deployment.',
+  };
 }
 
 /**

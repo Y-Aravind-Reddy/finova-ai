@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { FinovaLogo } from './FinovaLogo';
-import { authenticateUser, authenticateUserAsync, authenticateDemoPersona } from '../data/authStore';
-import { isSupabaseConfigured, SUPABASE_PROJECT_URL, checkSupabaseConnection, ConnectionStatus, signInWithGoogleOAuth } from '../lib/supabase';
+import { authenticateUserAsync } from '../data/authStore';
+import { isSupabaseConfigured, SUPABASE_PROJECT_URL, checkSupabaseConnection, ConnectionStatus } from '../lib/supabase';
 import { UserAccount } from '../data/finovaDatasets';
-import { Lock, Mail, Eye, EyeOff, ShieldCheck, Key, ArrowRight, Building2, Globe, CheckCircle2, Database, AlertCircle, Play } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, ShieldCheck, Key, ArrowRight, Building2, Globe, CheckCircle2, Database, AlertCircle } from 'lucide-react';
 
 interface LoginPageProps {
   onLoginSuccess: (user: UserAccount) => void;
@@ -21,7 +21,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [rememberMe, setRememberMe] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [oauthLoading, setOauthLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
@@ -36,16 +35,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    if (!email.trim() || !password.trim()) {
+      setErrorMessage('Please enter your institutional email and password.');
+      return;
+    }
     setLoading(true);
 
     try {
-      const res = await authenticateUserAsync(email, password);
+      const res = await authenticateUserAsync(email.trim(), password);
       setLoading(false);
 
       if (res.success && res.session) {
         onLoginSuccess(res.session.user);
       } else {
-        setErrorMessage(res.error || 'Authentication failed. Please verify institutional credentials.');
+        setErrorMessage(res.error || 'Authentication failed. Please verify institutional credentials in Supabase Auth.');
       }
     } catch (err: unknown) {
       setLoading(false);
@@ -54,41 +57,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
-  // Launch explicit isolated demo sandbox persona
-  const handleLaunchDemo = (targetEmail: string) => {
-    setErrorMessage('');
-    const res = authenticateDemoPersona(targetEmail);
-    if (res.success && res.session) {
-      onLoginSuccess(res.session.user);
-    } else {
-      setErrorMessage(res.error || 'Demo persona could not be initialized.');
-    }
-  };
 
-  const handleGoogleOAuth = async () => {
-    setErrorMessage('');
-    setOauthLoading(true);
-    try {
-      const res = await signInWithGoogleOAuth();
-      setOauthLoading(false);
-      if (res.error) {
-        setErrorMessage(`Google OAuth: ${res.error}. Ensure Google provider is enabled in Supabase Auth settings.`);
-      } else if (res.url) {
-        window.location.href = res.url;
-      }
-    } catch (err: unknown) {
-      setOauthLoading(false);
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(`Google OAuth error: ${msg}`);
-    }
-  };
-
-  // Quick fill helper for personas
-  const handleQuickFill = (targetEmail: string) => {
-    setEmail(targetEmail);
-    setPassword('finova2026');
-    setErrorMessage('');
-  };
 
   return (
     <div className="min-h-screen bg-[#121212] text-[#FAF7F0] flex flex-col justify-between p-4 sm:p-8 relative overflow-hidden">
@@ -234,41 +203,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </button>
           </form>
 
-          {/* Google OAuth Option */}
-          <div className="mt-3">
-            <div className="relative flex py-2 items-center">
-              <div className="flex-grow border-t border-[#3A3A3A]"></div>
-              <span className="flex-shrink mx-3 text-[10px] font-mono text-[#9CA3AF] uppercase">Or SSO Access</span>
-              <div className="flex-grow border-t border-[#3A3A3A]"></div>
-            </div>
-            <button
-              type="button"
-              disabled={oauthLoading}
-              onClick={handleGoogleOAuth}
-              className="w-full py-2.5 px-4 rounded-xl bg-[#121212] hover:bg-[#1A1A1A] border border-[#3A3A3A] hover:border-[#D4A017]/60 text-xs font-mono text-[#FAF7F0] flex items-center justify-center gap-2.5 transition-colors disabled:opacity-50"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                />
-              </svg>
-              <span>{oauthLoading ? 'Initiating Google OAuth...' : 'Sign In with Google Workspace'}</span>
-            </button>
-          </div>
-
           {/* Switch to Signup */}
           <div className="mt-4 pt-4 border-t border-[#3A3A3A] text-center font-mono text-xs text-[#9CA3AF]">
             New financial customer?{' '}
@@ -278,163 +212,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             >
               Open Institutional Account
             </button>
-          </div>
-
-          {/* MULTI-TENANT DEMO PERSONAS & OFFLINE SANDBOX */}
-          <div className="mt-5 pt-4 border-t border-[#3A3A3A]">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-mono font-bold text-[#E6C78B] flex items-center gap-1.5">
-                <Building2 size={13} className="text-[#D4A017]" />
-                Demo Personas & Offline Sandbox
-              </span>
-              <span className="text-[10px] font-mono text-[#9CA3AF]">
-                Default Pass: finova2026
-              </span>
-            </div>
-
-            {/* Offline Sandbox Isolation Notice */}
-            <div className="mb-3 p-2.5 rounded-xl bg-[#161208] border border-[#B87333]/40 text-[10px] font-mono text-[#FAF7F0] space-y-1">
-              <div className="flex items-center gap-1.5 text-[#E6C78B] font-bold">
-                <ShieldCheck size={12} className="text-[#D4A017] shrink-0" />
-                <span>Isolated Demo Mode Notice</span>
-              </div>
-              <p className="text-[#9CA3AF] leading-relaxed">
-                Demo personas run in an offline sandbox simulation with zero PostgreSQL session. They cannot access RLS-protected financial tables. Use <span className="text-[#FAF7F0] font-semibold">Fill</span> to pre-fill the form for Supabase Auth, or <span className="text-[#E6C78B] font-semibold">Sandbox</span> to preview UI without DB access.
-              </p>
-            </div>
-
-            {/* Platform Super Admin */}
-            <div className="mb-2 p-2 rounded-xl bg-[#121212] border border-[#D4A017]/40 flex items-center justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <span className="font-bold text-[#D4A017] text-[11px] block truncate">
-                  Alexander Vance (Platform Super Admin)
-                </span>
-                <span className="block text-[10px] text-[#9CA3AF] truncate">superadmin@finova.ai • Global SaaS Operator</span>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => handleQuickFill('superadmin@finova.ai')}
-                  className="px-2 py-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] border border-[#3A3A3A] text-[10px] font-mono transition-colors"
-                  title="Fill email & password into form above"
-                >
-                  Fill
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleLaunchDemo('superadmin@finova.ai')}
-                  className="px-2 py-1 rounded bg-amber-950/80 hover:bg-amber-900 text-amber-200 border border-amber-600/60 font-semibold text-[10px] font-mono transition-colors"
-                  title="Launch offline demo sandbox (no DB access)"
-                >
-                  Sandbox
-                </button>
-              </div>
-            </div>
-
-            {/* Tenant Accordions */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] font-mono">
-              {/* Tenant 1: Apex Global Bank */}
-              <div className="p-2.5 rounded-xl bg-[#121212] border border-[#3A3A3A] space-y-1.5">
-                <div className="font-bold text-[#E6C78B] border-b border-[#3A3A3A] pb-1 flex items-center justify-between">
-                  <span>Apex Global Bank</span>
-                  <span className="text-[8px] px-1 rounded bg-[#262626] text-[#D4A017]">[USD $]</span>
-                </div>
-                {[
-                  { name: 'Eleanor (Admin)', email: 'admin@finova.ai' },
-                  { name: 'Julian (Analyst)', email: 'analyst@finova.ai' },
-                  { name: 'Claire (Support)', email: 'support@finova.ai' },
-                  { name: 'Harrison (Cust)', email: 'customer@croftcapital.com' },
-                ].map((p) => (
-                  <div key={p.email} className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleQuickFill(p.email)}
-                      className="flex-1 text-left px-1.5 py-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between items-center transition-colors truncate"
-                      title="Fill into form for Supabase Auth"
-                    >
-                      <span className="truncate">{p.name}</span>
-                      <span className="text-[#D4A017] text-[9px] shrink-0 ml-1">Fill</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleLaunchDemo(p.email)}
-                      className="px-1.5 py-1 rounded bg-amber-950/50 hover:bg-amber-900/80 text-amber-300/80 hover:text-amber-200 border border-amber-800/40 text-[9px] font-mono transition-colors shrink-0"
-                      title="Launch offline sandbox simulation (no DB session)"
-                    >
-                      Box
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              {/* Tenant 2: Crestview Finance NBFC */}
-              <div className="p-2.5 rounded-xl bg-[#121212] border border-[#3A3A3A] space-y-1.5">
-                <div className="font-bold text-[#E6C78B] border-b border-[#3A3A3A] pb-1 flex items-center justify-between">
-                  <span>Crestview NBFC</span>
-                  <span className="text-[8px] px-1 rounded bg-[#262626] text-[#B87333]">[GBP £]</span>
-                </div>
-                {[
-                  { name: 'Marcus (Admin)', email: 'admin@crestviewfinance.com' },
-                  { name: 'Sophia (Analyst)', email: 'analyst@crestviewfinance.com' },
-                  { name: 'David (Support)', email: 'support@crestviewfinance.com' },
-                  { name: 'Elena (Cust)', email: 'customer@rostovacapital.co.uk' },
-                ].map((p) => (
-                  <div key={p.email} className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleQuickFill(p.email)}
-                      className="flex-1 text-left px-1.5 py-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between items-center transition-colors truncate"
-                      title="Fill into form for Supabase Auth"
-                    >
-                      <span className="truncate">{p.name}</span>
-                      <span className="text-[#D4A017] text-[9px] shrink-0 ml-1">Fill</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleLaunchDemo(p.email)}
-                      className="px-1.5 py-1 rounded bg-amber-950/50 hover:bg-amber-900/80 text-amber-300/80 hover:text-amber-200 border border-amber-800/40 text-[9px] font-mono transition-colors shrink-0"
-                      title="Launch offline sandbox simulation (no DB session)"
-                    >
-                      Box
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              {/* Tenant 3: Vanguard Wealth */}
-              <div className="p-2.5 rounded-xl bg-[#121212] border border-[#3A3A3A] space-y-1.5">
-                <div className="font-bold text-[#E6C78B] border-b border-[#3A3A3A] pb-1 flex items-center justify-between">
-                  <span>Vanguard Wealth</span>
-                  <span className="text-[8px] px-1 rounded bg-[#262626] text-[#E6C78B]">[EUR €]</span>
-                </div>
-                {[
-                  { name: 'Catherine (Admin)', email: 'admin@vanguardwealth.eu' },
-                  { name: 'Rajesh (Analyst)', email: 'analyst@vanguardwealth.eu' },
-                  { name: 'Amara (Support)', email: 'support@vanguardwealth.eu' },
-                  { name: 'Lucian (Cust)', email: 'customer@sterlingsfo.ch' },
-                ].map((p) => (
-                  <div key={p.email} className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleQuickFill(p.email)}
-                      className="flex-1 text-left px-1.5 py-1 rounded bg-[#262626] hover:bg-[#3A3A3A] text-[#FAF7F0] flex justify-between items-center transition-colors truncate"
-                      title="Fill into form for Supabase Auth"
-                    >
-                      <span className="truncate">{p.name}</span>
-                      <span className="text-[#D4A017] text-[9px] shrink-0 ml-1">Fill</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleLaunchDemo(p.email)}
-                      className="px-1.5 py-1 rounded bg-amber-950/50 hover:bg-amber-900/80 text-amber-300/80 hover:text-amber-200 border border-amber-800/40 text-[9px] font-mono transition-colors shrink-0"
-                      title="Launch offline sandbox simulation (no DB session)"
-                    >
-                      Box
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
       </div>

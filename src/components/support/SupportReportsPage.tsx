@@ -105,7 +105,7 @@ export const SupportReportsPage: React.FC = () => {
 
         <ThreeDPieChart
           title="3D Support Inquiries by Service Category"
-          subtitle="Inbound inquiry distribution from cleaned_support_executive_pandas.xls"
+          subtitle="Inbound inquiry distribution by operational category"
           segments={categoryPieData}
           height={300}
         />

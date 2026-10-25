@@ -134,21 +134,13 @@ export default function App() {
     []
   );
 
-  // Dynamically load users from Supabase public.profiles with local fallback
+  // Dynamically load users from Supabase public.profiles strictly without demo users
   const refreshUsersListAsync = useCallback(async () => {
     if (isSupabaseConfigured()) {
       try {
         const res = await fetchProfilesResultFromDb();
-        if (res.state === 'live_records' && res.data && res.data.length > 0) {
-          const stored = getStoredUsers().map(({ passwordHash, ...u }) => u);
-          const liveIds = new Set(res.data.map((p) => p.id));
-          const liveEmails = new Set(res.data.map((p) => p.email.toLowerCase()));
-
-          // Merge: live Supabase profiles are authoritative + non-duplicate demo accounts
-          const nonConflictingLocal = stored.filter(
-            (u) => !liveIds.has(u.id) && !liveEmails.has(u.email.toLowerCase())
-          );
-          setUsersList([...res.data, ...nonConflictingLocal]);
+        if (res.state === 'live_records' && res.data) {
+          setUsersList(res.data);
           return;
         }
       } catch (err) {
@@ -156,8 +148,7 @@ export default function App() {
       }
     }
 
-    const loadedUsers = getStoredUsers().map(({ passwordHash, ...u }) => u);
-    setUsersList(loadedUsers);
+    setUsersList([]);
   }, []);
 
   // Initialize from storage & pathname on mount + Supabase Auth listener
@@ -189,20 +180,24 @@ export default function App() {
         }
       }
 
-      // 2. Fallback to locally stored session (e.g. demo personas)
+      // 2. Check stored session (only genuine active sessions, purge demo sessions)
       const existingSession = getStoredSession();
+      if (existingSession && existingSession.isDemoMode) {
+        clearSession();
+      }
+      const validSession = existingSession && !existingSession.isDemoMode ? existingSession : null;
       const pathname = window.location.pathname;
 
       if (!isCancelled) {
-        if (existingSession) {
-          setSession(existingSession);
+        if (validSession) {
+          setSession(validSession);
           setCurrentView('app');
 
           // Check if pathname is valid for user role
-          if (pathname && pathname !== '/' && isRouteAllowed(pathname, existingSession.user.role)) {
+          if (pathname && pathname !== '/' && isRouteAllowed(pathname, validSession.user.role)) {
             setCurrentRoute(pathname);
           } else {
-            const defaultRoute = ROLE_DEFAULT_ROUTES[existingSession.user.role];
+            const defaultRoute = ROLE_DEFAULT_ROUTES[validSession.user.role];
             navigateTo(defaultRoute, true);
           }
         } else {
@@ -983,23 +978,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Offline Sandbox Simulation Warning Banner */}
-        {((session?.isDemoMode || session?.source === 'local') && isSupabaseConfigured()) && (
-          <div className="bg-amber-950/85 border-b border-amber-600/60 px-4 sm:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-amber-200 shadow-sm">
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={15} className="text-amber-400 shrink-0" />
-              <span>
-                <strong>Offline Sandbox Mode:</strong> Real Supabase authentication is active on this instance. Demo persona sessions do NOT have a PostgreSQL session and cannot access RLS-protected production financial data.
-              </span>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="px-2.5 py-1 rounded bg-amber-900/70 hover:bg-amber-800 text-amber-100 border border-amber-600/60 text-[11px] font-semibold transition-colors shrink-0"
-            >
-              Sign In with Supabase Auth
-            </button>
-          </div>
-        )}
 
         {/* Page Content Body */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">

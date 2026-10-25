@@ -59,8 +59,8 @@ export const SEEDED_TENANTS: TenantWorkspace[] = [
     adminName: 'Eleanor Sterling',
     adminEmail: 'admin@finova.ai',
     createdDate: '2023-01-10',
-    usersCount: 148920,
-    transactionVolumeYTD: 2841920000, // $2.84B
+    usersCount: 0,
+    transactionVolumeYTD: 0,
     complianceScore: 99.8,
     activeEngines: {
       aiAssistant: true,
@@ -94,8 +94,8 @@ export const SEEDED_TENANTS: TenantWorkspace[] = [
     adminName: 'Marcus Brody',
     adminEmail: 'admin@crestviewfinance.com',
     createdDate: '2023-06-20',
-    usersCount: 42150,
-    transactionVolumeYTD: 980400000, // £980.4M
+    usersCount: 0,
+    transactionVolumeYTD: 0,
     complianceScore: 99.4,
     activeEngines: {
       aiAssistant: true,
@@ -129,8 +129,8 @@ export const SEEDED_TENANTS: TenantWorkspace[] = [
     adminName: 'Catherine Duval',
     adminEmail: 'admin@vanguardwealth.eu',
     createdDate: '2023-11-05',
-    usersCount: 18400,
-    transactionVolumeYTD: 1420600000, // €1.42B
+    usersCount: 0,
+    transactionVolumeYTD: 0,
     complianceScore: 99.9,
     activeEngines: {
       aiAssistant: true,
@@ -164,8 +164,8 @@ export const SEEDED_TENANTS: TenantWorkspace[] = [
     adminName: 'Hans Weber',
     adminEmail: 'admin@solariscredit.de',
     createdDate: '2024-03-01',
-    usersCount: 3820,
-    transactionVolumeYTD: 74200000, // €74.2M
+    usersCount: 0,
+    transactionVolumeYTD: 0,
     complianceScore: 97.1,
     activeEngines: {
       aiAssistant: true,

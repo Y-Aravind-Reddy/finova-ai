@@ -183,28 +183,35 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     }));
   }, [tenantTransactions, currencyCode]);
 
-  // Portfolio Monthly Trajectory calculated from live data
+  // Portfolio Monthly Trajectory calculated from genuine transaction records
   const portfolioGrowth = React.useMemo(() => {
-    const baseNav = metrics.portfolioNav;
-    if (baseNav === 0) {
-      return [
-        { label: 'May', value: 0, secondaryValue: 0 },
-        { label: 'Jun', value: 0, secondaryValue: 0 },
-        { label: 'Jul', value: 0, secondaryValue: 0 },
-        { label: 'Aug', value: 0, secondaryValue: 0 },
-        { label: 'Sep', value: 0, secondaryValue: 0 },
-        { label: 'Oct', value: 0, secondaryValue: 0, highlight: true },
-      ];
+    const monthMap: Record<string, number> = {
+      May: 0,
+      Jun: 0,
+      Jul: 0,
+      Aug: 0,
+      Sep: 0,
+      Oct: 0,
+    };
+    if (tenantTransactions && tenantTransactions.length > 0) {
+      tenantTransactions.forEach((t) => {
+        if (t.status === 'Settled' && t.date) {
+          const d = new Date(t.date);
+          const m = d.toLocaleString('en-US', { month: 'short' });
+          if (m in monthMap) {
+            const valUsd = t.amountUsd ?? convertToUsd(t.amount, t.currency || currencyCode).amountUsd;
+            monthMap[m] += (t.type === 'Credit' ? valUsd : -valUsd);
+          }
+        }
+      });
     }
-    return [
-      { label: 'May', value: Math.round(baseNav * 0.85 / 1000), secondaryValue: Math.round(baseNav * 0.8 / 1000) },
-      { label: 'Jun', value: Math.round(baseNav * 0.88 / 1000), secondaryValue: Math.round(baseNav * 0.82 / 1000) },
-      { label: 'Jul', value: Math.round(baseNav * 0.92 / 1000), secondaryValue: Math.round(baseNav * 0.86 / 1000) },
-      { label: 'Aug', value: Math.round(baseNav * 0.95 / 1000), secondaryValue: Math.round(baseNav * 0.9 / 1000) },
-      { label: 'Sep', value: Math.round(baseNav * 0.98 / 1000), secondaryValue: Math.round(baseNav * 0.94 / 1000) },
-      { label: 'Oct', value: Math.round(baseNav / 1000), secondaryValue: Math.round(baseNav * 0.96 / 1000), highlight: true },
-    ];
-  }, [metrics.portfolioNav]);
+    return Object.entries(monthMap).map(([label, val], idx, arr) => ({
+      label,
+      value: Math.max(0, Math.round(val / 1000)),
+      secondaryValue: 0,
+      highlight: idx === arr.length - 1,
+    }));
+  }, [tenantTransactions, currencyCode]);
 
   const handleSimulateUpload = async () => {
     try {

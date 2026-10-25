@@ -2682,7 +2682,7 @@ export async function fetchAuditLogsResultFromDb(
   tenantId?: string
 ): Promise<{ logs: AuditLogEntry[]; count: number; error: string | null; isDbConnected: boolean }> {
   // Check local cache
-  let localLogs: AuditLogEntry[] = [...SEEDED_AUDIT_LOGS];
+  let localLogs: AuditLogEntry[] = [];
   try {
     const raw = localStorage.getItem(LOCAL_AUDIT_LOGS_KEY);
     if (raw) {
@@ -2699,7 +2699,7 @@ export async function fetchAuditLogsResultFromDb(
     return {
       logs: localLogs,
       count: localLogs.length,
-      error: 'Supabase unconfigured; displaying localized immutable logs.',
+      error: 'Supabase unconfigured; displaying localized logs.',
       isDbConnected: false,
     };
   }
@@ -2728,10 +2728,10 @@ export async function fetchAuditLogsResultFromDb(
     }
 
     if (!data || data.length === 0) {
-      // Database table exists but is currently empty (RLS or newly migrated)
+      // Database table exists but is currently empty
       return {
-        logs: localLogs,
-        count: localLogs.length,
+        logs: [],
+        count: 0,
         error: null,
         isDbConnected: true,
       };
@@ -2837,7 +2837,7 @@ export async function recordAuditEventInDb(params: {
   // Sync to local cache
   try {
     const raw = localStorage.getItem(LOCAL_AUDIT_LOGS_KEY);
-    let list: AuditLogEntry[] = raw ? JSON.parse(raw) : [...SEEDED_AUDIT_LOGS];
+    let list: AuditLogEntry[] = raw ? JSON.parse(raw) : [];
     list = [newEntry, ...list.filter((l) => l.id !== logId)].slice(0, 200);
     localStorage.setItem(LOCAL_AUDIT_LOGS_KEY, JSON.stringify(list));
   } catch {

@@ -50,82 +50,40 @@ interface CustomerCardsViewProps {
 export const CustomerCardsView: React.FC<CustomerCardsViewProps> = ({
   customerName = 'Harrison Croft',
 }) => {
-  const [cards, setCards] = useState<CardData[]>([
-    {
-      id: 'CARD-VDEBIT-01',
-      name: 'Sovereign Virtual Debit',
-      type: 'Virtual Debit Card',
-      tierLabel: 'BLACK GOLD DEBIT',
-      cardNumberMasked: '•••• •••• •••• 8849',
-      expiryDate: '09/29',
-      cvvMasked: '***',
-      cardholderName: customerName.toUpperCase(),
-      limit: 50000,
-      spent: 14280,
-      status: 'Active',
-      contactlessEnabled: true,
-      onlineEnabled: true,
-      internationalEnabled: true,
-      themeGradient: 'linear-gradient(135deg, #1C150A 0%, #38240A 35%, #5E3A0B 70%, #1A1208 100%)',
-      accentColor: '#F5C542',
-    },
-    {
-      id: 'CARD-CREDIT-02',
-      name: 'Black Sovereign Reserve Credit',
-      type: 'Credit Card',
-      tierLabel: 'PRIME RESERVE CREDIT',
-      cardNumberMasked: '•••• •••• •••• 4210',
-      expiryDate: '11/30',
-      cvvMasked: '***',
-      cardholderName: customerName.toUpperCase(),
-      limit: 250000,
-      spent: 46100,
-      status: 'Active',
-      contactlessEnabled: true,
-      onlineEnabled: true,
-      internationalEnabled: true,
-      themeGradient: 'linear-gradient(135deg, #0D0D0D 0%, #291A06 40%, #4A2C0A 75%, #141009 100%)',
-      accentColor: '#D4A017',
-    },
-    {
-      id: 'CARD-LINKED-03',
-      name: 'Tier 3 Custody Linked Card',
-      type: 'Account Linked Card',
-      tierLabel: 'SOVEREIGN LINKED',
-      cardNumberMasked: '•••• •••• •••• 9931',
-      expiryDate: '06/28',
-      cvvMasked: '***',
-      cardholderName: customerName.toUpperCase(),
-      limit: 500000,
-      spent: 89400,
-      status: 'Active',
-      contactlessEnabled: true,
-      onlineEnabled: true,
-      internationalEnabled: false,
-      themeGradient: 'linear-gradient(135deg, #1A1A1A 0%, #33220E 45%, #6B3E00 80%, #171108 100%)',
-      accentColor: '#FFF8E7',
-    },
-  ]);
+  const [cards, setCards] = useState<CardData[]>(() => {
+    try {
+      const raw = localStorage.getItem('finova_institutional_cards');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
 
   const [selectedCardIndex, setSelectedCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [copied, setCopied] = useState(false);
   const [freezeNotice, setFreezeNotice] = useState<string | null>(null);
 
-  const currentCard = cards[selectedCardIndex];
+  const currentCard = cards[selectedCardIndex] || cards[0];
 
   const handleCopyCard = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!currentCard) return;
     navigator.clipboard?.writeText(currentCard.cardNumberMasked);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const toggleCardFreeze = () => {
-    const newStatus = currentCard.status === 'Active' ? 'Frozen' : 'Active';
-    setCards((prev) =>
-      prev.map((c, idx) => (idx === selectedCardIndex ? { ...c, status: newStatus } : c))
-    );
+    if (!currentCard) return;
+    const newStatus: 'Active' | 'Frozen' = currentCard.status === 'Active' ? 'Frozen' : 'Active';
+    const updated: CardData[] = cards.map((c, idx) => (idx === selectedCardIndex ? { ...c, status: newStatus } : c));
+    setCards(updated);
+    try {
+      localStorage.setItem('finova_institutional_cards', JSON.stringify(updated));
+    } catch {}
     setFreezeNotice(
       newStatus === 'Frozen'
         ? `Card ${currentCard.cardNumberMasked} has been instantly locked. Authorization attempts will be rejected.`
@@ -135,15 +93,44 @@ export const CustomerCardsView: React.FC<CustomerCardsViewProps> = ({
   };
 
   const toggleFeature = (feature: 'contactless' | 'online' | 'international') => {
-    setCards((prev) =>
-      prev.map((c, idx) => {
-        if (idx !== selectedCardIndex) return c;
-        if (feature === 'contactless') return { ...c, contactlessEnabled: !c.contactlessEnabled };
-        if (feature === 'online') return { ...c, onlineEnabled: !c.onlineEnabled };
-        if (feature === 'international') return { ...c, internationalEnabled: !c.internationalEnabled };
-        return c;
-      })
-    );
+    if (!currentCard) return;
+    const updated = cards.map((c, idx) => {
+      if (idx !== selectedCardIndex) return c;
+      if (feature === 'contactless') return { ...c, contactlessEnabled: !c.contactlessEnabled };
+      if (feature === 'online') return { ...c, onlineEnabled: !c.onlineEnabled };
+      if (feature === 'international') return { ...c, internationalEnabled: !c.internationalEnabled };
+      return c;
+    });
+    setCards(updated);
+    try {
+      localStorage.setItem('finova_institutional_cards', JSON.stringify(updated));
+    } catch {}
+  };
+
+  const handleIssueInitialCard = () => {
+    const newCard: CardData = {
+      id: `CARD-VDEBIT-${Math.floor(1000 + Math.random() * 9000)}`,
+      name: 'Sovereign Virtual Debit',
+      type: 'Virtual Debit Card',
+      tierLabel: 'BLACK GOLD DEBIT',
+      cardNumberMasked: `•••• •••• •••• ${Math.floor(1000 + Math.random() * 9000)}`,
+      expiryDate: '09/29',
+      cvvMasked: '***',
+      cardholderName: customerName.toUpperCase(),
+      limit: 50000,
+      spent: 0,
+      status: 'Active',
+      contactlessEnabled: true,
+      onlineEnabled: true,
+      internationalEnabled: true,
+      themeGradient: 'linear-gradient(135deg, #1C150A 0%, #38240A 35%, #5E3A0B 70%, #1A1208 100%)',
+      accentColor: '#F5C542',
+    };
+    const updated = [newCard];
+    setCards(updated);
+    try {
+      localStorage.setItem('finova_institutional_cards', JSON.stringify(updated));
+    } catch {}
   };
 
   // 3D Chart Data: Spending by Month for selected card
@@ -184,27 +171,52 @@ export const CustomerCardsView: React.FC<CustomerCardsViewProps> = ({
           </p>
         </div>
 
-        {/* Card Selector Pills */}
-        <div className="flex items-center bg-[#111111] p-1.5 rounded-xl border border-[#D4A017]/30">
-          {cards.map((c, index) => (
-            <button
-              key={c.id}
-              onClick={() => {
-                setSelectedCardIndex(index);
-                setIsFlipped(false);
-              }}
-              className={`px-3 py-1.5 rounded-lg font-mono text-xs transition-all ${
-                selectedCardIndex === index
-                  ? 'bg-gradient-to-r from-[#D4A017] to-[#F5C542] text-[#111111] font-bold shadow-[0_0_12px_rgba(212,160,23,0.35)]'
-                  : 'text-[#D4A017] hover:text-[#FFF8E7]'
-              }`}
-            >
-              {c.type.replace(' Card', '')}
-            </button>
-          ))}
-        </div>
+        {/* Card Selector Pills or Request Action */}
+        {cards.length > 0 ? (
+          <div className="flex items-center bg-[#111111] p-1.5 rounded-xl border border-[#D4A017]/30">
+            {cards.map((c, index) => (
+              <button
+                key={c.id}
+                onClick={() => {
+                  setSelectedCardIndex(index);
+                  setIsFlipped(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg font-mono text-xs transition-all ${
+                  selectedCardIndex === index
+                    ? 'bg-gradient-to-r from-[#D4A017] to-[#F5C542] text-[#111111] font-bold shadow-[0_0_12px_rgba(212,160,23,0.35)]'
+                    : 'text-[#D4A017] hover:text-[#FFF8E7]'
+                }`}
+              >
+                {c.type.replace(' Card', '')}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button
+            onClick={handleIssueInitialCard}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A017] via-[#F5C542] to-[#D4A017] text-[#111111] font-bold text-xs hover:brightness-110 shadow-lg"
+          >
+            <Sparkles size={14} /> Request Virtual Debit Card
+          </button>
+        )}
       </div>
 
+      {cards.length === 0 || !currentCard ? (
+        <div className="rounded-2xl bg-[#1E1E1E]/80 border border-[#D4A017]/30 p-12 text-center space-y-4">
+          <CreditCard size={48} className="mx-auto text-[#D4A017]/40" />
+          <h3 className="font-cinzel text-lg font-bold text-[#FFF8E7]">No Institutional Cards Issued Yet</h3>
+          <p className="text-xs text-[#9CA3AF] max-w-md mx-auto">
+            No virtual debit or prime reserve credit cards have been linked to this account yet. Contact your relationship manager or private wealth desk to issue sovereign payment cards.
+          </p>
+          <button
+            onClick={handleIssueInitialCard}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A017] via-[#F5C542] to-[#D4A017] text-[#111111] font-bold text-xs hover:brightness-110 shadow-lg inline-flex items-center gap-2"
+          >
+            <Sparkles size={14} /> Request Virtual Debit Card
+          </button>
+        </div>
+      ) : (
+        <>
       {freezeNotice && (
         <div className="p-3.5 rounded-xl bg-[#6B3E00]/40 border border-[#F5C542] text-[#FFF8E7] text-xs font-mono flex items-center justify-between shadow-[0_0_15px_rgba(212,160,23,0.25)]">
           <div className="flex items-center gap-2">
@@ -590,6 +602,8 @@ export const CustomerCardsView: React.FC<CustomerCardsViewProps> = ({
           height={320}
         />
       </div>
+      </>
+      )}
     </div>
   );
 };

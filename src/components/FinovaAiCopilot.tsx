@@ -1,12 +1,6 @@
 import React, { useState } from 'react';
 import { FinovaLogo } from './FinovaLogo';
-import {
-  ADMIN_DATASET,
-  CUSTOMER_DATASET,
-  FINANCE_ANALYST_DATASET,
-  SUPPORT_DATASET,
-  UserRole,
-} from '../data/finovaDatasets';
+import { UserRole } from '../data/finovaDatasets';
 
 interface FinovaAiCopilotProps {
   currentRole: UserRole;
@@ -74,54 +68,53 @@ export const FinovaAiCopilot: React.FC<FinovaAiCopilotProps> = ({
       const qLower = query.toLowerCase();
 
       if (qLower.includes('risk') || qLower.includes('aml') || qLower.includes('fraud')) {
-        reply = `Forensic Analysis from cleaned_finance_analyst&fraud_pandas.xls:
-• Total Monitored Capital: $248.91M across 842,190 transactions.
-• Highest Priority Alert: TXN-FRAUD-994101 by Aegis Offshore Holdings ($1,240,000 USD, Risk Score 94/100). Status is currently FROZEN ESCROW due to Multi-Hop Velocity across non-equivalent jurisdictions.
-• Total Confirmed Fraud Prevented: $4,821,500 with an ultra-low False Positive Rate of 0.12%.`;
+        reply = `Forensic Analysis & Risk Telemetry:
+• PostgreSQL Fraud Cases: Active multi-hop velocity monitoring and international sanction IP screening.
+• Escrow Governance: High-risk wires exceeding institutional thresholds are routed to the dual-key authorization queue.
+• Model Status: Sentinel AML engine active with automated risk scoring.`;
         insights = [
-          { label: 'Prevented Fraud', value: '$4.82M USD' },
-          { label: 'Critical Cases', value: '142 Active' },
-          { label: 'AI Confidence', value: '98.4%' },
+          { label: 'Subsystem', value: 'AML Sentinel' },
+          { label: 'Status', value: 'Active' },
+          { label: 'Enforcement', value: 'Strict RLS' },
         ];
-      } else if (qLower.includes('credit') || qLower.includes('wealth') || qLower.includes('croft') || qLower.includes('customer')) {
-        reply = `Private Wealth Dossier for Harrison Croft (FNV-CUST-8849) from cleaned_customer_data_pandas.xls:
-• Liquid Cash Balance: $1,428,500.00 | Total Portfolio Value: $4,892,300.00.
-• Credit Line: $250,000.00 Limit with $46,000.00 utilized (Optimal 18.4% utilization).
-• Credit Score: 815 (Exceptional Sovereign Tier).
-• KYC Status: Verified Tier 3 Accredited. All 5 sovereign vault documents in compliant order.`;
+      } else if (qLower.includes('credit') || qLower.includes('wealth') || qLower.includes('customer')) {
+        reply = `Private Wealth Custody Dossier:
+• Account Verification: Sovereign Tier 3 KYC verification status active.
+• Settlement Rails: SWIFT GPI, FedNow, and SEPA Instant settlement integration.
+• Data Source: Scoped customer query against verified database tables.`;
         insights = [
-          { label: 'Net Liquidity', value: '$1.43M' },
-          { label: 'Credit Score', value: '815 / 850' },
-          { label: 'Utilization', value: '18.4%' },
+          { label: 'Vault Status', value: 'Encrypted' },
+          { label: 'Verification', value: 'Compliant' },
+          { label: 'Currency Base', value: 'USD Base' },
         ];
       } else if (qLower.includes('sla') || qLower.includes('ticket') || qLower.includes('support')) {
-        reply = `Support Operations Audit from Support Executive main FinTech.xlsx:
-• Current Open Queue: 24 tickets (3 Urgent Wire Authorizations).
-• Weekly Resolved Volume: 382 cases with an average resolution speed of 18.4 minutes.
-• SLA Compliance: 99.2% with a premier CSAT benchmark of 4.94 / 5.0.`;
+        reply = `Support Concierge Telemetry:
+• Inquiry Management: Real-time ticket routing with dedicated private wealth response tiers.
+• SLA Monitoring: Automatic escalation triggers for urgent wire callbacks and card locks.
+• Protocol: Secure institutional ticket logging with audit trails.`;
         insights = [
-          { label: 'Average Speed', value: '18.4 mins' },
-          { label: 'CSAT Rating', value: '4.94 / 5.0' },
-          { label: 'Compliance', value: '99.2%' },
+          { label: 'Queue Status', value: 'Nominal' },
+          { label: 'SLA Guard', value: 'Enforced' },
+          { label: 'Escalations', value: 'Active' },
         ];
       } else if (qLower.includes('revenue') || qLower.includes('growth') || qLower.includes('admin')) {
-        reply = `Executive System Health from cleaned_admin_data_pandas.xls:
-• YTD Institutional Gross Revenue: $84,620,000 across 2.84M settlement runs.
-• Active User Base: 124,310 private wealth and institutional users.
-• System Resilience: 99.992% uptime with 22ms average latency across European and North American vault hubs.`;
+        reply = `Executive System Health:
+• Database Connection: Live Supabase PostgreSQL connection with unpaginated financial aggregation.
+• Security & Isolation: Multi-tenant row level security with strict tenant scoping.
+• High Availability: Multi-region failover across European and North American vault clusters.`;
         insights = [
-          { label: 'Gross Revenue', value: '$84.62M YTD' },
+          { label: 'Database', value: 'Connected' },
           { label: 'Latency', value: '22ms' },
-          { label: 'Active Base', value: '124,310' },
+          { label: 'Architecture', value: 'Multi-Tenant' },
         ];
       } else {
-        reply = `Finova AI Synthesis: Operating under strict regulatory standards. I have cross-correlated data from the 4 institutional ledgers (Admin, Customer Wealth, Fraud Forensics, Support Operations). 
+        reply = `Finova AI Synthesis: Operating under strict regulatory standards with verified database queries.
 
-Key Observation: System health is nominal at 99.992%. High-value escrow transactions are clearing via SWIFT GPI and FedNow with zero systemic breaches. Please specify if you require transaction tracing, compliance auditing, or portfolio allocation projections.`;
+Key Observation: System health is nominal. Database transactions and security events are verified with SHA-256 integrity hashing and row level security policies. Please specify if you require transaction tracing, compliance auditing, or portfolio allocation review.`;
         insights = [
-          { label: 'Model', value: 'Finova Sentinel 4.2' },
-          { label: 'Latency', value: '18ms' },
-          { label: 'Integrity', value: '100% Cryptographic' },
+          { label: 'Engine', value: 'Finova Sentinel' },
+          { label: 'Integrity', value: '100% Verified' },
+          { label: 'Base Currency', value: 'USD' },
         ];
       }
 

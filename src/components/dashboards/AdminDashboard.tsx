@@ -138,27 +138,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Operations volume trend derived from settlement volume (USD Base)
   const txnTrendData = React.useMemo(() => {
-    const base = dbSettlementVolumeUsd > 0 ? Math.round(dbSettlementVolumeUsd / 7) : 0;
+    if (dbSettlementVolumeUsd <= 0) {
+      return [
+        { label: '08:00', value: 0 },
+        { label: '10:00', value: 0 },
+        { label: '12:00', value: 0 },
+        { label: '14:00', value: 0 },
+        { label: '16:00', value: 0 },
+        { label: '18:00', value: 0 },
+        { label: '20:00', value: 0 },
+      ];
+    }
+    const base = Math.round(dbSettlementVolumeUsd / 7);
     return [
-      { label: '08:00', value: Math.round(base * 0.4) },
-      { label: '10:00', value: Math.round(base * 0.7) },
-      { label: '12:00', value: Math.round(base * 0.9) },
-      { label: '14:00', value: Math.round(base * 0.8) },
+      { label: '08:00', value: base },
+      { label: '10:00', value: base },
+      { label: '12:00', value: base },
+      { label: '14:00', value: base },
       { label: '16:00', value: base },
-      { label: '18:00', value: Math.round(base * 0.6) },
-      { label: '20:00', value: Math.round(base * 0.3) },
+      { label: '18:00', value: base },
+      { label: '20:00', value: base },
     ];
   }, [dbSettlementVolumeUsd]);
-
 
   // 3D Client Growth Curve based on company users
   const customerGrowthData = React.useMemo(() => {
     const total = companyUsers.length;
+    if (total === 0) {
+      return [
+        { label: 'Q1', value: 0 },
+        { label: 'Q2', value: 0 },
+        { label: 'Q3', value: 0 },
+        { label: 'Q4', value: 0 },
+      ];
+    }
     return [
-      { label: 'Q1', value: Math.max(1, Math.round(total * 0.6)) },
-      { label: 'Q2', value: Math.max(1, Math.round(total * 0.75)) },
-      { label: 'Q3', value: Math.max(1, Math.round(total * 0.9)) },
-      { label: 'Q4', value: Math.max(1, total) },
+      { label: 'Q1', value: Math.max(0, Math.round(total * 0.6)) },
+      { label: 'Q2', value: Math.max(0, Math.round(total * 0.75)) },
+      { label: 'Q3', value: Math.max(0, Math.round(total * 0.9)) },
+      { label: 'Q4', value: total },
     ];
   }, [companyUsers.length]);
 
