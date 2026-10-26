@@ -10,6 +10,7 @@ import {
   AuthSession,
   signOutUserAsync,
   loadCurrentUserProfileAsync,
+  AUTHORIZED_SUPER_ADMIN_EMAIL,
 } from './data/authStore';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import {
@@ -167,7 +168,14 @@ export default function App() {
               setSession(profileRes.session);
               setCurrentView('app');
               const pathname = window.location.pathname;
-              if (pathname && pathname !== '/' && isRouteAllowed(pathname, profileRes.session.user.role)) {
+              const isUserAuthorizedForPath = (path: string, u: UserAccount) => {
+                if (path.startsWith('/super-admin')) {
+                  return u.role === 'SUPER_ADMIN' && u.email.toLowerCase().trim() === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase();
+                }
+                return isRouteAllowed(path, u.role);
+              };
+
+              if (pathname && pathname !== '/' && isUserAuthorizedForPath(pathname, profileRes.session.user)) {
                 setCurrentRoute(pathname);
               } else {
                 navigateTo(ROLE_DEFAULT_ROUTES[profileRes.session.user.role], true);
@@ -193,8 +201,15 @@ export default function App() {
           setSession(validSession);
           setCurrentView('app');
 
+          const isUserAuthorizedForPath = (path: string, u: UserAccount) => {
+            if (path.startsWith('/super-admin')) {
+              return u.role === 'SUPER_ADMIN' && u.email.toLowerCase().trim() === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase();
+            }
+            return isRouteAllowed(path, u.role);
+          };
+
           // Check if pathname is valid for user role
-          if (pathname && pathname !== '/' && isRouteAllowed(pathname, validSession.user.role)) {
+          if (pathname && pathname !== '/' && isUserAuthorizedForPath(pathname, validSession.user)) {
             setCurrentRoute(pathname);
           } else {
             const defaultRoute = ROLE_DEFAULT_ROUTES[validSession.user.role];

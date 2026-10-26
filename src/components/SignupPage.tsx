@@ -32,8 +32,8 @@ export const SignupPage: React.FC<SignupPageProps> = ({
     checkSupabaseConnection().then(setConnectionStatus);
   }, []);
 
-  // Multi-tenant institution selector
-  const tenants = getStoredTenants().filter((t) => t.status === 'Active');
+  // Multi-tenant institution selector (platform_root is strictly excluded from public signup)
+  const tenants = getStoredTenants().filter((t) => t.status === 'Active' && t.id !== 'platform_root');
   const [selectedTenantId, setSelectedTenantId] = useState<string>(
     tenants[0]?.id || 'tenant_apex_bank'
   );

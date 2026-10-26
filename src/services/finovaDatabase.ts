@@ -20,7 +20,7 @@ import {
   updateTenant,
   createTenant,
 } from '../data/tenantStore';
-import { getStoredUsers, saveStoredUsers, StoredUser, getStoredSession, saveSession } from '../data/authStore';
+import { getStoredUsers, saveStoredUsers, StoredUser, getStoredSession, saveSession, AUTHORIZED_SUPER_ADMIN_EMAIL } from '../data/authStore';
 import { convertToUsd, getExchangeRates, formatCurrencyWithUsdDisclosure } from './currencyService';
 
 export type QueryResultState =
@@ -1566,21 +1566,40 @@ export async function fetchCurrentUserProfileResultFromDb(): Promise<ProfileQuer
       }
     }
 
+    const userEmail = (data.email || sbSession.user.email || '').trim().toLowerCase();
+    const isAuthorizedSuperAdmin = userEmail === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase();
+
+    let resolvedRole = (data.role as UserRole) || 'CUSTOMER';
+    let resolvedTenantId = tenantId;
+    let resolvedTenantName = tenantName;
+
+    // Strict single Super Admin validation
+    if (resolvedRole === 'SUPER_ADMIN' && !isAuthorizedSuperAdmin) {
+      console.warn(`[SECURITY VIOLATION] Unauthorized SUPER_ADMIN profile queried for ${userEmail}. Demoting to CUSTOMER.`);
+      resolvedRole = 'CUSTOMER';
+      resolvedTenantId = 'tenant_apex_bank';
+      resolvedTenantName = 'Apex Global Bank';
+    } else if (isAuthorizedSuperAdmin) {
+      resolvedRole = 'SUPER_ADMIN';
+      resolvedTenantId = 'platform_root';
+      resolvedTenantName = 'Finova AI SaaS Platform Operator';
+    }
+
     const userProfile: UserAccount = {
       id: data.id,
       name: cleanName,
       email: data.email || sbSession.user.email || '',
-      role: (data.role as UserRole) || 'CUSTOMER',
+      role: resolvedRole,
       status: data.status || 'Active',
-      tier: data.tier || 'Private Wealth Tier 3',
+      tier: isAuthorizedSuperAdmin ? 'Executive Staff' : (data.tier || 'Private Wealth Tier 3'),
       createdDate: data.created_at ? data.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
       lastActive: 'Just now',
       phone: data.phone || sbSession.user.user_metadata?.phone || '+1 (212) 555-0100',
       country: data.country || 'United States',
       twoFactorEnabled: data.two_factor_enabled ?? true,
-      tenantId,
-      tenantName,
-      notes: data.notes || 'Loaded directly from live Supabase PostgreSQL profiles table',
+      tenantId: resolvedTenantId,
+      tenantName: resolvedTenantName,
+      notes: data.notes || (isAuthorizedSuperAdmin ? 'Authorized Platform Super Admin' : 'Loaded directly from live Supabase PostgreSQL profiles table'),
       authSource: 'supabase',
     };
 
@@ -1917,6 +1936,42 @@ export async function updateUserRoleInDb(
 ): Promise<{ success: boolean; error: string | null; updatedProfile?: UserAccount }> {
   if (!userId) {
     return { success: false, error: 'User ID is required for role modification.' };
+  }
+
+  // Governance Check 1: Nobody other than aravindvicky629@gmail.com may ever hold SUPER_ADMIN
+  if (newRole === 'SUPER_ADMIN') {
+    let targetEmail: string | undefined;
+
+    // First check local / stored users
+    const localUser = getStoredUsers().find((u) => u.id === userId);
+    if (localUser?.email) {
+      targetEmail = localUser.email.trim().toLowerCase();
+    } else if (isSupabaseConfigured() && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+      try {
+        const { data: targetCheck } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('id', userId)
+          .maybeSingle();
+        targetEmail = targetCheck?.email?.trim().toLowerCase();
+      } catch {
+        // fall through
+      }
+    }
+
+    if (targetEmail && targetEmail !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
+      return {
+        success: false,
+        error: `Finova AI Governance Violation: Exclusively ${AUTHORIZED_SUPER_ADMIN_EMAIL} may hold the Platform Super Admin role.`,
+      };
+    }
+
+    if (!targetEmail) {
+      return {
+        success: false,
+        error: `Finova AI Governance Violation: Exclusively ${AUTHORIZED_SUPER_ADMIN_EMAIL} may hold the Platform Super Admin role.`,
+      };
+    }
   }
 
   if (isSupabaseConfigured()) {

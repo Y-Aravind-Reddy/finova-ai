@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { FinovaLogo } from './FinovaLogo';
 import { authenticateUserAsync } from '../data/authStore';
-import { isSupabaseConfigured, SUPABASE_PROJECT_URL, checkSupabaseConnection, ConnectionStatus } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, SUPABASE_PROJECT_URL, checkSupabaseConnection, ConnectionStatus } from '../lib/supabase';
 import { UserAccount } from '../data/finovaDatasets';
 import { Lock, Mail, Eye, EyeOff, ShieldCheck, Key, ArrowRight, Building2, Globe, CheckCircle2, Database, AlertCircle } from 'lucide-react';
 
@@ -242,7 +242,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 />
                 <button
                   type="button"
-                  onClick={() => setForgotSubmitted(true)}
+                  onClick={async () => {
+                    if (isSupabaseConfigured() && forgotEmail.trim()) {
+                      try {
+                        await supabase.auth.resetPasswordForEmail(forgotEmail.trim().toLowerCase());
+                      } catch (err) {
+                        console.warn('Supabase resetPasswordForEmail notice:', err);
+                      }
+                    }
+                    setForgotSubmitted(true);
+                  }}
                   className="w-full py-2 rounded-xl bg-gradient-to-r from-[#D4A017] to-[#E6C78B] text-[#1A1A1A] font-bold text-xs"
                 >
                   Send Recovery Token

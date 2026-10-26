@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UserAccount, UserRole } from '../../data/finovaDatasets';
 import { updateUserRoleInDb } from '../../services/finovaDatabase';
 import { getTenantById } from '../../data/tenantStore';
+import { AUTHORIZED_SUPER_ADMIN_EMAIL } from '../../data/authStore';
 import { ShieldCheck, Lock, Building2, AlertTriangle, CheckCircle2, RotateCw, UserCheck } from 'lucide-react';
 
 interface ChangeRoleModalProps {
@@ -40,6 +41,10 @@ export const ChangeRoleModal: React.FC<ChangeRoleModalProps> = ({
   const isSuperAdmin = currentRole === 'SUPER_ADMIN';
   const isAdmin = currentRole === 'ADMIN';
 
+  // Target user check
+  const isTargetAuthorizedSuperAdmin =
+    targetUser.email.toLowerCase().trim() === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase();
+
   // Governance Rule 1: Admin cannot modify another Admin or Super Admin
   const isTargetAdminOrSuper = targetUser.role === 'ADMIN' || targetUser.role === 'SUPER_ADMIN';
   const adminBlockedFromTarget = isAdmin && isTargetAdminOrSuper;
@@ -59,10 +64,15 @@ export const ChangeRoleModal: React.FC<ChangeRoleModalProps> = ({
   // Calculate available target roles
   const getPermittedRoles = (): UserRole[] => {
     if (isSuperAdmin) {
-      return ['SUPER_ADMIN', 'ADMIN', 'FINANCE_ANALYST', 'SUPPORT_EXECUTIVE', 'CUSTOMER'];
+      const roles: UserRole[] = ['ADMIN', 'FINANCE_ANALYST', 'SUPPORT_EXECUTIVE', 'CUSTOMER'];
+      // Only the authenticated account for aravindvicky629@gmail.com can ever hold SUPER_ADMIN
+      if (isTargetAuthorizedSuperAdmin) {
+        roles.unshift('SUPER_ADMIN');
+      }
+      return roles;
     }
     if (isAdmin) {
-      // Company Admins may only assign non-admin roles
+      // Company Admins may only assign non-admin staff and customer roles within their tenant
       return ['FINANCE_ANALYST', 'SUPPORT_EXECUTIVE', 'CUSTOMER'];
     }
     return [];

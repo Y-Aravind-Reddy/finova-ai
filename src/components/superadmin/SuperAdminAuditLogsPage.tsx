@@ -32,10 +32,7 @@ export const SuperAdminAuditLogsPage: React.FC<SuperAdminAuditLogsPageProps> = (
   const [error, setError] = useState<string | null>(null);
   const [isDbConnected, setIsDbConnected] = useState<boolean>(false);
 
-  const activeUser = currentUser || getStoredSession()?.user || {
-    role: 'SUPER_ADMIN',
-    name: 'Alexander Vance',
-  };
+  const activeUser = currentUser || getStoredSession()?.user;
 
   const loadAuditLogs = useCallback(async () => {
     setLoading(true);

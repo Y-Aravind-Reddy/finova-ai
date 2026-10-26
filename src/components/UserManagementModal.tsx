@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { UserAccount, UserRole } from '../data/finovaDatasets';
 import { getStoredTenants, getTenantById } from '../data/tenantStore';
-import { Building2, ShieldCheck, Lock } from 'lucide-react';
+import { AUTHORIZED_SUPER_ADMIN_EMAIL } from '../data/authStore';
+import { Building2, ShieldCheck, Lock, AlertTriangle } from 'lucide-react';
 
 interface UserManagementModalProps {
   currentRole: UserRole;
@@ -23,10 +24,18 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   const isEditing = !!editingUser;
   const tenants = getStoredTenants();
 
-  // Compute allowed roles that current user is permitted to create
+  const isEditingAuthorizedSuperAdmin =
+    Boolean(editingUser?.email && editingUser.email.toLowerCase().trim() === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase());
+
+  // Compute allowed roles that current user is permitted to create/assign
   const getAllowedRoles = (): UserRole[] => {
     if (currentRole === 'SUPER_ADMIN') {
-      return ['SUPER_ADMIN', 'ADMIN', 'FINANCE_ANALYST', 'SUPPORT_EXECUTIVE', 'CUSTOMER'];
+      const roles: UserRole[] = ['ADMIN', 'FINANCE_ANALYST', 'SUPPORT_EXECUTIVE', 'CUSTOMER'];
+      // Only the authenticated account for aravindvicky629@gmail.com can ever hold SUPER_ADMIN
+      if (isEditingAuthorizedSuperAdmin) {
+        roles.unshift('SUPER_ADMIN');
+      }
+      return roles;
     }
     if (currentRole === 'ADMIN') {
       return ['FINANCE_ANALYST', 'SUPPORT_EXECUTIVE', 'CUSTOMER'];
@@ -58,6 +67,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     notes: editingUser?.notes || '',
   });
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
   // Customer cannot manage users
@@ -87,12 +98,20 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     if (!formData.name || !formData.email) return;
+
+    const targetRole = formData.role || allowedRoles[0] || 'CUSTOMER';
+    if (targetRole === 'SUPER_ADMIN' && formData.email.toLowerCase().trim() !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
+      setErrorMessage(`Governance Policy Violation: Exclusively ${AUTHORIZED_SUPER_ADMIN_EMAIL} may hold the Platform Super Admin role.`);
+      return;
+    }
 
     // Resolve tenantName
     const resolvedTenantName = getTenantById(formData.tenantId)?.name || 'Apex Global Bank';
     onSave({
       ...formData,
+      role: targetRole,
       tenantName: resolvedTenantName,
     });
     onClose();
@@ -133,6 +152,13 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
             ✕
           </button>
         </div>
+
+        {errorMessage && (
+          <div className="m-4 p-3 rounded-xl bg-red-950/60 border border-red-600/60 text-red-200 flex items-start gap-2.5 font-mono text-xs">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5 text-red-400" />
+            <p>{errorMessage}</p>
+          </div>
+        )}
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4 font-mono text-xs">

@@ -163,11 +163,12 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
     setAiSaved(false);
     setAiSaveError(null);
 
-    const caller = getStoredSession()?.user || {
-      role: 'SUPER_ADMIN',
-      name: 'Alexander Vance',
-      email: 'superadmin@finova.ai',
-    };
+    const caller = getStoredSession()?.user;
+    if (!caller || caller.role !== 'SUPER_ADMIN') {
+      setAiSaveError('Authentication required: Only an active Platform Super Admin session may modify AI parameters.');
+      setAiSaving(false);
+      return;
+    }
 
     try {
       const result = await saveAiConfigurationToDb(aiSettings, caller);

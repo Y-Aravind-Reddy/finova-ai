@@ -274,6 +274,8 @@ export function saveStoredUsers(users: StoredUser[]): void {
   }
 }
 
+export const AUTHORIZED_SUPER_ADMIN_EMAIL = 'aravindvicky629@gmail.com';
+
 export function getStoredSession(): AuthSession | null {
   try {
     const raw = localStorage.getItem(STORAGE_SESSION_KEY);
@@ -283,6 +285,13 @@ export function getStoredSession(): AuthSession | null {
       localStorage.removeItem(STORAGE_SESSION_KEY);
       return null;
     }
+    // Strict Single Super Admin Enforcement
+    if (session.user?.role === 'SUPER_ADMIN' && session.user.email?.toLowerCase().trim() !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
+      console.warn(`[SECURITY VIOLATION] Unauthorized SUPER_ADMIN session rejected for ${session.user.email}. Demoted to CUSTOMER.`);
+      session.user.role = 'CUSTOMER';
+      session.user.tenantId = 'tenant_apex_bank';
+      session.user.tenantName = 'Apex Global Bank';
+    }
     return session;
   } catch {
     return null;
@@ -291,6 +300,12 @@ export function getStoredSession(): AuthSession | null {
 
 export function saveSession(session: AuthSession): void {
   try {
+    // Sanitize session before saving
+    if (session.user?.role === 'SUPER_ADMIN' && session.user.email?.toLowerCase().trim() !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
+      session.user.role = 'CUSTOMER';
+      session.user.tenantId = 'tenant_apex_bank';
+      session.user.tenantName = 'Apex Global Bank';
+    }
     localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
   } catch (err) {
     console.error('Failed to persist session', err);
@@ -348,6 +363,15 @@ export function authenticateUser(email: string, password: string): { success: bo
 
   const { passwordHash, ...cleanUser } = user;
   cleanUser.authSource = 'local';
+
+  // Strict Single Super Admin Enforcement
+  if (cleanUser.role === 'SUPER_ADMIN' && cleanUser.email.toLowerCase() !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
+    console.warn(`[SECURITY VIOLATION] Unauthorized SUPER_ADMIN role blocked for local user ${cleanUser.email}.`);
+    cleanUser.role = 'CUSTOMER';
+    cleanUser.tenantId = 'tenant_apex_bank';
+    cleanUser.tenantName = 'Apex Global Bank';
+  }
+
   const token = generateMockJWT(cleanUser);
   const session: AuthSession = {
     token,
@@ -374,7 +398,10 @@ export function registerCustomer(params: {
     return { success: false, error: 'An institutional account is already registered with this email.' };
   }
 
-  const selectedTenantId = params.tenantId || 'tenant_apex_bank';
+  let selectedTenantId = params.tenantId || 'tenant_apex_bank';
+  if (selectedTenantId === 'platform_root' || !selectedTenantId) {
+    selectedTenantId = 'tenant_apex_bank';
+  }
   const tenantMeta = getTenantById(selectedTenantId);
   const tenantName = tenantMeta?.name || 'Apex Global Bank';
 
@@ -427,10 +454,36 @@ export async function loadCurrentUserProfileAsync(): Promise<{
       const { data: sessionData, error: sbErr } = await supabase.auth.getSession();
       const sbSession = sessionData?.session;
       if (!sbErr && sbSession?.user) {
+        const userEmail = (sbSession.user.email || '').trim().toLowerCase();
+        const isAuthorizedSuperAdmin = userEmail === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase();
+
         // Query public.profiles using the active authenticated session
         const profileRes = await fetchCurrentUserProfileResultFromDb();
         if (profileRes.profile) {
-          const authUser = profileRes.profile;
+          let authUser = { ...profileRes.profile };
+
+          // Single Super Admin Policy:
+          // 1. If profile has SUPER_ADMIN but email does NOT match authorized Super Admin, demote to CUSTOMER
+          if (authUser.role === 'SUPER_ADMIN' && !isAuthorizedSuperAdmin) {
+            console.warn(`[SECURITY VIOLATION] Unauthorized SUPER_ADMIN role blocked for profile ${authUser.id} (${userEmail}). Enforcing demotion to CUSTOMER.`);
+            authUser.role = 'CUSTOMER';
+            authUser.tenantId = 'tenant_apex_bank';
+            authUser.tenantName = 'Apex Global Bank';
+          }
+          // 2. If authenticated user IS aravindvicky629@gmail.com, verify SUPER_ADMIN and platform_root
+          else if (isAuthorizedSuperAdmin) {
+            if (authUser.role !== 'SUPER_ADMIN' || authUser.tenantId !== 'platform_root') {
+              try {
+                await supabase.rpc('provision_authorized_super_admin');
+              } catch (provErr) {
+                console.warn('Super Admin initial provisioning RPC note:', provErr);
+              }
+              authUser.role = 'SUPER_ADMIN';
+              authUser.tenantId = 'platform_root';
+              authUser.tenantName = 'Finova AI SaaS Platform Operator';
+            }
+          }
+
           const session: AuthSession = {
             token: sbSession.access_token,
             user: authUser,
@@ -442,26 +495,40 @@ export async function loadCurrentUserProfileAsync(): Promise<{
           return { success: true, session, source: 'supabase' };
         } else {
           // Supabase Auth session active, but public.profiles returned zero records or trigger pending
-          const email = sbSession.user.email || '';
           let cleanName = (sbSession.user.user_metadata?.name || '').trim();
-          if (!cleanName && email) {
-            cleanName = email
+          if (!cleanName && userEmail) {
+            cleanName = userEmail
               .split('@')[0]
               .replace(/[._-]/g, ' ')
               .replace(/\b\w/g, (c: string) => c.toUpperCase());
           }
-          // Strict security: Default to CUSTOMER per signup policy
-          const safeRole: UserRole = 'CUSTOMER';
-          const metaTenantId = sbSession.user.user_metadata?.tenant_id || 'tenant_apex_bank';
-          const metaTenantName = sbSession.user.user_metadata?.tenant_name || getTenantById(metaTenantId)?.name || 'Apex Global Bank';
+
+          // Strict security: Default to CUSTOMER per signup policy unless verified authorized Super Admin
+          let safeRole: UserRole = 'CUSTOMER';
+          let metaTenantId = sbSession.user.user_metadata?.tenant_id || 'tenant_apex_bank';
+          if (metaTenantId === 'platform_root') {
+            metaTenantId = 'tenant_apex_bank';
+          }
+          let metaTenantName = sbSession.user.user_metadata?.tenant_name || getTenantById(metaTenantId)?.name || 'Apex Global Bank';
+
+          if (isAuthorizedSuperAdmin) {
+            try {
+              await supabase.rpc('provision_authorized_super_admin');
+            } catch (provErr) {
+              console.warn('Super Admin initial provisioning RPC note:', provErr);
+            }
+            safeRole = 'SUPER_ADMIN';
+            metaTenantId = 'platform_root';
+            metaTenantName = 'Finova AI SaaS Platform Operator';
+          }
 
           const fallbackProfile: UserAccount = {
             id: sbSession.user.id,
-            name: cleanName || 'Apex Customer',
-            email,
+            name: isAuthorizedSuperAdmin ? (cleanName || 'Aravind Vicky') : (cleanName || 'Apex Customer'),
+            email: userEmail,
             role: safeRole,
             status: 'Active',
-            tier: 'Private Wealth Tier 3',
+            tier: isAuthorizedSuperAdmin ? 'Executive Staff' : 'Private Wealth Tier 3',
             createdDate: sbSession.user.created_at ? sbSession.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
             lastActive: 'Just now',
             phone: sbSession.user.user_metadata?.phone || '+1 (212) 555-0100',
@@ -469,7 +536,7 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             twoFactorEnabled: true,
             tenantId: metaTenantId,
             tenantName: metaTenantName,
-            notes: 'Authenticated via live Supabase Auth session (Default Customer Role)',
+            notes: isAuthorizedSuperAdmin ? 'Authorized Platform Super Admin' : 'Authenticated via live Supabase Auth session (Customer Role)',
             authSource: 'supabase',
           };
 
@@ -522,6 +589,7 @@ export async function authenticateUserAsync(
   password: string
 ): Promise<{ success: boolean; session?: AuthSession; error?: string; source?: 'supabase' | 'local' }> {
   const normalizedEmail = email.trim().toLowerCase();
+  const isAuthorizedSuperAdmin = normalizedEmail === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase();
 
   // 1. If Supabase is configured with an active key, enforce real Supabase Auth
   if (isSupabaseConfigured()) {
@@ -537,7 +605,7 @@ export async function authenticateUserAsync(
         let authenticatedUser: UserAccount;
 
         if (profileRes.profile) {
-          authenticatedUser = profileRes.profile;
+          authenticatedUser = { ...profileRes.profile };
         } else {
           // Construct safely from auth user data with strict CUSTOMER fallback
           const userEmail = data.user.email || normalizedEmail;
@@ -548,17 +616,17 @@ export async function authenticateUserAsync(
               .replace(/[._-]/g, ' ')
               .replace(/\b\w/g, (c: string) => c.toUpperCase());
           }
-          const userRole: UserRole = 'CUSTOMER';
-          const tenantId = data.user.user_metadata?.tenant_id || 'tenant_apex_bank';
-          const tenantName = data.user.user_metadata?.tenant_name || getTenantById(tenantId)?.name || 'Apex Global Bank';
+          const userRole: UserRole = isAuthorizedSuperAdmin ? 'SUPER_ADMIN' : 'CUSTOMER';
+          const tenantId = isAuthorizedSuperAdmin ? 'platform_root' : 'tenant_apex_bank';
+          const tenantName = isAuthorizedSuperAdmin ? 'Finova AI SaaS Platform Operator' : 'Apex Global Bank';
 
           authenticatedUser = {
             id: data.user.id,
-            name: cleanName || 'Apex Customer',
+            name: isAuthorizedSuperAdmin ? (cleanName || 'Aravind Vicky') : (cleanName || 'Apex Customer'),
             email: userEmail,
             role: userRole,
             status: 'Active',
-            tier: 'Private Wealth Tier 3',
+            tier: isAuthorizedSuperAdmin ? 'Executive Staff' : 'Private Wealth Tier 3',
             createdDate: data.user.created_at ? data.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
             lastActive: 'Just now',
             phone: data.user.user_metadata?.phone || '+1 (212) 555-0100',
@@ -566,9 +634,28 @@ export async function authenticateUserAsync(
             twoFactorEnabled: true,
             tenantId,
             tenantName,
-            notes: 'Authenticated via live Supabase PostgreSQL Session',
+            notes: isAuthorizedSuperAdmin ? 'Platform Super Admin' : 'Authenticated via live Supabase PostgreSQL Session',
             authSource: 'supabase',
           };
+        }
+
+        // Strict Single Super Admin Enforcement on Authenticated Profile
+        if (authenticatedUser.role === 'SUPER_ADMIN' && !isAuthorizedSuperAdmin) {
+          console.warn(`[SECURITY VIOLATION] Unauthorized SUPER_ADMIN login blocked for ${normalizedEmail}.`);
+          authenticatedUser.role = 'CUSTOMER';
+          authenticatedUser.tenantId = 'tenant_apex_bank';
+          authenticatedUser.tenantName = 'Apex Global Bank';
+        } else if (isAuthorizedSuperAdmin) {
+          if (authenticatedUser.role !== 'SUPER_ADMIN' || authenticatedUser.tenantId !== 'platform_root') {
+            try {
+              await supabase.rpc('provision_authorized_super_admin');
+            } catch (provErr) {
+              console.warn('Super Admin initial provisioning RPC note:', provErr);
+            }
+            authenticatedUser.role = 'SUPER_ADMIN';
+            authenticatedUser.tenantId = 'platform_root';
+            authenticatedUser.tenantName = 'Finova AI SaaS Platform Operator';
+          }
         }
 
         const session: AuthSession = {
@@ -619,7 +706,11 @@ export async function registerCustomerAsync(params: {
   requiresEmailConfirmation?: boolean;
 }> {
   const normalizedEmail = params.email.trim().toLowerCase();
-  const selectedTenantId = params.tenantId || 'tenant_apex_bank';
+  // Never allow public users to select platform_root workspace
+  let selectedTenantId = params.tenantId || 'tenant_apex_bank';
+  if (selectedTenantId === 'platform_root' || !selectedTenantId) {
+    selectedTenantId = 'tenant_apex_bank';
+  }
   const tenantMeta = getTenantById(selectedTenantId);
   const tenantName = tenantMeta?.name || 'Apex Global Bank';
 
@@ -644,7 +735,10 @@ export async function registerCustomerAsync(params: {
         console.warn('Supabase signUp error:', error.message);
         // If rate limited or domain blocked, fall back gracefully to local registration
         if (error.message.toLowerCase().includes('rate limit')) {
-          const fallbackRes = registerCustomer(params);
+          const fallbackRes = registerCustomer({
+            ...params,
+            tenantId: selectedTenantId,
+          });
           if (fallbackRes.success && fallbackRes.session?.user && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('finova:user_registered', { detail: fallbackRes.session.user }));
           }
