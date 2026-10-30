@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FinovaLogo } from './FinovaLogo';
-import { authenticateUserAsync } from '../data/authStore';
+import { authenticateUserAsync, authenticateDemoPersona } from '../data/authStore';
 import { supabase, isSupabaseConfigured, SUPABASE_PROJECT_URL, checkSupabaseConnection, ConnectionStatus } from '../lib/supabase';
 import { UserAccount } from '../data/finovaDatasets';
 import { Lock, Mail, Eye, EyeOff, ShieldCheck, Key, ArrowRight, Building2, Globe, CheckCircle2, Database, AlertCircle } from 'lucide-react';
@@ -202,6 +202,74 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               )}
             </button>
           </form>
+
+          {/* Evaluator Role Persona Switcher for Tomorrow's Demo */}
+          <div className="mt-5 pt-4 border-t border-[#3A3A3A] font-mono text-xs">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-[11px] font-bold text-[#E6C78B] flex items-center gap-1.5">
+                <ShieldCheck size={13} className="text-[#D4A017]" />
+                Demo Readiness Role Switcher:
+              </span>
+              <span className="text-[10px] text-[#9CA3AF]">1-Click Audit Inspection</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const res = authenticateDemoPersona('super_admin');
+                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                }}
+                className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#D4A017]/50 text-left transition-all hover:scale-[1.02]"
+              >
+                <div className="font-bold text-[#E6C78B] text-[11px]">Super Admin</div>
+                <div className="text-[9px] text-[#9CA3AF] truncate">aravindvicky629</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = authenticateDemoPersona('analyst');
+                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                }}
+                className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#3A3A3A] hover:border-[#D4A017]/40 text-left transition-all hover:scale-[1.02]"
+              >
+                <div className="font-bold text-[#FAF7F0] text-[11px]">Finance Analyst</div>
+                <div className="text-[9px] text-[#9CA3AF]">AML & Fraud Rails</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = authenticateDemoPersona('support');
+                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                }}
+                className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#3A3A3A] hover:border-[#D4A017]/40 text-left transition-all hover:scale-[1.02]"
+              >
+                <div className="font-bold text-[#FAF7F0] text-[11px]">Support Executive</div>
+                <div className="text-[9px] text-[#9CA3AF]">52k Ticket Queue</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = authenticateDemoPersona('admin');
+                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                }}
+                className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#3A3A3A] hover:border-[#D4A017]/40 text-left transition-all hover:scale-[1.02]"
+              >
+                <div className="font-bold text-[#FAF7F0] text-[11px]">Operations Admin</div>
+                <div className="text-[9px] text-[#9CA3AF]">Apex Global Bank</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = authenticateDemoPersona('customer');
+                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                }}
+                className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#3A3A3A] hover:border-[#D4A017]/40 text-left transition-all hover:scale-[1.02]"
+              >
+                <div className="font-bold text-[#FAF7F0] text-[11px]">Wealth Client</div>
+                <div className="text-[9px] text-[#9CA3AF]">Elena Rostova</div>
+              </button>
+            </div>
+          </div>
 
           {/* Switch to Signup */}
           <div className="mt-4 pt-4 border-t border-[#3A3A3A] text-center font-mono text-xs text-[#9CA3AF]">

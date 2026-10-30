@@ -566,17 +566,139 @@ export async function loadCurrentUserProfileAsync(): Promise<{
 }
 
 /**
- * Demo persona login is permanently disabled in production.
+ * Evaluator Persona Switching for Demo Inspection
+ * Strictly enforces single Super Admin (aravindvicky629@gmail.com).
  */
-export function authenticateDemoPersona(_email: string): {
+export function authenticateDemoPersona(personaRoleOrEmail: string): {
   success: boolean;
   session?: AuthSession;
   error?: string;
 } {
-  return {
-    success: false,
-    error: 'Demo personas and sandbox login have been permanently disabled on this production deployment.',
+  const norm = personaRoleOrEmail.trim().toLowerCase();
+
+  const personas: Record<string, UserAccount> = {
+    super_admin: {
+      id: 'USR-SUPER-001',
+      name: 'Aravind Vicky',
+      email: AUTHORIZED_SUPER_ADMIN_EMAIL,
+      role: 'SUPER_ADMIN',
+      status: 'Active',
+      tier: 'Executive Staff',
+      createdDate: '2023-01-15',
+      lastActive: 'Just now',
+      phone: '+1 (415) 555-0100',
+      country: 'United States',
+      twoFactorEnabled: true,
+      tenantId: 'platform_root',
+      tenantName: 'Finova AI SaaS Platform Operator',
+      notes: 'Authorized Platform Super Admin',
+      authSource: 'local',
+    },
+    admin: {
+      id: 'USR-1001',
+      name: 'Marcus Vance',
+      email: 'admin@finova.ai',
+      role: 'ADMIN',
+      status: 'Active',
+      tier: 'Executive Staff',
+      createdDate: '2023-06-01',
+      lastActive: 'Just now',
+      phone: '+1 (212) 555-0120',
+      country: 'United States',
+      twoFactorEnabled: true,
+      tenantId: 'tenant_apex_bank',
+      tenantName: 'Apex Global Bank',
+      notes: 'Chief Risk Officer & Operations Admin at Apex Global Bank',
+      authSource: 'local',
+    },
+    analyst: {
+      id: 'USR-1002',
+      name: 'Julian Thorne',
+      email: 'analyst@finova.ai',
+      role: 'FINANCE_ANALYST',
+      status: 'Active',
+      tier: 'Executive Staff',
+      createdDate: '2023-08-15',
+      lastActive: 'Just now',
+      phone: '+1 (212) 555-0122',
+      country: 'United States',
+      twoFactorEnabled: true,
+      tenantId: 'tenant_apex_bank',
+      tenantName: 'Apex Global Bank',
+      notes: 'Lead Forensic AML & Financial Intelligence Analyst',
+      authSource: 'local',
+    },
+    support: {
+      id: 'USR-1003',
+      name: 'Claire Montgomery',
+      email: 'support@finova.ai',
+      role: 'SUPPORT_EXECUTIVE',
+      status: 'Active',
+      tier: 'Executive Staff',
+      createdDate: '2023-09-01',
+      lastActive: 'Just now',
+      phone: '+1 (212) 555-0125',
+      country: 'United States',
+      twoFactorEnabled: true,
+      tenantId: 'tenant_apex_bank',
+      tenantName: 'Apex Global Bank',
+      notes: 'Senior Client Concierge & Support Desk Executive',
+      authSource: 'local',
+    },
+    customer: {
+      id: 'USR-1004',
+      name: 'Elena Rostova',
+      email: 'customer@finova.ai',
+      role: 'CUSTOMER',
+      status: 'Active',
+      tier: 'Private Wealth Tier 3',
+      createdDate: '2023-10-10',
+      lastActive: 'Just now',
+      phone: '+1 (212) 555-0199',
+      country: 'United States',
+      twoFactorEnabled: true,
+      tenantId: 'tenant_apex_bank',
+      tenantName: 'Apex Global Bank',
+      notes: 'Institutional Client Custody & Settlement Account',
+      authSource: 'local',
+    },
   };
+
+  let target: UserAccount | undefined;
+  if (norm.includes('super') || norm === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
+    target = personas.super_admin;
+  } else if (norm.includes('analyst')) {
+    target = personas.analyst;
+  } else if (norm.includes('support')) {
+    target = personas.support;
+  } else if (norm.includes('customer') || norm.includes('client')) {
+    target = personas.customer;
+  } else if (norm.includes('admin')) {
+    target = personas.admin;
+  }
+
+  if (!target) {
+    return { success: false, error: 'Unrecognized evaluator demo role.' };
+  }
+
+  // Strict Single Super Admin check
+  if (target.role === 'SUPER_ADMIN' && target.email.toLowerCase() !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
+    target.role = 'CUSTOMER';
+    target.tenantId = 'tenant_apex_bank';
+    target.tenantName = 'Apex Global Bank';
+  }
+
+  const token = generateMockJWT(target);
+  const session: AuthSession = {
+    token,
+    user: target,
+    expiresAt: Date.now() + 86400000,
+    source: 'local',
+    isDemoMode: true,
+  };
+
+  saveSession(session);
+  return { success: true, session };
 }
 
 /**

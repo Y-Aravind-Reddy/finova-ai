@@ -69,6 +69,7 @@ export interface CustomerTransaction {
   tenantId?: string;
   tenantName?: string;
   currency?: string;
+  amountInr?: number;
   amountUsd?: number;
   exchangeRate?: number;
   exchangeRateDate?: string;
@@ -123,7 +124,7 @@ export interface FinanceFraudTransaction {
   customerName: string;
   customerId: string;
   amount: number;
-  currency: 'USD' | 'EUR' | 'GBP' | 'CHF' | 'SGD';
+  currency: 'INR' | 'USD' | 'EUR' | 'GBP' | 'CHF' | 'SGD' | 'CAD' | 'JPY';
   riskScore: number; // 0 - 100
   amlFlag: 'Multi-Hop Velocity' | 'Sanctioned IP Cluster' | 'Rapid Layering' | 'High-Value Anomaly' | 'Clean / Verified';
   status: 'Flagged' | 'In Review' | 'Cleared' | 'Frozen Escrow';
@@ -133,6 +134,7 @@ export interface FinanceFraudTransaction {
   aiConfidencePct: number;
   tenantId?: string;
   tenantName?: string;
+  amountInr?: number;
   amountUsd?: number;
   exchangeRate?: number;
   exchangeRateDate?: string;

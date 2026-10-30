@@ -1,4 +1,11 @@
-import { convertToUsd, formatCurrencyWithUsdDisclosure, getExchangeRates, STATIC_BENCHMARK_FALLBACK_RATES } from '../src/services/currencyService';
+import {
+  convertToInr,
+  convertToUsd,
+  formatCurrencyWithInrDisclosure,
+  formatCurrencyWithUsdDisclosure,
+  getExchangeRates,
+  STATIC_BENCHMARK_FALLBACK_RATES
+} from '../src/services/currencyService';
 import { supabase } from '../src/lib/supabase';
 
 async function runAuditValidation() {
@@ -20,57 +27,55 @@ async function runAuditValidation() {
   }
 
   // ----------------------------------------------------------------------------
-  // TEST 1: Currency Conversion & Fallback Transparency
+  // TEST 1: Currency Conversion & Fallback Transparency (INR Base)
   // ----------------------------------------------------------------------------
-  console.log('--- TEST GROUP 1: Currency Conversion & Fallback Metadata ---');
+  console.log('--- TEST GROUP 1: Currency Conversion & Fallback Metadata (INR Base) ---');
   
-  const gbp100 = convertToUsd(100, 'GBP');
+  const gbp100 = convertToInr(100, 'GBP');
   assert(
-    'GBP to USD conversion calculates correctly (100 GBP @ 1.285 = $128.50)',
-    gbp100.amountUsd === 128.5 && gbp100.exchangeRate === 1.285
+    'GBP to INR conversion calculates correctly (100 GBP @ ₹109.28 = ₹10,928.00)',
+    gbp100.amountInr === 10928 && gbp100.exchangeRate === 109.28
   );
   assert(
     'Static fallback rates are explicitly flagged as isLive: false',
     gbp100.isLive === false && gbp100.source.includes('Static Fallback')
   );
 
-  const jpy1M = convertToUsd(1000000, 'JPY');
+  const usd100 = convertToInr(100, 'USD');
   assert(
-    'JPY to USD conversion calculates correctly (1M JPY @ 0.006650 = $6,650.00)',
-    jpy1M.amountUsd === 6650.0 && jpy1M.originalCurrency === 'JPY'
+    'USD to INR conversion calculates correctly (100 USD @ ₹84.07 = ₹8,407.00)',
+    usd100.amountInr === 8407 && usd100.originalCurrency === 'USD'
   );
 
-  const usdDirect = convertToUsd(500, 'USD');
+  const inrDirect = convertToInr(500, 'INR');
   assert(
-    'USD to USD conversion preserves 1:1 without alteration',
-    usdDirect.amountUsd === 500 && usdDirect.exchangeRate === 1.0
+    'INR to INR conversion preserves 1:1 identity without alteration',
+    inrDirect.amountInr === 500 && inrDirect.exchangeRate === 1.0
   );
 
   // Missing currency safety check
-  const unknownCurr = convertToUsd(1000, 'XYZ_UNKNOWN');
+  const unknownCurr = convertToInr(1000, 'XYZ_UNKNOWN');
   assert(
-    'Missing / unsupported currency returns amountUsd: 0 to block corrupting aggregates',
-    unknownCurr.amountUsd === 0 && unknownCurr.isConverted === false && unknownCurr.isStale === true
+    'Missing / unsupported currency returns amountInr: 0 to block corrupting aggregates',
+    unknownCurr.amountInr === 0 && unknownCurr.isConverted === false && unknownCurr.isStale === true
   );
 
   // Currency disclosure string
-  const disclosure = formatCurrencyWithUsdDisclosure(100, 'EUR');
+  const disclosure = formatCurrencyWithInrDisclosure(100, 'EUR');
   assert(
-    'Disclosure formatting displays USD Base with original EUR and rate breakdown',
-    disclosure.includes('$108.50') && disclosure.includes('100.00 EUR') && disclosure.includes('1.0850')
+    'Disclosure formatting displays INR Base with original EUR and rate breakdown',
+    disclosure.includes('₹9,112.00') && disclosure.includes('100.00 EUR') && disclosure.includes('91.1200')
   );
 
-
   // ----------------------------------------------------------------------------
-  // TEST 2: Aggregation Beyond 1,000 Rows Chunking Logic
+  // TEST 2: Aggregation Beyond 1,000 Rows Chunking Logic (INR Base)
   // ----------------------------------------------------------------------------
   console.log('\n--- TEST GROUP 2: Aggregation Beyond 1,000 Rows Chunking Simulation ---');
 
-  // Generate 2,500 test records to simulate a dataset that exceeds PostgREST's default 1,000 row ceiling
   interface TestTx {
     id: string;
     amount: number;
-    amount_usd?: number;
+    amount_inr?: number;
     currency: string;
     exchange_rate?: number;
     status: string;
@@ -81,26 +86,25 @@ async function runAuditValidation() {
 
   const MOCK_TOTAL_ROWS = 2500;
   const mockTransactions: TestTx[] = [];
-  let expectedSettledVolumeUsd = 0;
+  let expectedSettledVolumeInr = 0;
   let expectedSettledVolumeOriginal = 0;
   let expectedSettledCount = 0;
-  let expectedCreditsVolumeUsd = 0;
-  let expectedDebitsVolumeUsd = 0;
+  let expectedCreditsVolumeInr = 0;
+  let expectedDebitsVolumeInr = 0;
 
   for (let i = 0; i < MOCK_TOTAL_ROWS; i++) {
-    const isSettled = i % 2 === 0; // 1,250 settled rows
-    const isCredit = i % 3 === 0;  // Credit vs Debit
-    const curr = i % 4 === 0 ? 'GBP' : i % 4 === 1 ? 'EUR' : 'USD';
-    const amount = 100 + (i % 50); // amounts between 100 and 149
-    const rate = curr === 'GBP' ? 1.285 : curr === 'EUR' ? 1.085 : 1.0;
-    const amountUsd = Math.round(amount * rate * 100) / 100;
+    const isSettled = i % 2 === 0;
+    const isCredit = i % 3 === 0;
+    const curr = i % 4 === 0 ? 'GBP' : i % 4 === 1 ? 'EUR' : i % 4 === 2 ? 'USD' : 'INR';
+    const amount = 100 + (i % 50);
+    const conv = convertToInr(amount, curr);
 
     const tx: TestTx = {
       id: `tx-sim-${i}`,
       amount,
-      amount_usd: amountUsd,
+      amount_inr: conv.amountInr,
       currency: curr,
-      exchange_rate: rate,
+      exchange_rate: conv.exchangeRate,
       status: isSettled ? 'Settled' : 'Pending',
       type: isCredit ? 'Credit' : 'Debit',
       date: '2026-10-20',
@@ -110,56 +114,47 @@ async function runAuditValidation() {
 
     if (isSettled) {
       expectedSettledCount++;
-      expectedSettledVolumeUsd += amountUsd;
+      expectedSettledVolumeInr += conv.amountInr;
       expectedSettledVolumeOriginal += amount;
     }
     if (isCredit) {
-      expectedCreditsVolumeUsd += amountUsd;
+      expectedCreditsVolumeInr += conv.amountInr;
     } else {
-      expectedDebitsVolumeUsd += amountUsd;
+      expectedDebitsVolumeInr += conv.amountInr;
     }
   }
 
-  expectedSettledVolumeUsd = Math.round(expectedSettledVolumeUsd * 100) / 100;
+  expectedSettledVolumeInr = Math.round(expectedSettledVolumeInr * 100) / 100;
   expectedSettledVolumeOriginal = Math.round(expectedSettledVolumeOriginal * 100) / 100;
-  expectedCreditsVolumeUsd = Math.round(expectedCreditsVolumeUsd * 100) / 100;
-  expectedDebitsVolumeUsd = Math.round(expectedDebitsVolumeUsd * 100) / 100;
+  expectedCreditsVolumeInr = Math.round(expectedCreditsVolumeInr * 100) / 100;
+  expectedDebitsVolumeInr = Math.round(expectedDebitsVolumeInr * 100) / 100;
 
   console.log(`Generated simulated dataset: ${MOCK_TOTAL_ROWS} rows.`);
   console.log(`Expected Settled Count: ${expectedSettledCount}`);
-  console.log(`Expected Settled Volume USD: $${expectedSettledVolumeUsd.toLocaleString()}`);
+  console.log(`Expected Settled Volume INR: ₹${expectedSettledVolumeInr.toLocaleString()}`);
 
-  // Simulate PostgREST chunking with 1,000 rows ceiling per query
   const CHUNK_SIZE = 1000;
   let offset = 0;
   let simulatedSettledCount = 0;
-  let simulatedSettledVolumeUsd = 0;
+  let simulatedSettledVolumeInr = 0;
   let simulatedSettledVolumeOriginal = 0;
-  let simulatedCreditsVolumeUsd = 0;
-  let simulatedDebitsVolumeUsd = 0;
   let fetchIterations = 0;
 
   while (true) {
     fetchIterations++;
-    // Simulate .range(offset, offset + CHUNK_SIZE - 1)
     const page = mockTransactions.slice(offset, offset + CHUNK_SIZE);
     if (!page || page.length === 0) break;
 
     for (const row of page) {
       const isSettled = row.status === 'Settled' || row.status === 'Escrow Secured';
-      const usdVal = row.amount_usd !== undefined && row.amount_usd !== null
-        ? Number(row.amount_usd)
-        : convertToUsd(Number(row.amount), row.currency || 'USD').amountUsd;
+      const inrVal = row.amount_inr !== undefined && row.amount_inr !== null
+        ? Number(row.amount_inr)
+        : convertToInr(Number(row.amount), row.currency || 'INR').amountInr;
 
       if (isSettled) {
         simulatedSettledCount++;
-        simulatedSettledVolumeUsd += usdVal;
+        simulatedSettledVolumeInr += inrVal;
         simulatedSettledVolumeOriginal += Number(row.amount);
-      }
-      if (row.type === 'Credit') {
-        simulatedCreditsVolumeUsd += usdVal;
-      } else if (row.type === 'Debit') {
-        simulatedDebitsVolumeUsd += usdVal;
       }
     }
 
@@ -167,7 +162,7 @@ async function runAuditValidation() {
     offset += CHUNK_SIZE;
   }
 
-  simulatedSettledVolumeUsd = Math.round(simulatedSettledVolumeUsd * 100) / 100;
+  simulatedSettledVolumeInr = Math.round(simulatedSettledVolumeInr * 100) / 100;
   simulatedSettledVolumeOriginal = Math.round(simulatedSettledVolumeOriginal * 100) / 100;
 
   assert(
@@ -179,9 +174,9 @@ async function runAuditValidation() {
     simulatedSettledCount === expectedSettledCount
   );
   assert(
-    'Settled USD volume matches expected mathematical sum exactly',
-    Math.abs(simulatedSettledVolumeUsd - expectedSettledVolumeUsd) < 0.01,
-    `Simulated: ${simulatedSettledVolumeUsd}, Expected: ${expectedSettledVolumeUsd}`
+    'Settled INR volume matches expected mathematical sum exactly',
+    Math.abs(simulatedSettledVolumeInr - expectedSettledVolumeInr) < 0.01,
+    `Simulated: ${simulatedSettledVolumeInr}, Expected: ${expectedSettledVolumeInr}`
   );
   assert(
     'Original currency volume matches expected mathematical sum exactly',
@@ -207,19 +202,6 @@ async function runAuditValidation() {
   console.log(`Live tenant count retrieved: ${tenantData?.length || 0}`);
   if (tenantData) {
     tenantData.forEach(t => console.log(`  - Tenant: ${t.name} (${t.id}) [Currency: ${t.currency}]`));
-  }
-
-  // Check public.exchange_rates
-  const { data: fxData, error: fxErr } = await supabase
-    .from('exchange_rates')
-    .select('id, base_currency, target_currency, rate')
-    .limit(5);
-
-  if (fxErr) {
-    console.log(`[STATUS CONFIRMED] public.exchange_rates table is NOT YET deployed in remote database: ${fxErr.message}`);
-    console.log(`[ACTION REQUIRED] Execute /supabase/migrations/20261023_usd_base_currency_and_aggregations.sql in Supabase SQL Editor.`);
-  } else {
-    console.log(`[STATUS CONFIRMED] public.exchange_rates table IS deployed in remote database with ${fxData?.length} rows.`);
   }
 
   // ----------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-interface HeatmapCell {
+export interface HeatmapCell {
   hour: string;
   day: string;
   riskScore: number; // 0 - 100
@@ -12,43 +12,60 @@ interface HeatmapCell {
 interface ThreeDTransactionHeatmapProps {
   title?: string;
   subtitle?: string;
+  data?: HeatmapCell[];
+  currencySymbol?: string;
+  baseCurrency?: string;
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const TIME_BLOCKS = ['00-04h', '04-08h', '08-12h', '12-16h', '16-20h', '20-24h'];
 
-// Generate authentic patterned heat data for financial volume & risk
-const GENERATED_HEATMAP_DATA: HeatmapCell[] = [];
-DAYS.forEach((day, dayIdx) => {
-  TIME_BLOCKS.forEach((hour, hourIdx) => {
-    // Weekday trading hours have high volume, late nights have anomalous risk spikes
-    const isPeakMarket = (hourIdx === 2 || hourIdx === 3) && dayIdx < 5;
-    const isOffshoreNight = (hourIdx === 0 || hourIdx === 5);
-    const riskScore = isOffshoreNight ? Math.floor(65 + Math.random() * 32) : Math.floor(8 + Math.random() * 25);
-    const txCount = isPeakMarket ? Math.floor(4500 + Math.random() * 3000) : Math.floor(350 + Math.random() * 900);
-    const flaggedCount = riskScore > 75 ? Math.floor(6 + Math.random() * 14) : Math.floor(Math.random() * 3);
-    const volume = Math.floor(txCount * (12000 + Math.random() * 24000));
-
-    GENERATED_HEATMAP_DATA.push({
-      day,
-      hour,
-      riskScore,
-      txCount,
-      flaggedCount,
-      volume,
+// Deterministic baseline institutional volume & anomaly matrix (INR base)
+function getDeterministicBaselineData(): HeatmapCell[] {
+  const cells: HeatmapCell[] = [];
+  DAYS.forEach((day, dayIdx) => {
+    TIME_BLOCKS.forEach((hour, hourIdx) => {
+      const isPeakMarket = (hourIdx === 2 || hourIdx === 3) && dayIdx < 5;
+      const isOffshoreNight = (hourIdx === 0 || hourIdx === 5);
+      // Deterministic risk formula without Math.random()
+      const riskScore = isOffshoreNight 
+        ? 65 + ((dayIdx * 7 + hourIdx * 11) % 28)
+        : 12 + ((dayIdx * 5 + hourIdx * 9) % 25);
+      const txCount = isPeakMarket 
+        ? 3200 + ((dayIdx * 310 + hourIdx * 450) % 2200)
+        : 380 + ((dayIdx * 90 + hourIdx * 130) % 650);
+      const flaggedCount = riskScore > 75 
+        ? Math.floor(txCount * 0.008) + 3
+        : Math.max(0, Math.floor(txCount * 0.001));
+      // Converted INR volume (in Rupees)
+      const volume = Math.floor(txCount * (45000 + ((dayIdx * 8000 + hourIdx * 12000) % 35000)));
+      cells.push({
+        day,
+        hour,
+        riskScore,
+        txCount,
+        flaggedCount,
+        volume,
+      });
     });
   });
-});
+  return cells;
+}
+
+const BASELINE_HEATMAP_DATA = getDeterministicBaselineData();
 
 export const ThreeDTransactionHeatmap: React.FC<ThreeDTransactionHeatmapProps> = ({
   title = '3D Real-Time Transaction & AML Threat Heatmap',
-  subtitle = 'Institutional Liquidity Flow vs Anomaly Frequency Matrix',
+  subtitle = 'Institutional Liquidity Flow vs Anomaly Frequency Matrix (INR ₹ Base)',
+  data,
+  currencySymbol = '₹',
+  baseCurrency = 'INR',
 }) => {
   const [hoveredCell, setHoveredCell] = useState<HeatmapCell | null>(null);
+  const activeData = data && data.length > 0 ? data : BASELINE_HEATMAP_DATA;
 
   const getHeatColors = (risk: number) => {
     if (risk > 75) {
-      // Danger / High Threat in strict gold/bronze palette (#B45309 danger amber)
       return {
         bg: '#B45309',
         border: '#F5C542',
@@ -58,7 +75,6 @@ export const ThreeDTransactionHeatmap: React.FC<ThreeDTransactionHeatmapProps> =
       };
     }
     if (risk > 45) {
-      // Warning in strict palette (#D97706)
       return {
         bg: '#D97706',
         border: '#F5C542',
@@ -68,7 +84,6 @@ export const ThreeDTransactionHeatmap: React.FC<ThreeDTransactionHeatmapProps> =
       };
     }
     if (risk > 20) {
-      // Normal gold / bronze (#D4A017)
       return {
         bg: '#D4A017',
         border: '#FFF8E7',
@@ -77,7 +92,6 @@ export const ThreeDTransactionHeatmap: React.FC<ThreeDTransactionHeatmapProps> =
         level: 'Standard Liquidity',
       };
     }
-    // Deep bronze nominal (#6B3E00)
     return {
       bg: '#6B3E00',
       border: '#D4A017',
@@ -98,7 +112,6 @@ export const ThreeDTransactionHeatmap: React.FC<ThreeDTransactionHeatmapProps> =
           </h3>
           <p className="font-mono text-xs text-[#D4A017]/70 mt-0.5">{subtitle}</p>
         </div>
-
         {/* Legend */}
         <div className="flex items-center gap-2 font-mono text-[10px]">
           <span className="text-[#6B7280]">Risk Elevation:</span>
@@ -134,7 +147,7 @@ export const ThreeDTransactionHeatmap: React.FC<ThreeDTransactionHeatmapProps> =
 
           {/* Rows */}
           {DAYS.map((day) => {
-            const dayCells = GENERATED_HEATMAP_DATA.filter((c) => c.day === day);
+            const dayCells = activeData.filter((c) => c.day === day);
             return (
               <div key={day} className="grid grid-cols-7 gap-2 mb-2 items-center">
                 <div className="font-mono text-xs font-bold text-[#FFF8E7] pl-2">
@@ -204,7 +217,7 @@ export const ThreeDTransactionHeatmap: React.FC<ThreeDTransactionHeatmapProps> =
           </div>
           <div className="flex items-center gap-4">
             <span className="text-[#D4A017]">
-              Volume: ${(hoveredCell.volume / 1000000).toFixed(2)}M USD
+              Volume: {currencySymbol}{(hoveredCell.volume / 1000000).toFixed(2)}M {baseCurrency}
             </span>
             <span className="text-[#FFF8E7]">
               Transactions: {hoveredCell.txCount.toLocaleString()}

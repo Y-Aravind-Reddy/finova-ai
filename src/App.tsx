@@ -140,16 +140,17 @@ export default function App() {
     if (isSupabaseConfigured()) {
       try {
         const res = await fetchProfilesResultFromDb();
-        if (res.state === 'live_records' && res.data) {
+        if (res.state === 'live_records' && res.data && res.data.length > 0) {
           setUsersList(res.data);
+          return;
+        } else if (res.state === 'zero_records') {
+          setUsersList([]);
           return;
         }
       } catch (err) {
         console.warn('Failed querying live profiles from Supabase:', err);
       }
     }
-
-    setUsersList([]);
   }, []);
 
   // Initialize from storage & pathname on mount + Supabase Auth listener
@@ -658,6 +659,9 @@ export default function App() {
     if (userRole === 'ADMIN') {
       switch (currentRoute) {
         case '/admin/dashboard':
+        case '/admin/user-management':
+        case '/admin/operations-management':
+        case '/admin/customer-management':
           return (
             <AdminDashboard
               currentRole={userRole}
@@ -665,25 +669,7 @@ export default function App() {
               onUpdateUsers={handleUpdateUsers}
               onRefreshUsers={refreshUsersListAsync}
               currentUser={currentUser}
-            />
-          );
-        case '/admin/user-management':
-          return (
-            <AdminUserManagementPage
-              users={usersList}
-              onUpdateUsers={handleUpdateUsers}
-              onRefreshUsers={refreshUsersListAsync}
-              currentUser={currentUser}
-            />
-          );
-        case '/admin/operations-management':
-          return <AdminOperationsPage />;
-        case '/admin/customer-management':
-          return (
-            <AdminCustomerManagementPage
-              users={usersList}
-              onRefreshUsers={refreshUsersListAsync}
-              currentUser={currentUser}
+              activeSection={currentRoute === '/admin/user-management' ? 'user-management' : currentRoute === '/admin/customer-management' ? 'customer-management' : 'dashboard'}
             />
           );
         case '/admin/reports':

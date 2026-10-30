@@ -1,25 +1,28 @@
 /**
- * Finova AI — Centralized USD Base-Currency & Exchange Rate Engine
- * Implements a database-backed exchange rate system with transparent source disclosure.
+ * Finova AI — Centralized INR Base-Currency & Exchange Rate Engine
+ * Implements a database-backed exchange rate system with Indian Rupee (INR ₹) as the base reporting currency.
  * 
  * Standards & Benchmarks:
- * - Base Currency: USD (United States Dollar)
- * - Benchmark Providers: Federal Reserve H.10 Statistical Release / European Central Bank (ECB)
+ * - Base Reporting Currency: INR (Indian Rupee, ₹)
+ * - Benchmark Providers: Reserve Bank of India (RBI) Reference Rates / Official Central Bank Benchmarks
+ * - Rate Definition: INR amount per 1 unit of original currency (e.g., 1 USD = ₹84.070000, 1 EUR = ₹91.120000)
+ * - Formula: INR amount = original amount × INR-per-unit exchange rate
+ * - Identity Conversion: INR-to-INR conversion is exactly 1.000000
  * - Precision: 6-decimal exchange rates, standard 2-decimal financial rounding.
- * - Rules: Explicit rate dates, staleness checks, no silent fallback/guessing.
+ * - Rules: Explicit rate dates, staleness checks, no silent fallback/guessing (missing rates return 0 converted amount).
  * - Source Transparency: Clearly distinguishes live database rates from static baseline fallbacks.
  */
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
-export type SupportedCurrency = 'USD' | 'EUR' | 'GBP' | 'CHF' | 'SGD' | 'CAD' | 'JPY';
+export type SupportedCurrency = 'INR' | 'USD' | 'EUR' | 'GBP' | 'CHF' | 'SGD' | 'CAD' | 'JPY';
 
 export interface ExchangeRateRecord {
   id: string;
-  baseCurrency: 'USD';
+  baseCurrency: 'INR';
   targetCurrency: SupportedCurrency;
-  rate: number; // Multiplier: 1 unit of targetCurrency = X USD
-  inverseRate: number; // 1 USD = X targetCurrency
+  rate: number; // Multiplier: INR amount per 1 unit of targetCurrency (e.g. 1 USD = 84.07 INR)
+  inverseRate: number; // Target currency units per 1 INR (1 / rate)
   effectiveDate: string; // ISO date YYYY-MM-DD
   source: string;
   retrievedAt: string;
@@ -30,14 +33,16 @@ export interface ExchangeRateRecord {
 export interface CurrencyConversion {
   originalAmount: number;
   originalCurrency: string;
-  amountUsd: number;
-  exchangeRate: number;
+  amountInr: number;
+  amountUsd: number; // Backwards-compatible field
+  exchangeRate: number; // INR per 1 unit of original currency
   effectiveDate: string;
   source: string;
   isConverted: boolean;
   isStale: boolean;
   isLive: boolean;
-  formattedUsd: string;
+  formattedInr: string;
+  formattedUsd: string; // Backwards-compatible field
   formattedOriginal: string;
   warning?: string;
   error?: string;
@@ -50,91 +55,103 @@ export const MAX_RATE_AGE_DAYS = 3;
 
 /**
  * Static Reference Benchmark Baseline Rates (Offline Fallback Only)
- * Used strictly when database connectivity or public.exchange_rates table is pending synchronization.
- * Clearly identified as static fallback baselines, not live market rates.
+ * Rates are strictly attributed as static baseline fallbacks, NEVER labeled as live market rates.
+ * Defined consistently as INR per 1 unit of the foreign currency.
  */
 export const STATIC_BENCHMARK_FALLBACK_RATES: Record<SupportedCurrency, ExchangeRateRecord> = {
-  USD: {
-    id: 'FX-USD-BASE',
-    baseCurrency: 'USD',
-    targetCurrency: 'USD',
+  INR: {
+    id: 'FX-INR-BASE',
+    baseCurrency: 'INR',
+    targetCurrency: 'INR',
     rate: 1.000000,
     inverseRate: 1.000000,
-    effectiveDate: '2026-10-23',
-    source: 'Federal Reserve H.10 Baseline (Static Fallback)',
-    retrievedAt: '2026-10-23T00:00:00Z',
+    effectiveDate: '2026-10-27',
+    source: 'Reserve Bank of India (RBI) Identity Base (Static Fallback)',
+    retrievedAt: '2026-10-27T00:00:00Z',
     isStale: false,
     isLive: false,
   },
-  GBP: {
-    id: 'FX-GBP-USD',
-    baseCurrency: 'USD',
-    targetCurrency: 'GBP',
-    rate: 1.285000,
-    inverseRate: 0.778210,
-    effectiveDate: '2026-10-23',
-    source: 'Bank of England / Fed H.10 Baseline (Static Fallback)',
-    retrievedAt: '2026-10-23T00:00:00Z',
+  USD: {
+    id: 'FX-USD-INR',
+    baseCurrency: 'INR',
+    targetCurrency: 'USD',
+    rate: 84.070000,
+    inverseRate: 0.011895,
+    effectiveDate: '2026-10-27',
+    source: 'Reserve Bank of India (RBI) Reference Rate Baseline (Static Fallback)',
+    retrievedAt: '2026-10-27T00:00:00Z',
     isStale: false,
     isLive: false,
   },
   EUR: {
-    id: 'FX-EUR-USD',
-    baseCurrency: 'USD',
+    id: 'FX-EUR-INR',
+    baseCurrency: 'INR',
     targetCurrency: 'EUR',
-    rate: 1.085000,
-    inverseRate: 0.921659,
-    effectiveDate: '2026-10-23',
-    source: 'European Central Bank Reference Baseline (Static Fallback)',
-    retrievedAt: '2026-10-23T00:00:00Z',
+    rate: 91.120000,
+    inverseRate: 0.010975,
+    effectiveDate: '2026-10-27',
+    source: 'Reserve Bank of India (RBI) Reference Rate Baseline (Static Fallback)',
+    retrievedAt: '2026-10-27T00:00:00Z',
     isStale: false,
     isLive: false,
   },
-  CHF: {
-    id: 'FX-CHF-USD',
-    baseCurrency: 'USD',
-    targetCurrency: 'CHF',
-    rate: 1.135000,
-    inverseRate: 0.881057,
-    effectiveDate: '2026-10-23',
-    source: 'Swiss National Bank Reference Baseline (Static Fallback)',
-    retrievedAt: '2026-10-23T00:00:00Z',
-    isStale: false,
-    isLive: false,
-  },
-  SGD: {
-    id: 'FX-SGD-USD',
-    baseCurrency: 'USD',
-    targetCurrency: 'SGD',
-    rate: 0.755000,
-    inverseRate: 1.324503,
-    effectiveDate: '2026-10-23',
-    source: 'Monetary Authority of Singapore Reference Baseline (Static Fallback)',
-    retrievedAt: '2026-10-23T00:00:00Z',
-    isStale: false,
-    isLive: false,
-  },
-  CAD: {
-    id: 'FX-CAD-USD',
-    baseCurrency: 'USD',
-    targetCurrency: 'CAD',
-    rate: 0.735000,
-    inverseRate: 1.360544,
-    effectiveDate: '2026-10-23',
-    source: 'Bank of Canada Reference Baseline (Static Fallback)',
-    retrievedAt: '2026-10-23T00:00:00Z',
+  GBP: {
+    id: 'FX-GBP-INR',
+    baseCurrency: 'INR',
+    targetCurrency: 'GBP',
+    rate: 109.280000,
+    inverseRate: 0.009151,
+    effectiveDate: '2026-10-27',
+    source: 'Reserve Bank of India (RBI) Reference Rate Baseline (Static Fallback)',
+    retrievedAt: '2026-10-27T00:00:00Z',
     isStale: false,
     isLive: false,
   },
   JPY: {
-    id: 'FX-JPY-USD',
-    baseCurrency: 'USD',
+    id: 'FX-JPY-INR',
+    baseCurrency: 'INR',
     targetCurrency: 'JPY',
-    rate: 0.006650,
-    inverseRate: 150.375940,
-    effectiveDate: '2026-10-23',
-    source: 'Bank of Japan / Fed H.10 Reference Baseline (Static Fallback)',
-    retrievedAt: '2026-10-23T00:00:00Z',
+    rate: 0.552000, // 1 JPY = ₹0.552 (equivalent to ₹55.20 per 100 JPY RBI reference)
+    inverseRate: 1.811594,
+    effectiveDate: '2026-10-27',
+    source: 'Bank of Japan / RBI Reference Rate Baseline (Static Fallback)',
+    retrievedAt: '2026-10-27T00:00:00Z',
+    isStale: false,
+    isLive: false,
+  },
+  CHF: {
+    id: 'FX-CHF-INR',
+    baseCurrency: 'INR',
+    targetCurrency: 'CHF',
+    rate: 97.250000,
+    inverseRate: 0.010283,
+    effectiveDate: '2026-10-27',
+    source: 'Swiss National Bank / RBI Cross Reference Baseline (Static Fallback)',
+    retrievedAt: '2026-10-27T00:00:00Z',
+    isStale: false,
+    isLive: false,
+  },
+  SGD: {
+    id: 'FX-SGD-INR',
+    baseCurrency: 'INR',
+    targetCurrency: 'SGD',
+    rate: 63.780000,
+    inverseRate: 0.015679,
+    effectiveDate: '2026-10-27',
+    source: 'Monetary Authority of Singapore / RBI Cross Baseline (Static Fallback)',
+    retrievedAt: '2026-10-27T00:00:00Z',
+    isStale: false,
+    isLive: false,
+  },
+  CAD: {
+    id: 'FX-CAD-INR',
+    baseCurrency: 'INR',
+    targetCurrency: 'CAD',
+    rate: 60.820000,
+    inverseRate: 0.016442,
+    effectiveDate: '2026-10-27',
+    source: 'Bank of Canada / RBI Cross Baseline (Static Fallback)',
+    retrievedAt: '2026-10-27T00:00:00Z',
     isStale: false,
     isLive: false,
   },
@@ -144,6 +161,7 @@ export const STATIC_BENCHMARK_FALLBACK_RATES: Record<SupportedCurrency, Exchange
 export const VERIFIED_BENCHMARK_RATES = STATIC_BENCHMARK_FALLBACK_RATES;
 
 export const CURRENCY_SYMBOLS: Record<string, string> = {
+  INR: '₹',
   USD: '$',
   EUR: '€',
   GBP: '£',
@@ -170,8 +188,8 @@ export function checkIsRateStale(effectiveDate?: string, maxAgeDays = MAX_RATE_A
 }
 
 /**
- * Fetch official exchange rates from Supabase public.exchange_rates
- * Falls back to reference benchmark registry with explicit source disclosure if table is not yet provisioned.
+ * Fetch official INR-base exchange rates from Supabase public.exchange_rates
+ * Falls back to reference benchmark registry with explicit source disclosure if table is not yet synchronized.
  */
 export async function getExchangeRatesAsync(): Promise<Record<string, ExchangeRateRecord>> {
   const now = Date.now();
@@ -184,17 +202,18 @@ export async function getExchangeRatesAsync(): Promise<Record<string, ExchangeRa
       const { data, error } = await supabase
         .from('exchange_rates')
         .select('*')
+        .eq('base_currency', 'INR')
         .order('effective_date', { ascending: false });
 
       if (!error && data && data.length > 0) {
         const loaded: Record<string, ExchangeRateRecord> = {};
         for (const row of data) {
           const target = (row.target_currency || '').toUpperCase() as SupportedCurrency;
-          if (target && !loaded[target]) { // take the newest effective_date for each target currency
+          if (target && !loaded[target]) { // take newest effective_date for each target currency
             const isStale = Boolean(row.is_stale) || checkIsRateStale(row.effective_date);
             loaded[target] = {
               id: row.id,
-              baseCurrency: 'USD',
+              baseCurrency: 'INR',
               targetCurrency: target,
               rate: Number(row.rate) || 1.0,
               inverseRate: Number(row.inverse_rate) || (1 / (Number(row.rate) || 1.0)),
@@ -236,38 +255,44 @@ export function getExchangeRates(): Record<string, ExchangeRateRecord> {
 }
 
 /**
- * Centralized, strict Currency Conversion to USD Base.
+ * Centralized, strict Currency Conversion to INR (Indian Rupee ₹) Base.
  * 
  * Guarantees:
- * 1. USD to USD is exact 1.000000 with zero drift.
- * 2. Unrecognized or missing currencies trigger explicit error flags and zero USD converted amounts (never silent 1:1 fallback).
- * 3. Stale rates are flagged with explicit audit warnings and disclosure tags.
- * 4. Exact rounding to 2 decimal places for financial reporting.
- * 5. Full rate metadata (rate, effective date, source, live flag) returned for auditability.
+ * 1. INR to INR is exactly 1.000000 with zero drift (Identity conversion).
+ * 2. Unrecognized or missing currencies trigger explicit error flags and zero INR converted amounts (never silent 1:1 fallback).
+ * 3. Calculation formula: INR amount = original amount × INR-per-unit exchange rate.
+ * 4. Stale rates are flagged with explicit audit warnings and disclosure tags.
+ * 5. Exact rounding to 2 decimal places for financial reporting.
+ * 6. Preserves original amount and original currency code without destructive overwrites.
+ * 7. Full rate metadata (rate, effective date, source, live flag) returned for auditability.
  */
-export function convertToUsd(
+export function convertToInr(
   amount: number,
   currencyCode?: string
 ): CurrencyConversion {
   const numAmount = Number(amount) || 0;
-  const rawCurrency = (currencyCode || 'USD').trim().toUpperCase();
+  const rawCurrency = (currencyCode || 'INR').trim().toUpperCase();
   const symbol = CURRENCY_SYMBOLS[rawCurrency] || `${rawCurrency} `;
 
-  // 1. USD Base Currency (Identity conversion)
-  if (rawCurrency === 'USD') {
+  // 1. INR Base Currency (Identity conversion: 1.000000)
+  if (rawCurrency === 'INR') {
     const rounded = Math.round(numAmount * 100) / 100;
+    const usdRate = activeRatesCache.USD?.rate || 84.070000;
+    const amountUsd = Math.round((rounded / usdRate) * 100) / 100;
     return {
       originalAmount: rounded,
-      originalCurrency: 'USD',
-      amountUsd: rounded,
+      originalCurrency: 'INR',
+      amountInr: rounded,
+      amountUsd,
       exchangeRate: 1.000000,
-      effectiveDate: activeRatesCache.USD?.effectiveDate || new Date().toISOString().split('T')[0],
-      source: activeRatesCache.USD?.source || 'USD Base Currency',
+      effectiveDate: activeRatesCache.INR?.effectiveDate || new Date().toISOString().split('T')[0],
+      source: activeRatesCache.INR?.source || 'INR Base Currency (Identity)',
       isConverted: false,
       isStale: false,
-      isLive: activeRatesCache.USD?.isLive || false,
-      formattedUsd: `$${rounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      formattedOriginal: `$${rounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      isLive: activeRatesCache.INR?.isLive || false,
+      formattedInr: `₹${rounded.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      formattedUsd: `$${amountUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      formattedOriginal: `₹${rounded.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     };
   }
 
@@ -275,20 +300,22 @@ export function convertToUsd(
   const rateRecord = activeRatesCache[rawCurrency as SupportedCurrency];
 
   // 3. Strict handling for missing/unrecognized currencies:
-  // Never guess a rate! Prevent adding unconverted amounts to USD aggregates by setting amountUsd = 0.
+  // Never guess a rate! Prevent adding unconverted amounts to INR aggregates by setting amountInr = 0.
   if (!rateRecord || !rateRecord.rate || rateRecord.rate <= 0) {
     const originalRounded = Math.round(numAmount * 100) / 100;
     return {
       originalAmount: originalRounded,
       originalCurrency: rawCurrency,
-      amountUsd: 0, // Zero converted value prevents distorting USD aggregates
+      amountInr: 0, // Zero converted value prevents corrupting INR aggregates
+      amountUsd: 0,
       exchangeRate: 0,
       effectiveDate: 'UNAVAILABLE',
       source: 'Missing Official Rate',
       isConverted: false,
       isStale: true,
       isLive: false,
-      formattedUsd: `${symbol}${originalRounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Conversion Blocked: Missing Rate)`,
+      formattedInr: `${symbol}${originalRounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Conversion Blocked: Missing Rate)`,
+      formattedUsd: `${symbol}${originalRounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Missing Rate)`,
       formattedOriginal: `${symbol}${originalRounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       error: `Missing exchange rate for currency ${rawCurrency}. Conversion blocked to preserve reporting accuracy.`,
     };
@@ -297,19 +324,27 @@ export function convertToUsd(
   // Check freshness
   const isStale = rateRecord.isStale || checkIsRateStale(rateRecord.effectiveDate);
 
-  // 4. Perform calculation: originalAmount * rate = amountUsd
-  // Example: 10,000 GBP * 1.285000 = 12,850.00 USD
+  // 4. Perform calculation: INR amount = original amount × INR-per-unit exchange rate
+  // Example: 100 USD × ₹84.070000 = ₹8,407.00 INR
+  // Example: 100 GBP × ₹109.280000 = ₹10,928.00 INR
   const convertedExact = numAmount * rateRecord.rate;
-  const amountUsd = Math.round(convertedExact * 100) / 100;
+  const amountInr = Math.round(convertedExact * 100) / 100;
   const originalRounded = Math.round(numAmount * 100) / 100;
 
-  const formattedUsd = isStale
-    ? `$${amountUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Stale Rate: ${rateRecord.effectiveDate})`
-    : `$${amountUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Backwards-compatible USD calculation
+  const usdRate = activeRatesCache.USD?.rate || 84.070000;
+  const amountUsd = Math.round((amountInr / usdRate) * 100) / 100;
+
+  const formattedInr = isStale
+    ? `₹${amountInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Stale Rate: ${rateRecord.effectiveDate})`
+    : `₹${amountInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const formattedUsd = `$${amountUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return {
     originalAmount: originalRounded,
     originalCurrency: rawCurrency,
+    amountInr,
     amountUsd,
     exchangeRate: rateRecord.rate,
     effectiveDate: rateRecord.effectiveDate,
@@ -317,6 +352,7 @@ export function convertToUsd(
     isConverted: true,
     isStale,
     isLive: rateRecord.isLive,
+    formattedInr,
     formattedUsd,
     formattedOriginal: `${symbol}${originalRounded.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     warning: isStale ? `Exchange rate for ${rawCurrency} is stale (effective date: ${rateRecord.effectiveDate}). Converted values should be verified with treasury.` : undefined,
@@ -324,25 +360,46 @@ export function convertToUsd(
 }
 
 /**
- * Format helper for multi-currency display:
- * Shows USD Base as primary, with original currency and rate disclosed.
- * Example: "$12,850.00 USD (£10,000.00 GBP @ 1.2850)"
+ * Backwards-compatible helper: converts to INR and provides USD equivalent
+ */
+export function convertToUsd(
+  amount: number,
+  currencyCode?: string
+): CurrencyConversion {
+  return convertToInr(amount, currencyCode);
+}
+
+/**
+ * Format helper for multi-currency display with INR Base:
+ * Shows INR Base as primary, with original currency and rate disclosed.
+ * Example: "₹10,928.00 INR (£100.00 GBP @ ₹109.2800)"
+ */
+export function formatCurrencyWithInrDisclosure(
+  amount: number,
+  currencyCode?: string,
+  options?: { compact?: boolean; hideOriginalIfInr?: boolean }
+): string {
+  const conv = convertToInr(amount, currencyCode);
+
+  if (conv.originalCurrency === 'INR') {
+    return conv.formattedInr;
+  }
+
+  if (options?.compact) {
+    return `${conv.formattedInr} (${conv.formattedOriginal})`;
+  }
+
+  const liveIndicator = conv.isLive ? '' : ' [Baseline]';
+  return `${conv.formattedInr} INR (${conv.formattedOriginal} ${conv.originalCurrency} @ ₹${conv.exchangeRate.toFixed(4)}${liveIndicator})`;
+}
+
+/**
+ * Backwards-compatible disclosure helper
  */
 export function formatCurrencyWithUsdDisclosure(
   amount: number,
   currencyCode?: string,
   options?: { compact?: boolean; hideOriginalIfUsd?: boolean }
 ): string {
-  const conv = convertToUsd(amount, currencyCode);
-
-  if (conv.originalCurrency === 'USD') {
-    return conv.formattedUsd;
-  }
-
-  if (options?.compact) {
-    return `${conv.formattedUsd} (${conv.formattedOriginal})`;
-  }
-
-  const liveIndicator = conv.isLive ? '' : ' [Baseline]';
-  return `${conv.formattedUsd} USD (${conv.formattedOriginal} ${conv.originalCurrency} @ ${conv.exchangeRate.toFixed(4)}${liveIndicator})`;
+  return formatCurrencyWithInrDisclosure(amount, currencyCode, options);
 }

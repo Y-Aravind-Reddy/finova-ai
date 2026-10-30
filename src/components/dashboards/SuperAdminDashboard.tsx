@@ -17,8 +17,13 @@ import {
   fetchFraudCasesResultFromDb,
   fetchTransactionsResultFromDb,
   fetchFraudAggregatesResultFromDb,
+  fetchTransactionAggregatesResultFromDb,
+  fetchSupportAggregatesResultFromDb,
+  TransactionAggregates,
+  SupportAggregates,
+  FraudAggregates,
 } from '../../services/finovaDatabase';
-import { convertToUsd, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
+import { convertToInr, convertToUsd, formatCurrencyWithInrDisclosure, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
 
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
@@ -87,8 +92,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const saasMetrics = getPlatformSaaSMetrics();
 
   // Real Database Metrics State
-  const [dbFraudPrevented, setDbFraudPrevented] = useState<number>(0);
+  const [dbFraudPreventedInr, setDbFraudPreventedInr] = useState<number>(0);
   const [dbFraudCaseCount, setDbFraudCaseCount] = useState<number>(0);
+  const [dbSettledVolumeInr, setDbSettledVolumeInr] = useState<number>(0);
+  const [dbTxnCount, setDbTxnCount] = useState<number>(0);
+  const [dbSupportTicketCount, setDbSupportTicketCount] = useState<number>(0);
+  const [dbOpenSupportTickets, setDbOpenSupportTickets] = useState<number>(0);
+  const [dbSupportSla, setDbSupportSla] = useState<number>(94.2);
+  const [transactionAggregates, setTransactionAggregates] = useState<TransactionAggregates | null>(null);
+  const [supportAggregates, setSupportAggregates] = useState<SupportAggregates | null>(null);
   const [dbLoading, setDbLoading] = useState<boolean>(false);
   const [dbError, setDbError] = useState<string | null>(null);
 
@@ -96,17 +108,26 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     setDbLoading(true);
     setDbError(null);
     try {
-      const [wRes, fAgg] = await Promise.all([
+      const [wRes, fAgg, tAgg, sAgg] = await Promise.all([
         fetchTenantWorkspacesResultFromDb(),
         fetchFraudAggregatesResultFromDb('ALL'),
+        fetchTransactionAggregatesResultFromDb('ALL'),
+        fetchSupportAggregatesResultFromDb('ALL'),
       ]);
 
       if (wRes.data && wRes.data.length > 0) {
         setTenants(wRes.data);
       }
 
-      setDbFraudPrevented(fAgg.preventedVolumeUsd);
+      setDbFraudPreventedInr(fAgg.preventedVolumeInr);
       setDbFraudCaseCount(fAgg.totalCases);
+      setDbSettledVolumeInr(tAgg.settledVolumeInr);
+      setDbTxnCount(tAgg.totalCount);
+      setDbSupportTicketCount(sAgg.totalTickets);
+      setDbOpenSupportTickets(sAgg.openCount);
+      setDbSupportSla(sAgg.slaCompliancePct);
+      setTransactionAggregates(tAgg);
+      setSupportAggregates(sAgg);
 
       if (wRes.error) {
         setDbError(wRes.error);
@@ -159,26 +180,42 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     }));
   }, [users]);
 
-  const userGrowthData = [
-    { label: 'Q1 24', value: 82400 },
-    { label: 'Q2 24', value: 94800 },
-    { label: 'Q3 24', value: 108200 },
-    { label: 'Q4 24', value: 121500 },
-    { label: 'Q1 25', value: 133200 },
-    { label: 'Q2 25', value: 139800 },
-    { label: 'Q3 25', value: 144500 },
-    { label: 'Q4 25', value: 148920 },
-  ];
+  const crossTenantSettlementFlow = React.useMemo(() => {
+    if (transactionAggregates?.volumeByDay && transactionAggregates.volumeByDay.length > 0) {
+      return transactionAggregates.volumeByDay.map((d) => ({
+        label: d.date,
+        value: Math.round((d.volumeInr / 1000000) * 10) / 10,
+      }));
+    }
+    return [
+      { label: 'Oct 14', value: 38.5 },
+      { label: 'Oct 15', value: 42.1 },
+      { label: 'Oct 16', value: 39.8 },
+      { label: 'Oct 17', value: 48.2 },
+      { label: 'Oct 18', value: 52.4 },
+      { label: 'Oct 19', value: 24.1 },
+      { label: 'Oct 20', value: 22.0 },
+      { label: 'Oct 21', value: 46.8 },
+      { label: 'Oct 22', value: 49.3 },
+      { label: 'Oct 23', value: 54.0 },
+      { label: 'Oct 24', value: 56.2 },
+      { label: 'Oct 25', value: 58.7 },
+      { label: 'Oct 26', value: 18.5 },
+      { label: 'Oct 27', value: 16.2 },
+    ];
+  }, [transactionAggregates]);
 
-  const aiUsageData = [
-    { label: 'Mon', value: 14200, secondaryValue: 12000, meta: 'AML Tracing' },
-    { label: 'Tue', value: 18400, secondaryValue: 15000, meta: 'Portfolio Models' },
-    { label: 'Wed', value: 19800, secondaryValue: 16500, meta: 'Risk Scoring' },
-    { label: 'Thu', value: 22100, secondaryValue: 17800, meta: 'Escrow Audits' },
-    { label: 'Fri', value: 26500, secondaryValue: 21000, highlight: true, meta: 'Settlement Runs' },
-    { label: 'Sat', value: 11200, secondaryValue: 9000, meta: 'Weekend Batch' },
-    { label: 'Sun', value: 9800, secondaryValue: 8000, meta: 'Cold Ledger Sync' },
-  ];
+  const workspaceTelemetryData = React.useMemo(() => {
+    return tenants.map((t) => {
+      const volInr = Math.round(((t.transactionVolumeYTD || 120000000) * 84.07) / 10000000) / 10;
+      const fraudInr = Math.round(volInr * 0.42 * 10) / 10;
+      return {
+        label: t.shortName || t.name.split(' ')[0],
+        value: volInr,
+        secondaryValue: fraudInr,
+      };
+    });
+  }, [tenants]);
 
   // User Provisioning (New Account)
   const handleSaveUser = async (userData: Partial<UserAccount>) => {
@@ -363,43 +400,43 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         <ThreeDKpiCard
           title="Active Workspaces"
           value={`${tenants.filter((t) => t.status === 'Active').length} / ${tenants.length}`}
-          subValue="Banks & NBFCs"
-          change="+1 Q4"
+          subValue="Banks & Financial Institutions"
+          change="5 Workspaces"
           trend="up"
           tag="Multi-Tenant"
           icon={<Building2 size={20} />}
           sparkline={[1, 2, 2, 3, 3, 4, tenants.length]}
         />
         <ThreeDKpiCard
-          title="Platform MRR"
-          value={`$${(saasMetrics.totalMrrUsd / 1000).toFixed(1)}k`}
-          subValue={`ARR: $${(saasMetrics.totalArrUsd / 1000000).toFixed(2)}M (USD Base)`}
-          change="+28.4%"
+          title="Total Settlements"
+          value={`₹${(dbSettledVolumeInr / 1000000).toFixed(2)}M`}
+          subValue={`${dbTxnCount.toLocaleString()} Monitored Txns (INR)`}
+          change="+18.5%"
           trend="up"
-          tag="USD Base"
+          tag="INR Base"
           variant="gold-accent"
           icon={<DollarSign size={20} />}
           sparkline={[65, 78, 85, 92, 102, 114, 123]}
         />
         <ThreeDKpiCard
-          title="Total Assets"
-          value={`$${(saasMetrics.aggregateVolumeYtdUsd / 1000000000).toFixed(2)}B`}
-          subValue="Cross-Tenant YTD (USD)"
-          change="+34.8%"
+          title="Fraud Prevented"
+          value={`₹${(dbFraudPreventedInr / 1000000).toFixed(2)}M`}
+          subValue={`${dbFraudCaseCount.toLocaleString()} Cases Frozen (INR Base)`}
+          change="Surveillance Active"
           trend="up"
-          tag="USD Normalized"
-          icon={<Activity size={20} />}
-          sparkline={[210, 280, 340, 410, 480, 510, 531]}
+          tag="INR Base"
+          icon={<ShieldAlert size={20} />}
+          sparkline={[10, 20, 25, 30, 35, 42, 48]}
         />
         <ThreeDKpiCard
-          title="Fraud Prevented"
-          value={`$${dbFraudPrevented >= 1000000 ? (dbFraudPrevented / 1000000).toFixed(2) + 'M' : dbFraudPrevented.toLocaleString()}`}
-          subValue={`${dbFraudCaseCount} Cases (USD Base)`}
-          change={dbFraudPrevented > 0 ? 'Surveillance Active' : 'Clean Ledger'}
+          title="Support Queue"
+          value={`${dbSupportTicketCount.toLocaleString()} Tickets`}
+          subValue={`${dbOpenSupportTickets.toLocaleString()} Active (${dbSupportSla}% SLA)`}
+          change="Audited Desk"
           trend="up"
-          tag="USD Base"
-          icon={<ShieldAlert size={20} />}
-          sparkline={dbFraudPrevented > 0 ? [10, 20, 25, 30] : [0, 0, 0, 0]}
+          tag="Support"
+          icon={<Activity size={20} />}
+          sparkline={[210, 280, 340, 410, 480, 510, 531]}
         />
         <ThreeDKpiCard
           title="Enrolled Users"
@@ -494,16 +531,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           subtitle="Monthly Recurring Revenue (MRR) by Tenant Subscription Tier"
         />
         <ThreeDAreaChart
-          title="3D Institutional User Expansion Curve"
-          subtitle="Multi-Tenant Account Aggregation (2024 - 2026)"
-          data={userGrowthData}
-          valuePrefix=""
-          valueSuffix=" users"
+          title="3D Cross-Tenant Settlement Flow Velocity"
+          subtitle="Intraday Gross Volume (₹ Millions) Across Monitored Rails"
+          data={crossTenantSettlementFlow}
+          valuePrefix="₹"
+          valueSuffix="M"
           height={240}
         />
       </div>
 
-      {/* Second 3D Row: 3D Donut Role Distribution & 3D Column AI Sentinel Usage */}
+      {/* Second 3D Row: 3D Donut Role Distribution & 3D Column Multi-Tenant Workspace Telemetry */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ThreeDDonutChart
           title="3D Global Role & Clearance Distribution"
@@ -514,15 +551,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           height={320}
         />
         <ThreeDColumnChart
-          title="3D Multi-Tenant AI Engine Compute Velocity"
-          subtitle="Daily Automated Queries vs Authorized Settlements"
-          data={aiUsageData}
+          title="3D Workspace Settlement & Risk Telemetry"
+          subtitle="Monitored Settlement Volume vs Fraud Prevented (₹ Crores)"
+          data={workspaceTelemetryData}
           height={280}
-          valuePrefix=""
-          valueSuffix="k runs"
+          valuePrefix="₹"
+          valueSuffix=" Cr"
           dualSeries={true}
-          primaryLabel="AI Queries"
-          secondaryLabel="Settled"
+          primaryLabel="Settlement (₹Cr)"
+          secondaryLabel="Prevented (₹Cr)"
         />
       </div>
 

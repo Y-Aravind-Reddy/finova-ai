@@ -12,7 +12,7 @@ import {
   fetchTransactionAggregatesResultFromDb,
   TransactionAggregates,
 } from '../../services/finovaDatabase';
-import { convertToUsd, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
+import { convertToInr, convertToUsd, formatCurrencyWithInrDisclosure, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
 
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
@@ -125,45 +125,50 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
   // Compute live customer balances strictly from unpaginated database aggregates
   const metrics = React.useMemo(() => {
+    let liquidBalanceInr = 0;
     let liquidBalanceUsd = 0;
     let liquidBalanceOriginal = 0;
     let totalTransactions = 0;
     let settledTransactions = 0;
 
     if (customerAggregates && customerAggregates.totalCount > 0) {
+      liquidBalanceInr = Math.max(0, customerAggregates.netLiquidBalanceInr);
       liquidBalanceUsd = Math.max(0, customerAggregates.netLiquidBalanceUsd);
       totalTransactions = customerAggregates.totalCount;
       settledTransactions = customerAggregates.settledCount;
-      const currEntry = customerAggregates.volumeByCurrency[currencyCode];
-      liquidBalanceOriginal = currEntry ? Math.max(0, currEntry.original) : liquidBalanceUsd;
+      const currEntry = customerAggregates.volumeByCurrency['INR'];
+      liquidBalanceOriginal = currEntry ? Math.max(0, currEntry.original) : liquidBalanceInr;
     } else {
       const credits = tenantTransactions
         .filter((t) => t.type === 'Credit' && t.status === 'Settled')
-        .reduce((acc, t) => acc + (t.amountUsd ?? convertToUsd(t.amount, t.currency || currencyCode).amountUsd), 0);
+        .reduce((acc, t) => acc + (t.amountInr ?? convertToInr(t.amount, t.currency || 'INR').amountInr), 0);
       const debits = tenantTransactions
         .filter((t) => t.type === 'Debit' && t.status === 'Settled')
-        .reduce((acc, t) => acc + (t.amountUsd ?? convertToUsd(t.amount, t.currency || currencyCode).amountUsd), 0);
-      liquidBalanceUsd = Math.max(0, Math.round((credits - debits) * 100) / 100);
+        .reduce((acc, t) => acc + (t.amountInr ?? convertToInr(t.amount, t.currency || 'INR').amountInr), 0);
+      liquidBalanceInr = Math.max(0, Math.round((credits - debits) * 100) / 100);
+      liquidBalanceUsd = Math.round((liquidBalanceInr / 84.07) * 100) / 100;
       totalTransactions = tenantTransactions.length;
       settledTransactions = tenantTransactions.filter((t) => t.status === 'Settled').length;
-      liquidBalanceOriginal = liquidBalanceUsd;
+      liquidBalanceOriginal = liquidBalanceInr;
     }
 
     return {
+      liquidBalanceInr,
       liquidBalanceUsd,
       liquidBalanceOriginal,
-      liquidBalance: liquidBalanceUsd,
+      liquidBalance: liquidBalanceInr,
       totalTransactions,
       settledTransactions,
-      portfolioNav: liquidBalanceUsd,
+      portfolioNav: liquidBalanceInr,
       portfolioNavUsd: liquidBalanceUsd,
-      creditLimit: liquidBalanceUsd > 0 ? Math.round(liquidBalanceUsd * 0.25 * 100) / 100 : 0,
+      portfolioNavInr: liquidBalanceInr,
+      creditLimit: liquidBalanceInr > 0 ? Math.round(liquidBalanceInr * 0.25 * 100) / 100 : 0,
       creditLimitUsd: liquidBalanceUsd > 0 ? Math.round(liquidBalanceUsd * 0.25 * 100) / 100 : 0,
+      creditLimitInr: liquidBalanceInr > 0 ? Math.round(liquidBalanceInr * 0.25 * 100) / 100 : 0,
       creditUsed: 0,
       creditUsedUsd: 0,
     };
-
-  }, [customerAggregates, tenantTransactions, currencyCode]);
+  }, [customerAggregates, tenantTransactions]);
 
 
   // Spending 3D Pie Data dynamically calculated from transactions
@@ -419,48 +424,44 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <ThreeDKpiCard
           title="Liquid Cash Balance"
-          value={`$${metrics.liquidBalanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+          value={`₹${metrics.liquidBalanceInr.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
           subValue={
-            currencyCode !== 'USD'
-              ? `${currencySymbol}${metrics.liquidBalanceOriginal.toLocaleString(undefined, { minimumFractionDigits: 2 })} ${currencyCode} • ${metrics.settledTransactions} Settlements`
-              : `${metrics.settledTransactions} Verified Settlements`
+            metrics.settledTransactions > 0
+              ? `${metrics.settledTransactions} Verified Settlements (INR Base)`
+              : "0 Settlements (Account Awaiting Funding)"
           }
-          change={metrics.liquidBalanceUsd > 0 ? '+100%' : '0.0%'}
+          change={metrics.liquidBalanceInr > 0 ? '+100%' : '0.0%'}
           trend="up"
-          tag="USD Base"
+          tag="INR Base"
           variant="gold-accent"
           icon={<Wallet size={20} />}
-          sparkline={metrics.liquidBalanceUsd > 0 ? [10, 20, 40, 60, 80, 95, 100] : [0, 0, 0, 0, 0, 0, 0]}
+          sparkline={metrics.liquidBalanceInr > 0 ? [10, 20, 40, 60, 80, 95, 100] : [0, 0, 0, 0, 0, 0, 0]}
         />
         <ThreeDKpiCard
           title="Total Portfolio NAV"
-          value={`$${metrics.portfolioNavUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-          subValue={
-            currencyCode !== 'USD'
-              ? `${currencySymbol}${metrics.liquidBalanceOriginal.toLocaleString(undefined, { minimumFractionDigits: 2 })} ${currencyCode} Custody`
-              : "Multi-Asset Custody (USD)"
-          }
-          change={metrics.portfolioNavUsd > 0 ? '+100%' : '0.0%'}
+          value={`₹${metrics.portfolioNavInr.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+          subValue="Multi-Asset Custody (INR Base)"
+          change={metrics.portfolioNavInr > 0 ? '+100%' : '0.0%'}
           trend="up"
-          tag="USD Base"
+          tag="INR Base"
           icon={<Building size={20} />}
-          sparkline={metrics.portfolioNavUsd > 0 ? [10, 25, 45, 65, 85, 95, 100] : [0, 0, 0, 0, 0, 0, 0]}
+          sparkline={metrics.portfolioNavInr > 0 ? [10, 25, 45, 65, 85, 95, 100] : [0, 0, 0, 0, 0, 0, 0]}
         />
         <ThreeDKpiCard
           title="Sovereign Credit Line"
-          value={`$${metrics.creditLimitUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })} Limit`}
-          subValue="$0.00 Used (USD Base)"
+          value={`₹${metrics.creditLimitInr.toLocaleString(undefined, { minimumFractionDigits: 2 })} Limit`}
+          subValue="₹0.00 Utilized (Covenant Compliant)"
           change="Optimal 0.0%"
           trend="up"
-          tag="USD Base"
+          tag="INR Facility"
           icon={<CreditCard size={20} />}
           sparkline={[0, 0, 0, 0, 0, 0, 0]}
         />
         <ThreeDKpiCard
           title="KYC Status"
-          value={uploadedDocs.length > 0 ? 'Accredited' : 'Pending Verification'}
-          subValue={`${uploadedDocs.length} KYC Records in DB`}
-          change={uploadedDocs.length > 0 ? 'Verified' : 'Action Req'}
+          value={uploadedDocs.length > 0 ? 'Accredited' : '0 Documents on File'}
+          subValue="public.kyc_records is empty (0 records on file)"
+          change={uploadedDocs.length > 0 ? 'Verified' : 'Queue Empty'}
           trend={uploadedDocs.length > 0 ? 'up' : 'down'}
           tag="Compliance"
           icon={<Award size={20} />}

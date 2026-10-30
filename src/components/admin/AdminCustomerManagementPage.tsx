@@ -172,7 +172,11 @@ export const AdminCustomerManagementPage: React.FC<AdminCustomerManagementPagePr
                         {c.status}
                       </span>
                     </td>
-                    <td className="py-3 text-[11px] text-[#9CA3AF]">{c.lastActive}</td>
+                    <td className="py-3 text-[11px] text-[#9CA3AF]">
+                      <span className="text-zinc-500 italic text-[11px]" title="Database schema does not store last_active timestamps">
+                        Not Tracked
+                      </span>
+                    </td>
                   </tr>
                 ))
               )}

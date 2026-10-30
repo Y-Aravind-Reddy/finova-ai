@@ -22,6 +22,9 @@ import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDProgressRing } from '../charts3d/ThreeDProgressRing';
 import { UserManagementModal } from '../UserManagementModal';
 import { ChangeRoleModal } from '../common/ChangeRoleModal';
+import { AdminUserManagementPage } from '../admin/AdminUserManagementPage';
+import { AdminCustomerManagementPage } from '../admin/AdminCustomerManagementPage';
+import { AdminOperationsPage } from '../admin/AdminOperationsPage';
 import {
   Users,
   CheckCircle,
@@ -60,24 +63,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [changeRoleUser, setChangeRoleUser] = useState<UserAccount | null>(null);
   const [changeRoleOpen, setChangeRoleOpen] = useState(false);
   const [filterRole, setFilterRole] = useState<string>('ALL');
-
+  
   // Resolve current company workspace
   const tenantId = currentUser?.tenantId || 'tenant_apex_bank';
   const tenant = getTenantById(tenantId);
   const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
-
-  React.useEffect(() => {
-    if (activeSection === 'user_mgmt_analysts') setFilterRole('FINANCE_ANALYST');
-    else if (activeSection === 'user_mgmt_support') setFilterRole('SUPPORT_EXECUTIVE');
-    else if (activeSection === 'user_mgmt_customers' || activeSection === 'customer_management') setFilterRole('CUSTOMER');
-    else setFilterRole('ALL');
-  }, [activeSection]);
-
-  React.useEffect(() => {
-    if (onRefreshUsers) {
-      onRefreshUsers();
-    }
-  }, [onRefreshUsers]);
 
   // Tenant-scoped users: strictly only users from this company, excluding Super Admin
   const companyUsers = users.filter((u) => {
@@ -87,6 +77,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Real database metrics state
   const [dbSettlementCount, setDbSettlementCount] = useState<number>(0);
+  const [dbSettlementVolumeInr, setDbSettlementVolumeInr] = useState<number>(0);
   const [dbSettlementVolumeUsd, setDbSettlementVolumeUsd] = useState<number>(0);
   const [dbSettlementVolumeOriginal, setDbSettlementVolumeOriginal] = useState<number>(0);
   const [dbKycCount, setDbKycCount] = useState<number>(0);
@@ -105,6 +96,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       ]);
 
       setDbSettlementCount(tAgg.totalCount);
+      setDbSettlementVolumeInr(tAgg.settledVolumeInr);
       setDbSettlementVolumeUsd(tAgg.settledVolumeUsd);
       setDbSettlementVolumeOriginal(tAgg.settledVolumeOriginal);
 
@@ -123,10 +115,46 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   }, [tenantId]);
 
-
   useEffect(() => {
     loadAdminMetrics();
   }, [loadAdminMetrics]);
+
+  const renderContent = () => {
+    switch (activeSection) {
+      case 'user-management':
+        return (
+          <AdminUserManagementPage
+            users={users}
+            onUpdateUsers={onUpdateUsers}
+            onRefreshUsers={onRefreshUsers}
+            currentUser={currentUser}
+          />
+        );
+      case 'customer-management':
+        return (
+          <AdminCustomerManagementPage
+            users={users}
+            onRefreshUsers={onRefreshUsers}
+            currentUser={currentUser}
+          />
+        );
+      case 'operations-management':
+        return <AdminOperationsPage />;
+      default:
+        return (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+               <ThreeDKpiCard title="Total Customers" value={dbSettlementCount} icon={<Users size={18} />} />
+               <ThreeDKpiCard title="Total Transactions" value={dbSettlementCount} icon={<TrendingUp size={18} />} />
+               <ThreeDKpiCard title="Open Cases" value={dbOpenCasesCount} icon={<AlertCircle size={18} />} />
+               <ThreeDKpiCard title="KYC Pending" value={dbKycCount} icon={<FileCheck size={18} />} />
+            </div>
+            {/* Additional overview charts */}
+          </div>
+        );
+    }
+  };
+
 
   // Dynamic KYC breakdown strictly derived from database records
   const kycDonutData = React.useMemo(() => {
@@ -320,15 +348,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         />
         <ThreeDKpiCard
           title="Daily Settlements"
-          value={`$${dbSettlementVolumeUsd >= 1000000 ? (dbSettlementVolumeUsd / 1000000).toFixed(2) + 'M' : dbSettlementVolumeUsd.toLocaleString()}`}
+          value={`₹${(dbSettlementVolumeInr / 1000000).toFixed(2)}M`}
           subValue={
             dbSettlementCount > 0
-              ? `${tenant?.currency && tenant.currency !== 'USD' ? `${tenant.currencySymbol || ''}${dbSettlementVolumeOriginal.toLocaleString()} ${tenant.currency} • ` : ''}${dbSettlementCount.toLocaleString()} Orders`
+              ? `${dbSettlementCount.toLocaleString()} Verified Orders (INR Base)`
               : (dbError ? 'RLS Scoped / Auth Required' : '0 Orders Cleared')
           }
           change={dbSettlementCount > 0 ? '+100%' : '0.0%'}
           trend="up"
-          tag="USD Base"
+          tag="INR Base"
           variant="gold-accent"
           icon={<TrendingUp size={20} />}
           sparkline={dbSettlementCount > 0 ? [10, 30, 60, 85, 95, 110, 142] : [0, 0, 0, 0, 0, 0, 0]}
