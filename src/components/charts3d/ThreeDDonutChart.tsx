@@ -36,7 +36,7 @@ export const ThreeDDonutChart: React.FC<ThreeDDonutChartProps> = ({
 }) => {
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
 
-  const total = segments.reduce((sum, s) => sum + s.value, 0);
+  const total = segments.reduce((sum, s) => sum + s.value, 0) || 1; // Prevent division by zero
 
   // SVG Geometry for 3D Angled Ring
   const cx = 150;

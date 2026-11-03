@@ -25,31 +25,41 @@ export const ThreeDAreaChart: React.FC<ThreeDAreaChartProps> = ({
 }) => {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
-  const maxValue = Math.max(...data.map((d) => d.value), 1);
+  const maxValue = Math.max(...data.map((d) => d.value), 0.000001); // Prevent division by zero
   const chartHeight = height - 60;
   const chartWidth = 520;
   const paddingX = 20;
 
   // Compute points
-  const points = data.map((d, i) => {
-    const x = paddingX + (i / (data.length - 1)) * (chartWidth - paddingX * 2);
-    const y = chartHeight - (d.value / maxValue) * (chartHeight - 40);
-    return { x, y, ...d, i };
-  });
+  const points = data.length > 0 
+    ? data.map((d, i) => {
+        const x = data.length > 1 
+          ? paddingX + (i / (data.length - 1)) * (chartWidth - paddingX * 2)
+          : paddingX + (chartWidth - paddingX * 2) / 2; // Center if single point
+        const y = chartHeight - (d.value / maxValue) * (chartHeight - 40);
+        return { x, y, ...d, i };
+      })
+    : [];
 
-  const linePath = points.reduce(
-    (acc, pt, i) => (i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`),
-    ''
-  );
+  const linePath = points.length > 0 
+    ? points.reduce(
+        (acc, pt, i) => (i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`),
+        ''
+      )
+    : '';
 
-  const areaPath = `${linePath} L ${points[points.length - 1].x} ${chartHeight} L ${points[0].x} ${chartHeight} Z`;
+  const areaPath = points.length > 0 
+    ? `${linePath} L ${points[points.length - 1].x} ${chartHeight} L ${points[0].x} ${chartHeight} Z`
+    : '';
 
   // 3D Extrusion projection offset
   const depthOffset = 12;
-  const depthAreaPath = `${points.reduce(
-    (acc, pt, i) => (i === 0 ? `M ${pt.x + depthOffset} ${pt.y - depthOffset}` : `${acc} L ${pt.x + depthOffset} ${pt.y - depthOffset}`),
-    ''
-  )} L ${points[points.length - 1].x + depthOffset} ${chartHeight - depthOffset} L ${points[0].x + depthOffset} ${chartHeight - depthOffset} Z`;
+  const depthAreaPath = points.length > 0 
+    ? `${points.reduce(
+        (acc, pt, i) => (i === 0 ? `M ${pt.x + depthOffset} ${pt.y - depthOffset}` : `${acc} L ${pt.x + depthOffset} ${pt.y - depthOffset}`),
+        ''
+      )} L ${points[points.length - 1].x + depthOffset} ${chartHeight - depthOffset} L ${points[0].x + depthOffset} ${chartHeight - depthOffset} Z`
+    : '';
 
   return (
     <div className="relative w-full rounded-2xl bg-[#1E1E1E]/95 border border-[#D4A017]/30 p-5 shadow-[0_12px_36px_rgba(0,0,0,0.6)] backdrop-blur-xl">

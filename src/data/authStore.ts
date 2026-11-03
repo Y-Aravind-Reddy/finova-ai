@@ -1,7 +1,7 @@
 import { UserAccount, UserRole } from './finovaDatasets';
 import { getStoredTenants, getTenantById } from './tenantStore';
 import { supabase, isSupabaseConfigured, SupabaseProfile } from '../lib/supabase';
-import { fetchCurrentUserProfileResultFromDb } from '../services/finovaDatabase';
+import { fetchCurrentUserProfileResultFromDb, saveProfileToDb } from '../services/finovaDatabase';
 
 export interface AuthSession {
   token: string;
@@ -281,11 +281,22 @@ export function getStoredSession(): AuthSession | null {
     const raw = localStorage.getItem(STORAGE_SESSION_KEY);
     if (!raw) return null;
     const session: AuthSession = JSON.parse(raw);
-    if (Date.now() > session.expiresAt || session.isDemoMode) {
+
+    // 1. Expiry check
+    if (Date.now() > session.expiresAt) {
       localStorage.removeItem(STORAGE_SESSION_KEY);
       return null;
     }
-    // Strict Single Super Admin Enforcement
+
+    // 2. Strict Configuration Alignment:
+    // If Supabase is configured, we only trust Supabase-backed sessions.
+    if (isSupabaseConfigured() && session.source !== 'supabase') {
+      console.log(`[AUTH_DIAGNOSTIC] Purging local session because Supabase is configured.`);
+      localStorage.removeItem(STORAGE_SESSION_KEY);
+      return null;
+    }
+
+    // 3. Strict Single Super Admin Enforcement
     if (session.user?.role === 'SUPER_ADMIN' && session.user.email?.toLowerCase().trim() !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
       console.warn(`[SECURITY VIOLATION] Unauthorized SUPER_ADMIN session rejected for ${session.user.email}. Demoted to CUSTOMER.`);
       session.user.role = 'CUSTOMER';
@@ -449,28 +460,38 @@ export async function loadCurrentUserProfileAsync(): Promise<{
   session: AuthSession | null;
   source: 'supabase' | 'local';
 }> {
+  // 1. Priority: Live Supabase Session Check
   if (isSupabaseConfigured()) {
     try {
       const { data: sessionData, error: sbErr } = await supabase.auth.getSession();
       const sbSession = sessionData?.session;
+      
+      // DIAGNOSTIC LOGGING: Session Status
+      console.log(`[AUTH_DIAGNOSTIC] loadCurrentUserProfileAsync - Supabase session status: ${Boolean(sbSession)}`);
+      if (sbSession?.user) {
+        console.log(`[AUTH_DIAGNOSTIC] Authenticated User ID: ${sbSession.user.id}`);
+      }
+      
       if (!sbErr && sbSession?.user) {
         const userEmail = (sbSession.user.email || '').trim().toLowerCase();
         const isAuthorizedSuperAdmin = userEmail === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase();
 
         // Query public.profiles using the active authenticated session
         const profileRes = await fetchCurrentUserProfileResultFromDb();
+        
+        // DIAGNOSTIC LOGGING: Profile Retrieval
+        console.log(`[AUTH_DIAGNOSTIC] fetchCurrentUserProfileResultFromDb result - Success: ${Boolean(profileRes.profile)}, State: ${profileRes.state}`);
+
         if (profileRes.profile) {
           let authUser = { ...profileRes.profile };
 
           // Single Super Admin Policy:
-          // 1. If profile has SUPER_ADMIN but email does NOT match authorized Super Admin, demote to CUSTOMER
           if (authUser.role === 'SUPER_ADMIN' && !isAuthorizedSuperAdmin) {
             console.warn(`[SECURITY VIOLATION] Unauthorized SUPER_ADMIN role blocked for profile ${authUser.id} (${userEmail}). Enforcing demotion to CUSTOMER.`);
             authUser.role = 'CUSTOMER';
             authUser.tenantId = 'tenant_apex_bank';
             authUser.tenantName = 'Apex Global Bank';
           }
-          // 2. If authenticated user IS aravindvicky629@gmail.com, verify SUPER_ADMIN and platform_root
           else if (isAuthorizedSuperAdmin) {
             if (authUser.role !== 'SUPER_ADMIN' || authUser.tenantId !== 'platform_root') {
               try {
@@ -484,6 +505,8 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             }
           }
 
+          console.log(`[AUTH_DIAGNOSTIC] Resolved User - Role: ${authUser.role}, Tenant: ${authUser.tenantId}`);
+
           const session: AuthSession = {
             token: sbSession.access_token,
             user: authUser,
@@ -491,32 +514,33 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             source: 'supabase',
             isDemoMode: false,
           };
-          saveSession(session);
+
+          // Redundancy check to prevent lifecycle loops
+          const existingSession = getStoredSession();
+          const hasChanged = !existingSession || 
+            existingSession.user.id !== authUser.id || 
+            existingSession.user.role !== authUser.role || 
+            existingSession.user.tenantId !== authUser.tenantId ||
+            existingSession.token !== session.token;
+
+          if (hasChanged) {
+            saveSession(session);
+          }
+          
           return { success: true, session, source: 'supabase' };
         } else {
-          // Supabase Auth session active, but public.profiles returned zero records or trigger pending
+          // Fallback construction from metadata if profile row missing
           let cleanName = (sbSession.user.user_metadata?.name || '').trim();
           if (!cleanName && userEmail) {
-            cleanName = userEmail
-              .split('@')[0]
-              .replace(/[._-]/g, ' ')
-              .replace(/\b\w/g, (c: string) => c.toUpperCase());
+            cleanName = userEmail.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
           }
 
-          // Strict security: Default to CUSTOMER per signup policy unless verified authorized Super Admin
           let safeRole: UserRole = 'CUSTOMER';
           let metaTenantId = sbSession.user.user_metadata?.tenant_id || 'tenant_apex_bank';
-          if (metaTenantId === 'platform_root') {
-            metaTenantId = 'tenant_apex_bank';
-          }
+          if (metaTenantId === 'platform_root') metaTenantId = 'tenant_apex_bank';
           let metaTenantName = sbSession.user.user_metadata?.tenant_name || getTenantById(metaTenantId)?.name || 'Apex Global Bank';
 
           if (isAuthorizedSuperAdmin) {
-            try {
-              await supabase.rpc('provision_authorized_super_admin');
-            } catch (provErr) {
-              console.warn('Super Admin initial provisioning RPC note:', provErr);
-            }
             safeRole = 'SUPER_ADMIN';
             metaTenantId = 'platform_root';
             metaTenantName = 'Finova AI SaaS Platform Operator';
@@ -536,7 +560,7 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             twoFactorEnabled: true,
             tenantId: metaTenantId,
             tenantName: metaTenantName,
-            notes: isAuthorizedSuperAdmin ? 'Authorized Platform Super Admin' : 'Authenticated via live Supabase Auth session (Customer Role)',
+            notes: isAuthorizedSuperAdmin ? 'Authorized Platform Super Admin' : 'Authenticated via live Supabase Auth session',
             authSource: 'supabase',
           };
 
@@ -547,21 +571,33 @@ export async function loadCurrentUserProfileAsync(): Promise<{
             source: 'supabase',
             isDemoMode: false,
           };
-          saveSession(session);
+          
+          const existingSession = getStoredSession();
+          if (!existingSession || existingSession.user.id !== fallbackProfile.id || existingSession.token !== session.token) {
+            saveSession(session);
+          }
           return { success: true, session, source: 'supabase' };
         }
       }
+      
+      // If configured but no session found, we return failure to force login
+      console.log('[AUTH_DIAGNOSTIC] Supabase configured but no session found. Rejecting access.');
+      return { success: false, session: null, source: 'supabase' };
+      
     } catch (err) {
-      console.warn('Supabase session restoration notice:', err);
+      console.warn('Supabase session restoration error:', err);
+      return { success: false, session: null, source: 'supabase' };
     }
   }
 
-  // Fallback to local stored session (for isolated demo personas)
+  // 2. Fallback to Local/Demo only when Supabase is NOT configured
   const stored = getStoredSession();
   if (stored) {
-    return { success: true, session: stored, source: stored.source || 'local' };
+    console.log(`[AUTH_DIAGNOSTIC] loadCurrentUserProfileAsync - Falling back to local stored session. Role: ${stored.user.role}`);
+    return { success: true, session: stored, source: 'local' };
   }
 
+  console.log('[AUTH_DIAGNOSTIC] loadCurrentUserProfileAsync - No session found.');
   return { success: false, session: null, source: 'local' };
 }
 
@@ -679,6 +715,15 @@ export function authenticateDemoPersona(personaRoleOrEmail: string): {
 
   if (!target) {
     return { success: false, error: 'Unrecognized evaluator demo role.' };
+  }
+
+  // Strict Configuration Alignment:
+  // We do not allow local demo personas if Supabase is active, as it leads to stale 401 requests.
+  if (isSupabaseConfigured()) {
+    return { 
+      success: false, 
+      error: 'Institutional database is active. Demo personas are restricted to local-only mode. Please sign in with your corporate Supabase credentials.' 
+    };
   }
 
   // Strict Single Super Admin check
@@ -876,22 +921,19 @@ export async function registerCustomerAsync(params: {
         const userId = data.user.id;
 
         // Try to insert directly into profiles table to ensure immediate readiness
-        try {
-          await supabase.from('profiles').upsert({
-            id: userId,
-            email: normalizedEmail,
-            name: params.fullName.trim(),
-            role: 'CUSTOMER',
-            status: 'Active',
-            tier: 'Private Wealth Tier 3',
-            phone: params.phone.trim(),
-            tenant_id: selectedTenantId,
-            tenant_name: tenantName,
-            country: 'United States',
-          });
-        } catch (profileErr) {
-          console.warn('Profile upsert note (trigger may handle):', profileErr);
-        }
+        // Using the refined saveProfileToDb to handle RLS and existence checks safely
+        await saveProfileToDb({
+          id: userId,
+          email: normalizedEmail,
+          name: params.fullName.trim(),
+          role: 'CUSTOMER',
+          status: 'Active',
+          tier: 'Private Wealth Tier 3',
+          phone: params.phone.trim(),
+          tenantId: selectedTenantId,
+          tenantName: tenantName,
+          country: 'United States',
+        });
 
         const cleanUser: UserAccount = {
           id: userId,

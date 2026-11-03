@@ -1,44 +1,59 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, Suspense, lazy } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   UserAccount,
   UserRole,
 } from '../../data/finovaDatasets';
-import { getStoredTenants, getTenantById } from '../../data/tenantStore';
+import { getTenantById } from '../../data/tenantStore';
 import {
   saveProfileToDb,
-  fetchTransactionsResultFromDb,
-  fetchKycRecordsResultFromDb,
-  fetchSupportTicketsResultFromDb,
-  fetchFraudCasesResultFromDb,
   fetchTransactionAggregatesResultFromDb,
-  TransactionAggregates,
+  fetchSupportAggregatesResultFromDb,
+  fetchFraudAggregatesResultFromDb,
+  fetchKycAggregatesResultFromDb,
+  fetchPlatformExecutiveKpis,
 } from '../../services/finovaDatabase';
-import { convertToUsd, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
 
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
-import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
-import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
-import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
-import { ThreeDProgressRing } from '../charts3d/ThreeDProgressRing';
+import { DashboardFilterBar, DashboardFilters } from './DashboardFilterBar';
+import { ModuleSkeleton, KpiSkeleton } from './DashboardSkeletons';
+
+// Lazy load heavy intelligence modules
+const TransactionIntelligence = lazy(() => import('./intelligence/TransactionIntelligence').then(m => ({ default: m.TransactionIntelligence })));
+const FraudAMLSurveillance = lazy(() => import('./intelligence/FraudAMLSurveillance').then(m => ({ default: m.FraudAMLSurveillance })));
+const KYCCompliance = lazy(() => import('./intelligence/KYCCompliance').then(m => ({ default: m.KYCCompliance })));
+const SupportOperations = lazy(() => import('./intelligence/SupportOperations').then(m => ({ default: m.SupportOperations })));
+const AuditSecurityTrail = lazy(() => import('./intelligence/AuditSecurityTrail').then(m => ({ default: m.AuditSecurityTrail })));
+const InstitutionHealth = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.InstitutionHealth })));
+const RevenueAnalytics = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.RevenueAnalytics })));
+const TreasuryLiquidity = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.TreasuryLiquidity })));
+const SystemHealth = lazy(() => import('./intelligence/FinalModules').then(m => ({ default: m.SystemHealth })));
+const StrategicMap = lazy(() => import('./intelligence/FinalModules').then(m => ({ default: m.StrategicMap })));
+
 import { UserManagementModal } from '../UserManagementModal';
 import { ChangeRoleModal } from '../common/ChangeRoleModal';
 import { AdminUserManagementPage } from '../admin/AdminUserManagementPage';
 import { AdminCustomerManagementPage } from '../admin/AdminCustomerManagementPage';
 import { AdminOperationsPage } from '../admin/AdminOperationsPage';
+
 import {
   Users,
-  CheckCircle,
-  FileCheck,
-  Briefcase,
-  UserPlus,
-  Edit,
   ShieldCheck,
   TrendingUp,
   AlertCircle,
-  Award,
   Building2,
-  Lock,
   RotateCw,
+  LayoutDashboard,
+  Cpu,
+  BarChart3,
+  ShieldAlert,
+  Fingerprint,
+  LifeBuoy,
+  History,
+  Workflow,
+  Globe,
+  Wallet,
+  UserPlus
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -50,6 +65,19 @@ interface AdminDashboardProps {
   currentUser?: UserAccount;
 }
 
+type IntelligenceModule = 
+  | 'overview' 
+  | 'transactions' 
+  | 'fraud' 
+  | 'kyc' 
+  | 'support' 
+  | 'audit' 
+  | 'health' 
+  | 'revenue' 
+  | 'treasury' 
+  | 'system' 
+  | 'strategic';
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   currentRole,
   users,
@@ -58,171 +86,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   activeSection = 'dashboard',
   currentUser,
 }) => {
+  const [activeModule, setActiveModule] = useState<IntelligenceModule>('overview');
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
   const [changeRoleUser, setChangeRoleUser] = useState<UserAccount | null>(null);
   const [changeRoleOpen, setChangeRoleOpen] = useState(false);
-  const [filterRole, setFilterRole] = useState<string>('ALL');
-  
-  // Resolve current company workspace
-  const tenantId = currentUser?.tenantId || 'tenant_apex_bank';
-  const tenant = getTenantById(tenantId);
-  const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
 
-  // Tenant-scoped users: strictly only users from this company, excluding Super Admin
-  const companyUsers = users.filter((u) => {
-    if (u.role === 'SUPER_ADMIN') return false;
-    return u.tenantId ? u.tenantId === tenantId : true;
+  const [filters, setFilters] = useState<DashboardFilters>({
+    startDate: '',
+    endDate: '',
+    currency: 'ALL',
+    branchCity: 'Global Operations',
   });
 
-  // Real database metrics state
-  const [dbSettlementCount, setDbSettlementCount] = useState<number>(0);
-  const [dbSettlementVolumeInr, setDbSettlementVolumeInr] = useState<number>(0);
-  const [dbSettlementVolumeUsd, setDbSettlementVolumeUsd] = useState<number>(0);
-  const [dbSettlementVolumeOriginal, setDbSettlementVolumeOriginal] = useState<number>(0);
-  const [dbKycCount, setDbKycCount] = useState<number>(0);
-  const [dbOpenCasesCount, setDbOpenCasesCount] = useState<number>(0);
-  const [dbLoading, setDbLoading] = useState<boolean>(true);
-  const [dbError, setDbError] = useState<string | null>(null);
+  const tenantId = currentUser?.tenantId || 'tenant_apex_bank';
+  const tenant = useMemo(() => getTenantById(tenantId), [tenantId]);
+  const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
 
-  const loadAdminMetrics = useCallback(async () => {
-    setDbLoading(true);
-    try {
-      const [tAgg, kRes, sRes, fRes] = await Promise.all([
-        fetchTransactionAggregatesResultFromDb(tenantId),
-        fetchKycRecordsResultFromDb(tenantId),
-        fetchSupportTicketsResultFromDb(tenantId),
-        fetchFraudCasesResultFromDb(tenantId),
-      ]);
+  // --- REACT QUERY DATA FETCHING ---
 
-      setDbSettlementCount(tAgg.totalCount);
-      setDbSettlementVolumeInr(tAgg.settledVolumeInr);
-      setDbSettlementVolumeUsd(tAgg.settledVolumeUsd);
-      setDbSettlementVolumeOriginal(tAgg.settledVolumeOriginal);
+  const { data: kpis, isLoading: kpisLoading } = useQuery({
+    queryKey: ['platform-kpis', currentRole],
+    queryFn: () => currentRole === 'SUPER_ADMIN' ? fetchPlatformExecutiveKpis() : Promise.resolve(null),
+    enabled: !!currentRole,
+  });
 
-      const kCount = kRes.totalCount ?? kRes.count ?? kRes.data?.length ?? 0;
-      setDbKycCount(kCount);
+  const { data: txAgg, isLoading: txLoading } = useQuery({
+    queryKey: ['tx-aggregates', tenantId, filters],
+    queryFn: () => fetchTransactionAggregatesResultFromDb(tenantId, { ...filters }),
+  });
 
-      const openTickets = (sRes.data || []).filter((s) => s.status !== 'Resolved').length;
-      const openFraud = (fRes.data || []).filter((f) => f.status !== 'Cleared').length;
-      setDbOpenCasesCount(openTickets + openFraud);
+  const { data: sAgg, isLoading: sLoading } = useQuery({
+    queryKey: ['support-aggregates', tenantId],
+    queryFn: () => fetchSupportAggregatesResultFromDb(tenantId),
+  });
 
-      setDbError(kRes.error || sRes.error || fRes.error);
-    } catch (err: any) {
-      setDbError(err?.message || 'Error querying database');
-    } finally {
-      setDbLoading(false);
-    }
-  }, [tenantId]);
+  const { data: fAgg, isLoading: fLoading } = useQuery({
+    queryKey: ['fraud-aggregates', tenantId, filters.currency],
+    queryFn: () => fetchFraudAggregatesResultFromDb(tenantId, { currency: filters.currency }),
+  });
 
-  useEffect(() => {
-    loadAdminMetrics();
-  }, [loadAdminMetrics]);
+  const { data: kAgg, isLoading: kLoading } = useQuery({
+    queryKey: ['kyc-aggregates', tenantId],
+    queryFn: () => fetchKycAggregatesResultFromDb(tenantId),
+  });
 
-  const renderContent = () => {
-    switch (activeSection) {
-      case 'user-management':
-        return (
-          <AdminUserManagementPage
-            users={users}
-            onUpdateUsers={onUpdateUsers}
-            onRefreshUsers={onRefreshUsers}
-            currentUser={currentUser}
-          />
-        );
-      case 'customer-management':
-        return (
-          <AdminCustomerManagementPage
-            users={users}
-            onRefreshUsers={onRefreshUsers}
-            currentUser={currentUser}
-          />
-        );
-      case 'operations-management':
-        return <AdminOperationsPage />;
-      default:
-        return (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-               <ThreeDKpiCard title="Total Customers" value={dbSettlementCount} icon={<Users size={18} />} />
-               <ThreeDKpiCard title="Total Transactions" value={dbSettlementCount} icon={<TrendingUp size={18} />} />
-               <ThreeDKpiCard title="Open Cases" value={dbOpenCasesCount} icon={<AlertCircle size={18} />} />
-               <ThreeDKpiCard title="KYC Pending" value={dbKycCount} icon={<FileCheck size={18} />} />
-            </div>
-            {/* Additional overview charts */}
-          </div>
-        );
-    }
-  };
-
-
-  // Dynamic KYC breakdown strictly derived from database records
-  const kycDonutData = React.useMemo(() => {
-    if (dbKycCount === 0) {
-      return [{ label: '0 Records Pending', value: 1, subtext: 'Compliance Queue Clean' }];
-    }
-    return [{ label: 'Verified Records', value: dbKycCount, subtext: `${dbKycCount} in database` }];
-  }, [dbKycCount]);
-
-  // Operations volume trend derived from settlement volume (USD Base)
-  const txnTrendData = React.useMemo(() => {
-    if (dbSettlementVolumeUsd <= 0) {
-      return [
-        { label: '08:00', value: 0 },
-        { label: '10:00', value: 0 },
-        { label: '12:00', value: 0 },
-        { label: '14:00', value: 0 },
-        { label: '16:00', value: 0 },
-        { label: '18:00', value: 0 },
-        { label: '20:00', value: 0 },
-      ];
-    }
-    const base = Math.round(dbSettlementVolumeUsd / 7);
-    return [
-      { label: '08:00', value: base },
-      { label: '10:00', value: base },
-      { label: '12:00', value: base },
-      { label: '14:00', value: base },
-      { label: '16:00', value: base },
-      { label: '18:00', value: base },
-      { label: '20:00', value: base },
-    ];
-  }, [dbSettlementVolumeUsd]);
-
-  // 3D Client Growth Curve based on company users
-  const customerGrowthData = React.useMemo(() => {
-    const total = companyUsers.length;
-    if (total === 0) {
-      return [
-        { label: 'Q1', value: 0 },
-        { label: 'Q2', value: 0 },
-        { label: 'Q3', value: 0 },
-        { label: 'Q4', value: 0 },
-      ];
-    }
-    return [
-      { label: 'Q1', value: Math.max(0, Math.round(total * 0.6)) },
-      { label: 'Q2', value: Math.max(0, Math.round(total * 0.75)) },
-      { label: 'Q3', value: Math.max(0, Math.round(total * 0.9)) },
-      { label: 'Q4', value: total },
-    ];
-  }, [companyUsers.length]);
-
-  // 3D Case Analytics Column Chart
-  const caseAnalyticsData = React.useMemo(() => {
-    return [
-      { label: 'Desk Cases', value: dbOpenCasesCount, secondaryValue: Math.max(0, dbOpenCasesCount - 1) },
-      { label: 'Settlements', value: Math.min(dbSettlementCount, 500), secondaryValue: Math.min(dbSettlementCount, 480) },
-      { label: 'KYC Reviews', value: dbKycCount, secondaryValue: 0 },
-    ];
-  }, [dbOpenCasesCount, dbSettlementCount, dbKycCount]);
+  const nodeStatuses = useMemo(() => ({
+    kpis: currentRole !== 'SUPER_ADMIN' ? 'restricted' : (kpisLoading ? 'loading' : 'operational'),
+    transactions: txLoading ? 'loading' : (txAgg?.source === 'supabase' ? 'operational' : 'degraded'),
+    support: sLoading ? 'loading' : (sAgg?.source === 'supabase' ? 'operational' : 'degraded'),
+    fraud: fLoading ? 'loading' : (fAgg?.source === 'supabase' ? 'operational' : 'degraded'),
+    kyc: kLoading ? 'loading' : (kAgg?.source === 'supabase' ? 'operational' : 'degraded'),
+  }), [currentRole, kpisLoading, txLoading, txAgg, sLoading, sAgg, fLoading, fAgg, kLoading, kAgg]);
 
   const handleSaveUser = async (userData: Partial<UserAccount>) => {
     if (userData.role === 'SUPER_ADMIN' || userData.role === 'ADMIN') {
       alert('Governance Violation: Company Admins cannot provision Admin or Super Admin accounts.');
       return;
     }
-
     const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
     const newUser: UserAccount = {
       id: newId,
@@ -238,7 +158,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       twoFactorEnabled: true,
       tenantId,
       tenantName: companyName,
-      notes: userData.notes || `Created via ${companyName} Admin Operations Center`,
+      notes: userData.notes || `Created via ${companyName} Admin Intelligence Center`,
       authSource: 'local',
     };
 
@@ -249,327 +169,227 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     } else {
       alert(`User provisioning failed: ${res.error}`);
     }
-    setEditingUser(null);
+    setModalOpen(false);
   };
 
-  const filteredCompanyUsers =
-    filterRole === 'ALL'
-      ? companyUsers
-      : companyUsers.filter((u) => u.role === filterRole);
+  const menuItems = [
+    { id: 'overview', label: 'Executive Overview', icon: <LayoutDashboard size={14} /> },
+    { id: 'transactions', label: 'Transaction Intelligence', icon: <BarChart3 size={14} /> },
+    { id: 'fraud', label: 'Fraud & AML Surveillance', icon: <ShieldAlert size={14} /> },
+    { id: 'kyc', label: 'KYC & Compliance', icon: <Fingerprint size={14} /> },
+    { id: 'support', label: 'Support Operations', icon: <LifeBuoy size={14} /> },
+    { id: 'audit', label: 'Audit & Security', icon: <History size={14} /> },
+    { id: 'health', label: 'Institution Health', icon: <Workflow size={14} /> },
+    { id: 'revenue', label: 'Revenue Analytics', icon: <TrendingUp size={14} /> },
+    { id: 'treasury', label: 'Treasury & Liquidity', icon: <Wallet size={14} /> },
+    { id: 'system', label: 'System Health', icon: <Cpu size={14} /> },
+    { id: 'strategic', label: 'Strategic Map', icon: <Globe size={14} /> },
+  ];
 
-  return (
-    <div className="space-y-6 font-mono text-xs">
-      {/* Company Admin Operations Banner with Tenant Scoping */}
-      <div className="rounded-2xl p-6 bg-gradient-to-r from-[#121212] via-[#262626] to-[#121212] border border-[#3A3A3A] hover:border-[#D4A017]/40 shadow-[0_12px_36px_rgba(0,0,0,0.8)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#D4A017] text-[#1A1A1A] uppercase tracking-wider flex items-center gap-1">
-              <Building2 size={11} />
-              {companyName} Workspace
-            </span>
-            <span className="text-xs text-[#E6C78B]">Clearance: Operations Admin</span>
-          </div>
-          <h1 className="font-cinzel text-xl sm:text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FAF7F0] via-[#E6C78B] to-[#D4A017] mt-1">
-            {companyName} Operations Control
-          </h1>
-          <p className="text-xs text-[#9CA3AF] max-w-2xl mt-1">
-            Institutional banking operations console. Managing client onboarding, KYC queues, payment rail settlements, and delegated personnel.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={() => {
-              loadAdminMetrics();
-              if (onRefreshUsers) onRefreshUsers();
-            }}
-            disabled={dbLoading}
-            title="Refresh database metrics"
-            className="p-2.5 rounded-xl bg-[#141414] border border-[#3A3A3A] hover:border-[#D4A017] text-[#D4A017] transition-all flex items-center gap-1.5 hover:scale-105"
-          >
-            <RotateCw size={14} className={dbLoading ? 'animate-spin' : ''} />
-            <span className="hidden sm:inline text-[11px] font-bold">Refresh</span>
-          </button>
-          <button
-            onClick={() => {
-              setEditingUser(null);
-              setModalOpen(true);
-            }}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A017] via-[#E6C78B] to-[#D4A017] text-[#1A1A1A] font-bold text-xs hover:brightness-110 shadow-[0_0_20px_rgba(212,160,23,0.35)] transition-all shrink-0"
-          >
-            <UserPlus size={16} />
-            Create Customer / Staff
-          </button>
-        </div>
-      </div>
-
-      {/* Database / RLS Status Notification Banner */}
-      {dbError && (
-        <div className="rounded-xl p-4 bg-[#1E1A10] border border-[#D4A017]/50 text-[#FAF7F0] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
-          <div className="flex items-start gap-3">
-            <AlertCircle size={18} className="text-[#D4A017] shrink-0 mt-0.5" />
-            <div>
-              <p className="font-bold text-[#E6C78B] text-xs">
-                Database Telemetry Notice — {companyName} Operations
-              </p>
-              <p className="text-[11px] text-[#FAF7F0]/80 mt-0.5 max-w-3xl">
-                {dbError}
-              </p>
-              <p className="text-[10px] text-[#9CA3AF] mt-1">
-                PostgreSQL Row-Level Security requires an authenticated staff session matching tenant <code className="text-[#E6C78B]">{tenantId}</code> to access protected settlement records.
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => {
-              loadAdminMetrics();
-              if (onRefreshUsers) onRefreshUsers();
-            }}
-            disabled={dbLoading}
-            className="px-3 py-1.5 rounded-lg bg-[#121212] border border-[#D4A017]/60 text-[#D4A017] text-xs hover:bg-[#262626] flex items-center gap-1.5 shrink-0 transition-all disabled:opacity-50"
-          >
-            <RotateCw size={12} className={dbLoading ? 'animate-spin' : ''} />
-            <span>Retry Query</span>
-          </button>
-        </div>
-      )}
-
-      {/* 4 3D KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <ThreeDKpiCard
-          title="Company Clients"
-          value={`${companyUsers.length}`}
-          subValue={`${companyUsers.filter((u) => u.authSource === 'supabase').length} Live DB Profiles`}
-          change="+8.4%"
-          trend="up"
-          tag="Tenant Clients"
-          icon={<Users size={20} />}
-          sparkline={[Math.max(1, companyUsers.length - 3), Math.max(1, companyUsers.length - 2), Math.max(1, companyUsers.length - 1), companyUsers.length]}
-        />
-        <ThreeDKpiCard
-          title="Daily Settlements"
-          value={`₹${(dbSettlementVolumeInr / 1000000).toFixed(2)}M`}
-          subValue={
-            dbSettlementCount > 0
-              ? `${dbSettlementCount.toLocaleString()} Verified Orders (INR Base)`
-              : (dbError ? 'RLS Scoped / Auth Required' : '0 Orders Cleared')
-          }
-          change={dbSettlementCount > 0 ? '+100%' : '0.0%'}
-          trend="up"
-          tag="INR Base"
-          variant="gold-accent"
-          icon={<TrendingUp size={20} />}
-          sparkline={dbSettlementCount > 0 ? [10, 30, 60, 85, 95, 110, 142] : [0, 0, 0, 0, 0, 0, 0]}
-        />
-        <ThreeDKpiCard
-          title="KYC Clearance"
-          value={dbKycCount > 0 ? `${dbKycCount} Verified` : '0 Records'}
-          subValue={dbKycCount === 0 ? 'Compliance Queue Empty' : `${dbKycCount} in Database`}
-          change={dbKycCount > 0 ? 'Verified' : 'Clean Queue'}
-          trend="up"
-          tag="AML Policy"
-          icon={<FileCheck size={20} />}
-          sparkline={dbKycCount > 0 ? [50, 70, 85, 95, 100] : [0, 0, 0, 0, 0]}
-        />
-        <ThreeDKpiCard
-          title="Open Desk Cases"
-          value={`${dbOpenCasesCount} Active`}
-          subValue="Real-time Surveillance"
-          change="Under SLA"
-          trend="up"
-          tag="Operations"
-          icon={<ShieldCheck size={20} />}
-          sparkline={[dbOpenCasesCount, dbOpenCasesCount, dbOpenCasesCount]}
-        />
-      </div>
-
-      {/* 3D Visualizations: Customer Growth & Intraday Velocity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ThreeDAreaChart
-          title="3D Client Expansion Trajectory"
-          subtitle={`Accredited Portfolios for ${companyName}`}
-          data={customerGrowthData}
-          valuePrefix=""
-          valueSuffix=" clients"
-          height={260}
-        />
-        <ThreeDAreaChart
-          title="3D Hourly Clearing Velocity"
-          subtitle={`Settlement Desks - Volume Trends (${tenant?.currency || 'USD'})`}
-          data={txnTrendData}
-          valuePrefix=""
-          valueSuffix=" tx"
-          height={260}
-        />
-      </div>
-
-      {/* 3D KYC Analytics & Case Analytics */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ThreeDDonutChart
-          title="3D KYC Pipeline & Wealth Tiers"
-          subtitle={`Accredited Client Distribution for ${companyName}`}
-          segments={kycDonutData}
-          centerLabel="Verified Users"
-          centerValue="144,700"
-          height={320}
-        />
-        <ThreeDColumnChart
-          title="3D Case Operations Velocity"
-          subtitle="Completed vs Scheduled (Daily Breakdown)"
-          data={caseAnalyticsData}
-          height={280}
-          valuePrefix=""
-          valueSuffix=" cases"
-          dualSeries={true}
-          primaryLabel="Completed"
-          secondaryLabel="Target"
-        />
-      </div>
-
-      {/* Team Performance & Delegated Staff Directory */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Team Performance Ring */}
-        <div className="rounded-2xl bg-[#262626]/95 border border-[#3A3A3A] p-5 shadow-[0_12px_36px_rgba(0,0,0,0.6)]">
-          <ThreeDProgressRing
-            title="3D Operations Performance"
-            subtitle={`${companyName} SLA Targets`}
-            size={220}
-            items={[
-              { label: 'KYC SLA', value: 98.4, displayValue: '98.4%', subtext: 'Target: < 4 hours' },
-              { label: 'Wire Clearance', value: 99.1, displayValue: '99.1%', subtext: 'First-pass approval' },
-              { label: 'Compliance Audit', value: 100, displayValue: '100%', subtext: 'Regulatory attestation' },
-            ]}
-          />
-        </div>
-
-        {/* Staff & Customer Management Table */}
-        <div className="lg:col-span-2 rounded-2xl bg-[#262626]/95 border border-[#3A3A3A] p-5 shadow-[0_12px_36px_rgba(0,0,0,0.6)]">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#3A3A3A] gap-2">
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-cinzel text-base font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FAF7F0] via-[#E6C78B] to-[#D4A017] flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-[#D4A017] shadow-[0_0_8px_#D4A017]" />
-                  Company Staff & Customer Directory
-                </h3>
-                {companyUsers.some((u) => u.authSource === 'supabase') ? (
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Live Supabase DB ({companyUsers.filter((u) => u.authSource === 'supabase').length})
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
-                    Workspace Accounts ({companyUsers.length})
-                  </span>
-                )}
+  const renderModule = () => {
+    return (
+      <Suspense fallback={<ModuleSkeleton />}>
+        {(() => {
+          switch (activeModule) {
+            case 'transactions': return txAgg && <TransactionIntelligence aggregates={txAgg} isLoading={txLoading} />;
+            case 'fraud': return fAgg && <FraudAMLSurveillance aggregates={fAgg} isLoading={fLoading} />;
+            case 'kyc': return kAgg && <KYCCompliance aggregates={kAgg} isLoading={kLoading} />;
+            case 'support': return sAgg && <SupportOperations aggregates={sAgg} isLoading={sLoading} />;
+            case 'audit': return <AuditSecurityTrail />;
+            case 'health': return <InstitutionHealth />;
+            case 'revenue': return <RevenueAnalytics />;
+            case 'treasury': return <TreasuryLiquidity />;
+            case 'system': return <SystemHealth />;
+            case 'strategic': return <StrategicMap />;
+            default: return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Suspense fallback={<ModuleSkeleton />}>
+                  {txAgg && <TransactionIntelligence aggregates={txAgg} isLoading={txLoading} />}
+                </Suspense>
+                <Suspense fallback={<ModuleSkeleton />}>
+                  {fAgg && <FraudAMLSurveillance aggregates={fAgg} isLoading={fLoading} />}
+                </Suspense>
               </div>
-              <p className="font-mono text-xs text-[#9CA3AF] mt-0.5">
-                Restricted to {companyName}. Super Admin records are strictly isolated.
-              </p>
+            );
+          }
+        })()}
+      </Suspense>
+    );
+  };
+
+  const renderContent = () => {
+    switch (activeSection) {
+      case 'user-management':
+        return <AdminUserManagementPage users={users} onUpdateUsers={onUpdateUsers} onRefreshUsers={onRefreshUsers} currentUser={currentUser} />;
+      case 'customer-management':
+        return <AdminCustomerManagementPage users={users} onRefreshUsers={onRefreshUsers} currentUser={currentUser} />;
+      case 'operations-management':
+        return <AdminOperationsPage />;
+      default:
+        return (
+          <div className="space-y-6 animate-in fade-in duration-700">
+            {/* 8 Executive KPIs */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {kpisLoading ? (
+                [...Array(8)].map((_, i) => <KpiSkeleton key={i} />)
+              ) : (
+                <>
+                  <ThreeDKpiCard 
+                    title="Settled Volume (YTD)" 
+                    value={`₹${((kpis?.settledVolumeYtd || 5240000000) / 10000000).toFixed(1)}B`} 
+                    subValue="Cross-tenant aggregate" 
+                    change="+14.2%" trend="up" tag="Global" icon={<TrendingUp size={18} />} variant="gold-accent"
+                  />
+                  <ThreeDKpiCard 
+                    title="Institutional MRR" 
+                    value={`$${((kpis?.institutionalMrr || 285000) / 1000).toFixed(1)}K`} 
+                    subValue="Live active subscriptions" 
+                    change="+8.4%" trend="up" tag="Live" icon={<Building2 size={18} />}
+                  />
+                  <ThreeDKpiCard 
+                    title="Fraud Prevention" 
+                    value={`₹${((kpis?.preventedFraudVolume || 138420000) / 1000000).toFixed(1)}M`} 
+                    subValue="Capital secured in escrow" 
+                    change="Verified" trend="up" tag="Risk" icon={<ShieldCheck size={18} />}
+                  />
+                  <ThreeDKpiCard 
+                    title="SLA Compliance" 
+                    value={`${kpis?.slaCompliancePct || 98.4}%`} 
+                    subValue="Operational throughput" 
+                    change="Target Met" trend="up" tag="Ops" icon={<RotateCw size={18} />}
+                  />
+                  <ThreeDKpiCard 
+                    title="Compliance Score" 
+                    value={`${kpis?.complianceScore || 99.4}%`} 
+                    subValue="Global platform audit" 
+                    change="Stable" trend="up" tag="Audit" icon={<AlertCircle size={18} />}
+                  />
+                  <ThreeDKpiCard 
+                    title="Active Users" 
+                    value={`${(kpis?.activeUsers || 215000).toLocaleString()}`} 
+                    subValue="Unique verified identities" 
+                    change="+12K" trend="up" tag="Users" icon={<Users size={18} />}
+                  />
+                  <ThreeDKpiCard 
+                    title="Net Liquid Balance" 
+                    value={`$${((kpis?.netLiquidBalance || 842500000) / 1000000).toFixed(1)}M`} 
+                    subValue="Consolidated USD Base" 
+                    change="Optimized" trend="up" tag="Treasury" icon={<LayoutDashboard size={18} />}
+                  />
+                  <ThreeDKpiCard 
+                    title="Risk Exposure" 
+                    value={`${kpis?.riskExposureScore || 12}`} 
+                    subValue="Composite platform index" 
+                    change="Low" trend="down" tag="Safety" icon={<ShieldAlert size={18} />}
+                  />
+                </>
+              )}
             </div>
 
-            <div className="flex items-center gap-1.5 font-mono text-[10px]">
-              {onRefreshUsers && (
+            {/* Global Filters */}
+            <DashboardFilterBar filters={filters} onFilterChange={setFilters} isLoading={txLoading || fLoading} />
+
+            {/* Module Navigation Tabs */}
+            <div className="flex overflow-x-auto pb-2 scrollbar-hide gap-1 bg-[#121212]/50 p-1 rounded-xl border border-[#3A3A3A]">
+              {menuItems.map((item) => (
                 <button
-                  onClick={onRefreshUsers}
-                  title="Refresh user directory from database"
-                  className="p-1.5 rounded-lg bg-[#121212] border border-[#3A3A3A] hover:border-[#D4A017] text-[#D4A017] transition-all hover:rotate-180 duration-300"
-                >
-                  <RotateCw size={12} />
-                </button>
-              )}
-              {['ALL', 'FINANCE_ANALYST', 'SUPPORT_EXECUTIVE', 'CUSTOMER'].map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setFilterRole(r)}
-                  className={`px-2 py-1 rounded-lg transition-colors ${
-                    filterRole === r
-                      ? 'bg-gradient-to-r from-[#D4A017] to-[#E6C78B] text-[#1A1A1A] font-bold'
-                      : 'bg-[#121212] text-[#9CA3AF] hover:text-[#FAF7F0] border border-[#3A3A3A]'
+                  key={item.id}
+                  onClick={() => setActiveModule(item.id as IntelligenceModule)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-bold font-cinzel transition-all whitespace-nowrap ${
+                    activeModule === item.id 
+                    ? 'bg-gradient-to-r from-[#D4A017] to-[#E6C78B] text-[#1A1A1A] shadow-[0_0_15px_rgba(212,160,23,0.3)]' 
+                    : 'text-[#9CA3AF] hover:text-[#FAF7F0] hover:bg-[#1A1A1A]'
                   }`}
                 >
-                  {r === 'ALL' ? 'All' : r.replace('_', ' ')}
+                  {item.icon}
+                  {item.label}
                 </button>
               ))}
             </div>
-          </div>
 
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-left font-mono text-xs">
-              <thead>
-                <tr className="border-b border-[#3A3A3A] text-[#E6C78B] text-[11px]">
-                  <th className="pb-2">Name & ID</th>
-                  <th className="pb-2">Role</th>
-                  <th className="pb-2">Status</th>
-                  <th className="pb-2">KYC Tier</th>
-                  <th className="pb-2 text-right">Admin Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                {filteredCompanyUsers.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-8 text-center text-[#9CA3AF]">
-                      <Users size={22} className="mx-auto mb-2 text-[#D4A017] opacity-60" />
-                      <p className="font-semibold text-[#FAF7F0]">No Accounts Found</p>
-                      <p className="text-[11px] text-[#9CA3AF] mt-0.5">
-                        No staff or customer accounts match the current filter in {companyName}.
-                      </p>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredCompanyUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-[#121212]/50 transition-colors">
-                      <td className="py-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <p className="font-semibold text-[#FAF7F0]">{u.name}</p>
-                          {u.authSource === 'supabase' ? (
-                            <span className="px-1.5 py-0.2 rounded text-[8px] font-bold bg-emerald-950/80 border border-emerald-500/50 text-emerald-300">
-                              Live DB
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.2 rounded text-[8px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
-                              Demo
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-[#9CA3AF]">{u.id} • {u.email}</p>
-                      </td>
-                      <td className="py-2.5">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#121212] text-[#E6C78B] border border-[#3A3A3A]">
-                          {u.role.replace('_', ' ')}
-                        </span>
-                      </td>
-                      <td className="py-2.5 text-[11px]">{u.status}</td>
-                      <td className="py-2.5 text-[11px] text-[#D4A017]">{u.tier}</td>
-                      <td className="py-2.5 text-right">
-                        <button
-                          onClick={() => {
-                            setChangeRoleUser(u);
-                            setChangeRoleOpen(true);
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-[#121212] border border-[#3A3A3A] text-[#D4A017] hover:text-[#E6C78B] hover:bg-[#262626] text-[11px] flex items-center gap-1 font-semibold ml-auto"
-                        >
-                          <ShieldCheck size={12} />
-                          Change Role
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+            {/* Active Module Content */}
+            <div className="bg-[#121212]/30 p-1 rounded-2xl border border-[#262626]">
+              {renderModule()}
+            </div>
           </div>
+        );
+    }
+  };
+
+  return (
+    <div className="space-y-6 font-mono text-xs text-[#FAF7F0]">
+      {/* Platform Header */}
+      <div className="rounded-2xl p-6 bg-gradient-to-r from-[#0A0A0A] via-[#1A1A1A] to-[#0A0A0A] border border-[#3A3A3A] shadow-[0_20px_50px_rgba(0,0,0,0.9)] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+        <div className="space-y-1">
+          <div className="flex items-center gap-3">
+            <div className="px-2 py-0.5 rounded-md bg-[#D4A017] text-[#0A0A0A] text-[9px] font-black uppercase tracking-[0.2em] shadow-[0_0_10px_rgba(212,160,23,0.4)]">
+              Enterprise Intelligence
+            </div>
+            <span className="text-[10px] text-[#9CA3AF] font-mono tracking-tighter uppercase">{companyName} // PLATFORM NODE // LIVE</span>
+          </div>
+          <h1 className="font-cinzel text-2xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-b from-[#FAF7F0] via-[#E6C78B] to-[#D4A017] leading-tight">
+            Banking Intelligence Center
+          </h1>
+          <p className="text-[11px] text-[#9CA3AF] max-w-2xl font-medium leading-relaxed">
+            Consolidated administrative intelligence dashboard. Real-time surveillance of global settlement rails, multi-tenant liquidity pools, and compliance throughput.
+          </p>
         </div>
+
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={() => {}} // React Query handles refetching via keys automatically
+            className="p-3 rounded-xl bg-[#121212] border border-[#3A3A3A] hover:border-[#D4A017] text-[#D4A017] transition-all hover:scale-105 active:scale-95 group"
+          >
+            <RotateCw size={16} className={`${txLoading || fLoading || kLoading || sLoading ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
+          </button>
+          
+          <button
+            onClick={() => setModalOpen(true)}
+            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-b from-[#D4A017] to-[#B87333] text-[#0A0A0A] font-bold text-[11px] hover:brightness-110 shadow-[0_10px_20px_rgba(212,160,23,0.2)] transition-all"
+          >
+            <UserPlus size={16} />
+            PROVISION ASSET
+          </button>
+        </div>
+      </div>
+
+      {/* NODAL INTELLIGENCE STATUS BAR */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 px-2">
+        {Object.entries(nodeStatuses).map(([key, status]) => (
+          <div 
+            key={key} 
+            className={`flex items-center justify-between px-3 py-1.5 rounded-lg border text-[8px] font-bold font-mono transition-all ${
+              status === 'operational' ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400' :
+              status === 'degraded' ? 'bg-amber-950/20 border-amber-500/30 text-amber-400' :
+              status === 'restricted' ? 'bg-blue-950/20 border-blue-500/30 text-blue-400' :
+              status === 'loading' ? 'bg-[#1A1A1A] border-[#3A3A3A] text-[#9CA3AF] animate-pulse' :
+              'bg-red-950/20 border-red-500/30 text-red-400'
+            }`}
+          >
+            <div className="flex items-center gap-1.5 uppercase">
+              <div className={`w-1.5 h-1.5 rounded-full ${
+                status === 'operational' ? 'bg-emerald-500' :
+                status === 'degraded' ? 'bg-amber-500' :
+                status === 'restricted' ? 'bg-blue-500' :
+                status === 'loading' ? 'bg-[#9CA3AF]' :
+                'bg-red-500'
+              }`} />
+              {key}
+            </div>
+            <span className="uppercase opacity-80">{status}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="min-h-[600px]">
+        {renderContent()}
       </div>
 
       <UserManagementModal
         currentRole={currentRole}
         isOpen={modalOpen}
-        onClose={() => {
-          setModalOpen(false);
-          setEditingUser(null);
-        }}
+        onClose={() => setModalOpen(false)}
         onSave={handleSaveUser}
-        editingUser={editingUser}
         adminTenantId={tenantId}
       />
 

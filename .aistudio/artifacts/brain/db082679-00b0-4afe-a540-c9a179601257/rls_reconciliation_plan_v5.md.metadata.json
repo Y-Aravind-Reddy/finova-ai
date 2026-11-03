@@ -1,0 +1,6 @@
+{
+  "summary":  "Revised RLS Reconciliation Plan (v5) for FINOVA AI. This plan identifies the root causes of 42501 errors, implements identity/tenant forgery protection for audit logs, shields sensitive profile fields from self-update, and ensures idempotent, non-destructive migration of customer mappings and operational policies.",
+  "updatedAt":  "2026-11-02T06:59:33.367181044Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

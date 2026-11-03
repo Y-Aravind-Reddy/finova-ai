@@ -3,7 +3,7 @@ import { FinovaLogo } from './FinovaLogo';
 import { UserRole, UserAccount } from '../data/finovaDatasets';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getStoredSession, saveSession, getStoredUsers, saveStoredUsers } from '../data/authStore';
-import { fetchCurrentUserProfileResultFromDb } from '../services/finovaDatabase';
+import { fetchCurrentUserProfileResultFromDb, saveProfileToDb } from '../services/finovaDatabase';
 import {
   ShieldCheck,
   Key,
@@ -126,22 +126,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
     // 1. If Supabase is configured, update in Supabase PostgreSQL profiles table
     if (isSupabaseConfigured() && user.id) {
-      try {
-        const { error } = await supabase
-          .from('profiles')
-          .update({
-            phone,
-            country,
-            notes,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', user.id);
-
-        if (error) {
-          console.warn('Supabase profile update note:', error.message);
-        }
-      } catch (err) {
-        console.warn('Supabase profile update exception:', err);
+      const res = await saveProfileToDb(updatedUser);
+      if (!res.success) {
+        console.warn('Supabase profile sync note:', res.error);
       }
     }
 

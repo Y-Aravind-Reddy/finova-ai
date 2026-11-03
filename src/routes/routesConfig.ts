@@ -133,15 +133,14 @@ export const ROUTES: Record<string, RouteMeta> = {
     allowedRoles: ['SUPER_ADMIN'],
     breadcrumb: ['Finova AI', 'Super Admin', 'Platform Engines', 'Case Management'],
   },
-  '/super-admin/excel-visualization': {
-    path: '/super-admin/excel-visualization',
-    title: 'Excel Data Visualization',
-    category: 'Platform Engines',
-    allowedRoles: ['SUPER_ADMIN'],
-    breadcrumb: ['Finova AI', 'Super Admin', 'Platform Engines', 'Excel Data Visualization'],
-  },
-
-  // ==========================================
+    '/super-admin/excel-visualization': {
+      path: '/super-admin/excel-visualization',
+      title: 'Excel Data Visualization',
+      category: 'Platform Engines',
+      allowedRoles: ['SUPER_ADMIN'],
+      breadcrumb: ['Finova AI', 'Super Admin', 'Platform Engines', 'Excel Data Visualization'],
+    },
+    // ==========================================
   // ADMIN ROUTES
   // ==========================================
   '/admin/dashboard': {
@@ -228,6 +227,42 @@ export const ROUTES: Record<string, RouteMeta> = {
     category: 'Platform Engines',
     allowedRoles: ['ADMIN'],
     breadcrumb: ['Finova AI', 'Admin', 'Platform Engines', 'Case Management'],
+  },
+  // Admin Data & Transfer Intelligence
+  '/admin/data-transfer/overview': {
+    path: '/admin/data-transfer/overview',
+    title: 'Transfer Overview',
+    category: 'Data & Transfer Intelligence',
+    allowedRoles: ['ADMIN'],
+    breadcrumb: ['Finova AI', 'Admin', 'Data & Transfer Intelligence', 'Transfer Overview'],
+  },
+  '/admin/data-transfer/settlements': {
+    path: '/admin/data-transfer/settlements',
+    title: 'Settlement Monitoring',
+    category: 'Data & Transfer Intelligence',
+    allowedRoles: ['ADMIN'],
+    breadcrumb: ['Finova AI', 'Admin', 'Data & Transfer Intelligence', 'Settlement Monitoring'],
+  },
+  '/admin/data-transfer/transactions': {
+    path: '/admin/data-transfer/transactions',
+    title: 'Transaction Records',
+    category: 'Data & Transfer Intelligence',
+    allowedRoles: ['ADMIN'],
+    breadcrumb: ['Finova AI', 'Admin', 'Data & Transfer Intelligence', 'Transaction Records'],
+  },
+  '/admin/data-transfer/reconciliation': {
+    path: '/admin/data-transfer/reconciliation',
+    title: 'Reconciliation',
+    category: 'Data & Transfer Intelligence',
+    allowedRoles: ['ADMIN'],
+    breadcrumb: ['Finova AI', 'Admin', 'Data & Transfer Intelligence', 'Reconciliation'],
+  },
+  '/admin/data-transfer/exceptions': {
+    path: '/admin/data-transfer/exceptions',
+    title: 'Exceptions & Failed Transfers',
+    category: 'Data & Transfer Intelligence',
+    allowedRoles: ['ADMIN'],
+    breadcrumb: ['Finova AI', 'Admin', 'Data & Transfer Intelligence', 'Exceptions'],
   },
 
   // ==========================================

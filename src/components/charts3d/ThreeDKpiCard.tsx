@@ -10,6 +10,7 @@ interface ThreeDKpiCardProps {
   tag?: string;
   sparkline?: number[];
   variant?: 'cream' | 'dark' | 'gold-accent';
+  isEstimated?: boolean;
   onClick?: () => void;
 }
 
@@ -23,6 +24,7 @@ export const ThreeDKpiCard: React.FC<ThreeDKpiCardProps> = ({
   tag,
   sparkline,
   variant = 'dark',
+  isEstimated = false,
   onClick,
 }) => {
   const [tilt, setTilt] = useState({ x: 0, y: 0, active: false });
@@ -93,6 +95,11 @@ export const ThreeDKpiCard: React.FC<ThreeDKpiCardProps> = ({
             {tag && (
               <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-mono bg-[#D4A017]/15 text-[#F5C542] border border-[#D4A017]/30">
                 {tag}
+              </span>
+            )}
+            {isEstimated && (
+              <span className="inline-block mt-1 ml-1 px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950/40 text-amber-400 border border-amber-500/30">
+                Estimated
               </span>
             )}
           </div>

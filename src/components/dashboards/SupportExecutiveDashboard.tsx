@@ -3,12 +3,14 @@ import {
   SupportTicket,
   UserAccount,
   UserRole,
+  FinanceFraudTransaction,
 } from '../../data/finovaDatasets';
 import {
   fetchSupportTicketsResultFromDb,
   fetchSupportAggregatesResultFromDb,
   updateSupportTicketStatusInDb,
   SupportAggregates,
+  fetchFraudCasesResultFromDb,
 } from '../../services/finovaDatabase';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
@@ -29,6 +31,8 @@ import {
   RotateCw,
   Info,
   ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface SupportExecutiveDashboardProps {
@@ -54,35 +58,38 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
 
   // State for live support tickets and aggregates
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [fraudCases, setFraudCases] = useState<FinanceFraudTransaction[]>([]);
   const [supportAggregates, setSupportAggregates] = useState<SupportAggregates | null>(null);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
   const [dbError, setDbError] = useState<string | null>(null);
-  const [activeTableTab, setActiveTableTab] = useState<'requests' | 'followups' | 'complaints'>('requests');
+  const [activeTableTab, setActiveTableTab] = useState<'requests' | 'followups' | 'complaints' | 'fraud'>('requests');
   const [loading, setLoading] = useState(false);
 
-  const loadTickets = React.useCallback(async () => {
+  const loadDashboardData = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [tResult, sAgg] = await Promise.all([
+      const [tResult, fResult, sAgg] = await Promise.all([
         fetchSupportTicketsResultFromDb(tenantId),
+        fetchFraudCasesResultFromDb(tenantId),
         fetchSupportAggregatesResultFromDb(tenantId),
       ]);
 
       setDbSource(tResult.source);
       setDbError(tResult.error);
       setTickets(tResult.data);
+      setFraudCases(fResult.data);
       setSupportAggregates(sAgg);
     } catch (err: any) {
       console.warn('Support executive load notice:', err);
-      setDbError(err?.message || 'Error loading support tickets');
+      setDbError(err?.message || 'Error loading dashboard data');
     } finally {
       setLoading(false);
     }
   }, [tenantId]);
 
   React.useEffect(() => {
-    loadTickets();
-  }, [loadTickets]);
+    loadDashboardData();
+  }, [loadDashboardData]);
 
   React.useEffect(() => {
     if (activeSection === 'support_followups') {
@@ -211,10 +218,10 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
 
         <div className="flex items-center gap-2.5">
           <button
-            onClick={() => loadTickets()}
+            onClick={() => loadDashboardData()}
             disabled={loading}
             title="Refresh from Supabase"
-            className="p-2.5 rounded-xl bg-[#141414] border border-[#3A3A3A] hover:border-[#D4A017] text-[#D4A017] transition-all flex items-center gap-1.5 hover:scale-105"
+            className="p-2.5 rounded-xl bg-[#121212] border border-[#3A3A3A] hover:border-[#D4A017] text-[#D4A017] transition-all flex items-center gap-1.5 hover:scale-105"
           >
             <RotateCw size={14} className={loading ? 'animate-spin' : ''} />
             <span className="hidden sm:inline text-[11px] font-bold">Refresh</span>
@@ -384,6 +391,17 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
               >
                 Priority Escalations ({complaintQueue.length})
               </button>
+              <button
+                onClick={() => setActiveTableTab('fraud')}
+                className={`px-3 py-1.5 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 ${
+                  activeTableTab === 'fraud'
+                    ? 'bg-gradient-to-r from-[#B87333] to-[#D4A017] text-[#1A1A1A] shadow-md'
+                    : 'bg-[#121212] text-[#9CA3AF] hover:text-[#FAF7F0] border border-[#3A3A3A]'
+                }`}
+              >
+                <ShieldAlert size={12} />
+                Fraud Alerts ({fraudCases.length})
+              </button>
             </div>
             <span className="text-[10px] text-[#9CA3AF] hidden sm:inline">
               Tenant Scoped: {companyName}
@@ -416,7 +434,7 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
                             {dbError || `No support tickets found for ${companyName} in public.support_tickets.`}
                           </p>
                           <button
-                            onClick={() => loadTickets()}
+                            onClick={() => loadDashboardData()}
                             className="mt-2 px-3 py-1.5 rounded-lg bg-[#121212] border border-[#D4A017] text-[#D4A017] text-xs hover:bg-[#262626] flex items-center gap-1.5"
                           >
                             <RotateCw size={12} className={loading ? 'animate-spin' : ''} />
@@ -515,39 +533,78 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
             </div>
           )}
 
-          {/* Complaints Tab */}
-          {activeTableTab === 'complaints' && (
+          {/* Fraud Tab */}
+          {activeTableTab === 'fraud' && (
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-left font-mono text-xs">
                 <thead>
                   <tr className="border-b border-[#3A3A3A] text-[#E6C78B] text-[11px]">
                     <th className="pb-2">Case ID</th>
-                    <th className="pb-2">Client</th>
-                    <th className="pb-2">Inquiry / Escalation</th>
-                    <th className="pb-2">Severity</th>
-                    <th className="pb-2 text-right">Resolution Desk</th>
+                    <th className="pb-2">Client / Account</th>
+                    <th className="pb-2">Trigger / Score</th>
+                    <th className="pb-2">Amount</th>
+                    <th className="pb-2 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                  {complaintQueue.length === 0 ? (
+                  {fraudCases.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-8 text-center text-[#9CA3AF]">
-                        No escalated complaints filed for {companyName}.
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <ShieldCheck size={28} className="text-[#D4A017]" />
+                          <p className="text-sm font-bold text-[#FAF7F0]">No Active Fraud Alerts</p>
+                          <p className="text-xs text-[#9CA3AF]">Surveillance clean for {companyName}.</p>
+                        </div>
                       </td>
                     </tr>
                   ) : (
-                    complaintQueue.map((c) => (
-                      <tr key={c.id} className="hover:bg-[#121212]/50">
-                        <td className="py-2.5 font-bold text-[#E6C78B]">{c.id}</td>
-                        <td className="py-2.5 font-semibold text-[#FAF7F0]">{c.client}</td>
-                        <td className="py-2.5 text-[#9CA3AF]">{c.subject}</td>
-                        <td className="py-2.5 text-[#B87333] font-bold">{c.severity}</td>
-                        <td className="py-2.5 text-right font-semibold text-[#FAF7F0]">{c.status}</td>
+                    fraudCases.slice(0, 10).map((f) => (
+                      <tr key={f.id} className="hover:bg-[#121212]/50">
+                        <td className="py-2.5 font-bold text-[#E6C78B]">{f.id}</td>
+                        <td className="py-2.5">
+                          <p className="font-semibold text-[#FAF7F0]">{f.customerName}</p>
+                          <p className="text-[10px] text-[#9CA3AF]">{f.customerId}</p>
+                        </td>
+                        <td className="py-2.5">
+                          <p className="text-[#9CA3AF]">{f.ruleTriggered}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <div className="w-16 h-1 bg-[#121212] rounded-full overflow-hidden border border-[#3A3A3A]">
+                              <div
+                                className={`h-full rounded-full ${
+                                  f.riskScore >= 80 ? 'bg-rose-500' : f.riskScore >= 50 ? 'bg-amber-500' : 'bg-emerald-500'
+                                }`}
+                                style={{ width: `${f.riskScore}%` }}
+                              ></div>
+                            </div>
+                            <span className="text-[9px] font-bold text-[#D4A017]">{f.riskScore}</span>
+                          </div>
+                        </td>
+                        <td className="py-2.5">
+                          <p className="font-bold text-[#FAF7F0]">
+                            {f.currency} {f.amount.toLocaleString()}
+                          </p>
+                          <p className="text-[9px] text-[#9CA3AF]">
+                            ≈ ₹{((f.amountInr || 0) / 1000000).toFixed(2)}M
+                          </p>
+                        </td>
+                        <td className="py-2.5 text-right">
+                          <button
+                            className="px-2 py-1 rounded bg-[#121212] border border-[#D4A017]/50 text-[#D4A017] text-[10px] font-bold hover:bg-[#D4A017] hover:text-[#1A1A1A] transition-all"
+                          >
+                            Investigate
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
+              <div className="mt-4 p-3 rounded-xl bg-[#1C1810] border border-[#D4A017]/30 flex items-start gap-2.5">
+                <AlertTriangle size={14} className="text-[#D4A017] shrink-0 mt-0.5" />
+                <p className="text-[10px] text-[#E6C78B]/90 leading-relaxed">
+                  <strong>Policy Update:</strong> Support Executives now hold read-only clearance for institutional fraud alerts strictly scoped to their tenant workspace.
+                </p>
+              </div>
             </div>
           )}
         </div>

@@ -7,7 +7,7 @@ import { UserAccount } from '../data/finovaDatasets';
 import { Lock, Mail, User, Phone, Eye, EyeOff, Building2, ArrowRight, Database } from 'lucide-react';
 
 interface SignupPageProps {
-  onSignupSuccess: (user: UserAccount) => void;
+  onSignupSuccess: () => void;
   onGoToLogin: () => void;
   onBackToLanding: () => void;
 }
@@ -67,7 +67,7 @@ export const SignupPage: React.FC<SignupPageProps> = ({
       setLoading(false);
 
       if (res.success && res.session) {
-        onSignupSuccess(res.session.user);
+        onSignupSuccess();
       } else if (res.requiresEmailConfirmation || (res.success && !res.session)) {
         setSuccessMessage(
           res.error ||

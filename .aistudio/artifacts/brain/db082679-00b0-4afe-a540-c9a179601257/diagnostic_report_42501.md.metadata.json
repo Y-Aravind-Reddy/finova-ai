@@ -1,0 +1,6 @@
+{
+  "summary":  "Comprehensive diagnostic report for PostgreSQL Error 42501 (Permission Denied) in the FINOVA AI application. The report maps dashboards, user roles, and specific database operations to their suspected root causes, identifying missing GRANTS on RPC functions and tables as the primary issues.",
+  "updatedAt":  "2026-11-02T06:49:55.630055092Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

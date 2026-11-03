@@ -41,7 +41,8 @@ export const ThreeDColumnChart: React.FC<ThreeDColumnChartProps> = ({
 
   // Isometric projection constants
   const chartHeight = height;
-  const colWidth = Math.min(34, Math.max(18, 480 / (data.length * (dualSeries ? 2.2 : 1.5))));
+  const dataLen = data.length || 1;
+  const colWidth = Math.min(34, Math.max(18, 480 / (dataLen * (dualSeries ? 2.2 : 1.5))));
   const depthX = viewAngle === 'isometric' ? 14 : 9;
   const depthY = viewAngle === 'isometric' ? 10 : 14;
 

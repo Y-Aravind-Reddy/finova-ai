@@ -6,7 +6,7 @@ import { UserAccount } from '../data/finovaDatasets';
 import { Lock, Mail, Eye, EyeOff, ShieldCheck, Key, ArrowRight, Building2, Globe, CheckCircle2, Database, AlertCircle } from 'lucide-react';
 
 interface LoginPageProps {
-  onLoginSuccess: (user: UserAccount) => void;
+  onLoginSuccess: () => void;
   onGoToSignup: () => void;
   onBackToLanding: () => void;
 }
@@ -46,7 +46,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setLoading(false);
 
       if (res.success && res.session) {
-        onLoginSuccess(res.session.user);
+        onLoginSuccess();
       } else {
         setErrorMessage(res.error || 'Authentication failed. Please verify institutional credentials in Supabase Auth.');
       }
@@ -217,7 +217,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 type="button"
                 onClick={() => {
                   const res = authenticateDemoPersona('super_admin');
-                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                  if (res.success && res.session) onLoginSuccess();
                 }}
                 className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#D4A017]/50 text-left transition-all hover:scale-[1.02]"
               >
@@ -228,7 +228,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 type="button"
                 onClick={() => {
                   const res = authenticateDemoPersona('analyst');
-                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                  if (res.success && res.session) onLoginSuccess();
                 }}
                 className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#3A3A3A] hover:border-[#D4A017]/40 text-left transition-all hover:scale-[1.02]"
               >
@@ -239,7 +239,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 type="button"
                 onClick={() => {
                   const res = authenticateDemoPersona('support');
-                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                  if (res.success && res.session) onLoginSuccess();
                 }}
                 className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#3A3A3A] hover:border-[#D4A017]/40 text-left transition-all hover:scale-[1.02]"
               >
@@ -250,7 +250,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 type="button"
                 onClick={() => {
                   const res = authenticateDemoPersona('admin');
-                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                  if (res.success && res.session) onLoginSuccess();
                 }}
                 className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#3A3A3A] hover:border-[#D4A017]/40 text-left transition-all hover:scale-[1.02]"
               >
@@ -261,7 +261,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 type="button"
                 onClick={() => {
                   const res = authenticateDemoPersona('customer');
-                  if (res.success && res.session) onLoginSuccess(res.session.user);
+                  if (res.success && res.session) onLoginSuccess();
                 }}
                 className="p-2 rounded-lg bg-[#121212] hover:bg-[#1E1E1E] border border-[#3A3A3A] hover:border-[#D4A017]/40 text-left transition-all hover:scale-[1.02]"
               >

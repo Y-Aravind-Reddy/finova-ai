@@ -64,6 +64,7 @@ export const RoleSidebar: React.FC<RoleSidebarProps> = ({
     userManagement: true,
     systemConfig: true,
     platformEngines: true,
+    dataTransfer: true,
   });
 
   useEffect(() => {
@@ -87,7 +88,23 @@ export const RoleSidebar: React.FC<RoleSidebarProps> = ({
     if (currentRoute.includes('system-configuration')) {
       setOpenSections((prev) => ({ ...prev, systemConfig: true }));
     }
+    // If active route is in data transfer, keep dataTransfer open
+    if (currentRoute.includes('data-transfer')) {
+      setOpenSections((prev) => ({ ...prev, dataTransfer: true }));
+    }
   }, [currentRoute]);
+
+  // Body Scroll Lock for mobile drawer
+  useEffect(() => {
+    if (isOpenMobile) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpenMobile]);
 
   const toggleSection = (key: string) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -258,6 +275,30 @@ export const RoleSidebar: React.FC<RoleSidebarProps> = ({
         )}
       </div>
 
+      {/* Data & Transfer Intelligence (Collapsible) */}
+      <div className="space-y-1">
+        <button
+          onClick={() => toggleSection('dataTransfer')}
+          className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-mono text-xs text-[#FAF7F0] hover:bg-[#301B05]/40 hover:text-[#F5C542] transition-all"
+        >
+          <div className="flex items-center gap-3">
+            <Activity size={16} className="text-[#F5C542]" />
+            <span className="font-semibold uppercase tracking-tight">Data & Transfer Intelligence</span>
+          </div>
+          {openSections.dataTransfer ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+
+        {openSections.dataTransfer && (
+          <div className="pl-5 pr-1 space-y-1 border-l border-[#D4A017]/25 ml-4 py-1">
+            {renderSubItem('Transfer Overview', '/admin/data-transfer/overview', <BarChart3 size={13} className="text-[#D4A017]" />)}
+            {renderSubItem('Settlement Monitoring', '/admin/data-transfer/settlements', <ShieldCheck size={13} className="text-[#D4A017]" />)}
+            {renderSubItem('Transaction Records', '/admin/data-transfer/transactions', <Database size={13} className="text-[#D4A017]" />)}
+            {renderSubItem('Reconciliation', '/admin/data-transfer/reconciliation', <Sparkles size={13} className="text-[#D4A017]" />)}
+            {renderSubItem('Exceptions & Failed', '/admin/data-transfer/exceptions', <AlertTriangle size={13} className="text-[#D4A017]" />)}
+          </div>
+        )}
+      </div>
+
       {renderNavItem('Profile', '/admin/profile', <User size={16} />)}
     </>
   );
@@ -362,7 +403,7 @@ export const RoleSidebar: React.FC<RoleSidebarProps> = ({
       }`}
     >
       {/* Top Header: Official Golden Logo & Role Badge */}
-      <div className="p-5 border-b border-[#3A3A3A] flex flex-col gap-3">
+      <div className="flex-shrink-0 p-5 border-b border-[#3A3A3A] flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <FinovaLogo variant="compact" size="md" />
           <button
@@ -411,7 +452,7 @@ export const RoleSidebar: React.FC<RoleSidebarProps> = ({
       </div>
 
       {/* Navigation List - Role Segregated! */}
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-1.5 scrollbar-thin scrollbar-thumb-[#3A3A3A]">
+      <div className="flex-1 overflow-y-auto p-3.5 space-y-1.5 scrollbar-thin scrollbar-thumb-[#3A3A3A] min-h-0">
         {role === 'SUPER_ADMIN' && renderSuperAdminSidebar()}
         {role === 'ADMIN' && renderAdminSidebar()}
         {role === 'FINANCE_ANALYST' && renderFinanceAnalystSidebar()}
@@ -420,7 +461,7 @@ export const RoleSidebar: React.FC<RoleSidebarProps> = ({
       </div>
 
       {/* Bottom Footer: User Status & Logout */}
-      <div className="p-4 border-t border-[#3A3A3A] bg-[#121212] space-y-3">
+      <div className="flex-shrink-0 p-4 border-t border-[#3A3A3A] bg-[#121212] space-y-3">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#D4A017] to-[#E6C78B] flex items-center justify-center text-[#1A1A1A] font-bold text-sm shadow-[0_0_10px_rgba(212,160,23,0.3)] shrink-0">
             {currentUser.name.charAt(0)}
