@@ -53,6 +53,7 @@ export interface QueryFilterOptions {
 
 export interface KycAggregates {
   totalRecords: number;
+  totalCount: number;
   verifiedCount: number;
   pendingCount: number;
   reviewCount: number;
@@ -60,6 +61,8 @@ export interface KycAggregates {
   docTypeDistribution: { label: string; value: number }[];
   source: 'supabase' | 'fallback';
   state: QueryResultState;
+  isPartial: boolean;
+  rejectedRecordsCount: number;
 }
 
 export interface PlatformExecutiveKpis {
@@ -818,6 +821,8 @@ export async function fetchTransactionAggregatesResultFromDb(
       state: 'demo_session_rls',
       hasAuthSession: false,
       reportingBaseCurrency: 'INR',
+      isPartial: false,
+      rejectedRecordsCount: 0,
     };
   } catch (err) {
     return {
@@ -3879,6 +3884,7 @@ export async function fetchKycAggregatesResultFromDb(
   if (!configured || !client) {
     return {
       totalRecords: 0,
+      totalCount: 0,
       verifiedCount: 0,
       pendingCount: 0,
       reviewCount: 0,
@@ -3886,6 +3892,8 @@ export async function fetchKycAggregatesResultFromDb(
       docTypeDistribution: [],
       source: 'fallback',
       state: 'unconfigured',
+      isPartial: false,
+      rejectedRecordsCount: 0,
     };
   }
 
@@ -3898,6 +3906,7 @@ export async function fetchKycAggregatesResultFromDb(
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
       return {
         totalRecords: Number(rpcData.totalRecords) || 0,
+        totalCount: Number(rpcData.totalRecords) || 0,
         verifiedCount: Number(rpcData.verifiedCount) || 0,
         pendingCount: Number(rpcData.pendingCount) || 0,
         reviewCount: Number(rpcData.reviewCount) || 0,
@@ -3905,6 +3914,8 @@ export async function fetchKycAggregatesResultFromDb(
         docTypeDistribution: rpcData.docTypeDistribution || baselineDocTypeDist,
         source: 'supabase',
         state: (Number(rpcData.totalRecords) > 0) ? 'live_records' : (hasAuthSession ? 'zero_records' : 'demo_session_rls'),
+        isPartial: Boolean(rpcData.isPartial),
+        rejectedRecordsCount: Number(rpcData.rejectedRecordsCount) || 0,
       };
     }
   } catch {
@@ -3913,6 +3924,7 @@ export async function fetchKycAggregatesResultFromDb(
 
   return {
     totalRecords: 144700,
+    totalCount: 144700,
     verifiedCount: 138200,
     pendingCount: 4200,
     reviewCount: 2300,
@@ -3920,6 +3932,8 @@ export async function fetchKycAggregatesResultFromDb(
     docTypeDistribution: baselineDocTypeDist,
     source: 'fallback',
     state: 'demo_session_rls',
+    isPartial: false,
+    rejectedRecordsCount: 0,
   };
 }
 

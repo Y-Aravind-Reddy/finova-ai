@@ -47,6 +47,7 @@ import {
   Lock,
   Building2,
   RotateCw,
+  Activity
 } from 'lucide-react';
 
 interface CustomerDashboardProps {
@@ -378,6 +379,12 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
                 Transactions: RLS Protected ({dbError ? 'Query Restricted' : 'Awaiting Auth Session'})
+              </span>
+            )}
+            {customerAggregates?.isPartial && (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/80 border border-amber-500/50 text-amber-300 animate-pulse flex items-center gap-1">
+                <Activity size={10} />
+                Ledger Partial
               </span>
             )}
           </div>

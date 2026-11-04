@@ -281,12 +281,13 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
         />
       </div>
 
-      {/* Honest Schema & Measurement Transparency Note */}
-      <div className="p-4 rounded-xl bg-[#1C1810] border border-[#D4A017]/40 flex items-start gap-3 text-xs text-[#FAF7F0]/90">
-        <Info size={18} className="text-[#D4A017] shrink-0 mt-0.5" />
-        <div>
-          <span className="font-bold text-[#E6C78B]">Production Schema Measurement Disclosure: </span>
-          In accordance with Requirement 4, resolution time is reported as <span className="text-[#FAF7F0] font-semibold">Open Duration Only</span> because the PostgreSQL <code className="text-[#D4A017]">support_tickets</code> schema tracks elapsed <code className="text-[#D4A017]">hours_open</code> and does not store completed resolution duration or close timestamps. SLA compliance is computed by validating whether elapsed <code className="text-[#D4A017]">hours_open &le; sla_target_hours</code>.
+      {/* Schema Measurement Transparency Disclosure */}
+      <div className="group relative flex items-center gap-2 px-4 py-2 rounded-xl bg-[#1C1810] border border-[#D4A017]/30 text-[10px] text-[#E6C78B]/90 cursor-help">
+        <Info size={14} className="text-[#D4A017] shrink-0" />
+        <span className="font-bold">Measurement Disclosure:</span>
+        <span className="truncate max-w-[600px]">Resolution time reports Open Duration Only due to schema tracking. SLA compliance verified by hours_open ≤ sla_target_hours.</span>
+        <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-80 p-3 bg-[#1A1A1A] border border-[#D4A017] rounded-lg shadow-2xl z-50 text-[11px] leading-relaxed text-[#FAF7F0]">
+          In accordance with Requirement 4, resolution time is reported as <span className="text-[#D4A017] font-bold">Open Duration Only</span> because the PostgreSQL <code className="text-[#D4A017]">support_tickets</code> schema tracks elapsed <code className="text-[#D4A017]">hours_open</code> and does not store completed resolution duration or close timestamps.
         </div>
       </div>
 

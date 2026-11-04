@@ -279,6 +279,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               Platform SaaS Operator
             </span>
             <span className="text-xs text-[#E6C78B]">Multi-Tenant Financial Architecture</span>
+            {transactionAggregates?.isPartial && (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/80 border border-amber-500/50 text-amber-300 animate-pulse flex items-center gap-1">
+                <Activity size={10} />
+                Partial Telemetry
+              </span>
+            )}
           </div>
           <h1 className="font-cinzel text-xl sm:text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FAF7F0] via-[#E6C78B] to-[#D4A017] mt-1">
             Super Admin Executive Oversight

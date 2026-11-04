@@ -15,6 +15,8 @@ import {
 } from '../../services/finovaDatabase';
 
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
+import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
+import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
 import { DashboardFilterBar, DashboardFilters } from './DashboardFilterBar';
 import { ModuleSkeleton, KpiSkeleton } from './DashboardSkeletons';
 
@@ -53,7 +55,8 @@ import {
   Workflow,
   Globe,
   Wallet,
-  UserPlus
+  UserPlus,
+  Activity
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -202,13 +205,94 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             case 'system': return <SystemHealth />;
             case 'strategic': return <StrategicMap />;
             default: return (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Suspense fallback={<ModuleSkeleton />}>
-                  {txAgg && <TransactionIntelligence aggregates={txAgg} isLoading={txLoading} />}
-                </Suspense>
-                <Suspense fallback={<ModuleSkeleton />}>
-                  {fAgg && <FraudAMLSurveillance aggregates={fAgg} isLoading={fLoading} />}
-                </Suspense>
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Summary Settlement Velocity */}
+                  <div className="rounded-2xl bg-[#1A1A1A]/80 border border-[#3A3A3A] p-6 shadow-xl">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="font-cinzel text-lg font-bold text-[#E6C78B]">Settlement Flux</h3>
+                        <p className="text-[10px] text-[#9CA3AF] uppercase tracking-widest font-mono">Cross-tenant clearing velocity</p>
+                      </div>
+                      <TrendingUp size={20} className="text-[#D4A017]" />
+                    </div>
+                    {txAgg && (
+                      <ThreeDAreaChart
+                        data={txAgg.volumeByDay?.map(d => ({ label: d.date.split('-')[2], value: d.volumeInr / 1000000 })) || []}
+                        valuePrefix="₹"
+                        valueSuffix="M"
+                        height={200}
+                      />
+                    )}
+                  </div>
+
+                  {/* Summary Fraud Risk */}
+                  <div className="rounded-2xl bg-[#1A1A1A]/80 border border-[#3A3A3A] p-6 shadow-xl">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="font-cinzel text-lg font-bold text-[#E6C78B]">Risk Distribution</h3>
+                        <p className="text-[10px] text-[#9CA3AF] uppercase tracking-widest font-mono">Real-time threat vectors</p>
+                      </div>
+                      <ShieldAlert size={20} className="text-[#D4A017]" />
+                    </div>
+                    {fAgg && (
+                      <ThreeDDonutChart
+                        segments={fAgg.riskTierDistribution?.map(r => ({ label: r.tier, value: r.count, subtext: `₹${(r.volumeInr / 1000000).toFixed(1)}M` })) || []}
+                        centerLabel="Alerts"
+                        centerValue={fAgg.totalCases.toLocaleString()}
+                        height={200}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* Additional Insight Row */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* KYC Summary */}
+                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 text-[#D4A017] mb-2">
+                        <Fingerprint size={16} />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Compliance</span>
+                      </div>
+                      <h4 className="text-sm font-bold text-[#FAF7F0]">KYC Onboarding Queue</h4>
+                    </div>
+                    <div className="mt-4">
+                      <span className="text-3xl font-black text-[#E6C78B]">{kAgg?.totalCount || 0}</span>
+                      <span className="text-[10px] text-[#9CA3AF] ml-2">Pending Review</span>
+                    </div>
+                  </div>
+
+                  {/* Support Summary */}
+                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 text-[#D4A017] mb-2">
+                        <LifeBuoy size={16} />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Operations</span>
+                      </div>
+                      <h4 className="text-sm font-bold text-[#FAF7F0]">Concierge Desk Health</h4>
+                    </div>
+                    <div className="mt-4">
+                      <span className="text-3xl font-black text-[#E6C78B]">{sAgg?.slaCompliancePct || 0}%</span>
+                      <span className="text-[10px] text-[#9CA3AF] ml-2">SLA Compliance</span>
+                    </div>
+                  </div>
+
+                  {/* Liquidity Summary */}
+                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 text-[#D4A017] mb-2">
+                        <Wallet size={16} />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Treasury</span>
+                      </div>
+                      <h4 className="text-sm font-bold text-[#FAF7F0]">Net Liquid Balance</h4>
+                    </div>
+                    <div className="mt-4 flex items-baseline gap-1">
+                      <span className="text-3xl font-black text-[#E6C78B]">₹{((txAgg?.netLiquidBalanceInr || 0) / 10000000).toFixed(1)}</span>
+                      <span className="text-[10px] text-[#9CA3AF]">Cr</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             );
           }
@@ -326,6 +410,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               Enterprise Intelligence
             </div>
             <span className="text-[10px] text-[#9CA3AF] font-mono tracking-tighter uppercase">{companyName} // PLATFORM NODE // LIVE</span>
+            {txAgg?.isPartial && (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/80 border border-amber-500/50 text-amber-400 animate-pulse flex items-center gap-1">
+                <Activity size={10} />
+                Partial Stream
+              </span>
+            )}
           </div>
           <h1 className="font-cinzel text-2xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-b from-[#FAF7F0] via-[#E6C78B] to-[#D4A017] leading-tight">
             Banking Intelligence Center
@@ -354,31 +444,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
 
       {/* NODAL INTELLIGENCE STATUS BAR */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 px-2">
-        {Object.entries(nodeStatuses).map(([key, status]) => (
-          <div 
-            key={key} 
-            className={`flex items-center justify-between px-3 py-1.5 rounded-lg border text-[8px] font-bold font-mono transition-all ${
-              status === 'operational' ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400' :
-              status === 'degraded' ? 'bg-amber-950/20 border-amber-500/30 text-amber-400' :
-              status === 'restricted' ? 'bg-blue-950/20 border-blue-500/30 text-blue-400' :
-              status === 'loading' ? 'bg-[#1A1A1A] border-[#3A3A3A] text-[#9CA3AF] animate-pulse' :
-              'bg-red-950/20 border-red-500/30 text-red-400'
-            }`}
-          >
-            <div className="flex items-center gap-1.5 uppercase">
-              <div className={`w-1.5 h-1.5 rounded-full ${
-                status === 'operational' ? 'bg-emerald-500' :
-                status === 'degraded' ? 'bg-amber-500' :
-                status === 'restricted' ? 'bg-blue-500' :
-                status === 'loading' ? 'bg-[#9CA3AF]' :
-                'bg-red-500'
-              }`} />
-              {key}
-            </div>
-            <span className="uppercase opacity-80">{status}</span>
+      <div className="flex flex-wrap gap-2 px-2">
+        <div className="flex items-center gap-4 px-4 py-2 rounded-xl bg-[#121212]/80 border border-[#3A3A3A] backdrop-blur-md shadow-inner">
+          <div className="flex items-center gap-2 border-r border-[#3A3A3A] pr-4">
+            <div className={`w-2 h-2 rounded-full ${Object.values(nodeStatuses).every(s => s === 'operational') ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]'}`} />
+            <span className="text-[10px] font-black uppercase tracking-widest text-[#E6C78B]">System Health</span>
           </div>
-        ))}
+          <div className="flex items-center gap-3">
+            {Object.entries(nodeStatuses).map(([key, status]) => (
+              <div 
+                key={key} 
+                className="flex items-center gap-1.5"
+                title={`${key}: ${status.toUpperCase()}`}
+              >
+                <div className={`w-1.5 h-1.5 rounded-full ${
+                  status === 'operational' ? 'bg-emerald-500/40' :
+                  status === 'degraded' ? 'bg-amber-500 animate-pulse' :
+                  status === 'restricted' ? 'bg-blue-500' :
+                  status === 'loading' ? 'bg-[#9CA3AF] animate-spin h-1.5 w-1.5 border-b border-[#D4A017] rounded-full' :
+                  'bg-red-500 animate-bounce'
+                }`} />
+                <span className={`text-[9px] font-bold font-mono uppercase ${status === 'operational' ? 'text-[#9CA3AF]' : 'text-[#FAF7F0]'}`}>{key}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="min-h-[600px]">

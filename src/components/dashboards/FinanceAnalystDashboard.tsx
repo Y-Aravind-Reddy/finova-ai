@@ -38,6 +38,7 @@ import {
   RotateCw,
   TrendingUp,
   BarChart3,
+  Activity
 } from 'lucide-react';
 
 interface FinanceAnalystDashboardProps {
@@ -298,6 +299,12 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
                 Institutional Dataset Baseline (RLS Active)
+              </span>
+            )}
+            {transactionAggregates?.isPartial && (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/80 border border-amber-500/50 text-amber-300 animate-pulse flex items-center gap-1">
+                <Activity size={10} />
+                Partial Forensics
               </span>
             )}
           </div>
