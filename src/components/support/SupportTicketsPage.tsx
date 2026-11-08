@@ -1,3 +1,4 @@
+// Finova Support Intelligence - Ticket Management Page
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Headphones,
@@ -30,7 +31,7 @@ interface SupportTicketsPageProps {
   tenantId?: string;
 }
 
-export const SupportTicketsPage: React.FC<SupportTicketsPageProps> = ({
+const SupportTicketsPage: React.FC<SupportTicketsPageProps> = ({
   currentUser,
   tenantId: propTenantId,
 }) => {
@@ -408,3 +409,5 @@ export const SupportTicketsPage: React.FC<SupportTicketsPageProps> = ({
     </div>
   );
 };
+
+export default SupportTicketsPage;

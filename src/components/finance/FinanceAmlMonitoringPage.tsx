@@ -3,7 +3,7 @@ import { ShieldAlert, AlertTriangle, FileCheck2, Search, Filter, Lock, Unlock } 
 import { ThreeDTransactionHeatmap } from '../charts3d/ThreeDTransactionHeatmap';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 
-export const FinanceAmlMonitoringPage: React.FC = () => {
+const FinanceAmlMonitoringPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   const amlCases = [
@@ -147,3 +147,5 @@ export const FinanceAmlMonitoringPage: React.FC = () => {
     </div>
   );
 };
+
+export default FinanceAmlMonitoringPage;

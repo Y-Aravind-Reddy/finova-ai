@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Settings, Shield, Bell, Lock, Server, Save, Check } from 'lucide-react';
 
-export const SuperAdminSystemConfigPage: React.FC = () => {
+const SuperAdminSystemConfigPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'platform' | 'security' | 'notifications'>('platform');
   const [saved, setSaved] = useState(false);
 
@@ -173,3 +173,5 @@ export const SuperAdminSystemConfigPage: React.FC = () => {
     </div>
   );
 };
+
+export default SuperAdminSystemConfigPage;

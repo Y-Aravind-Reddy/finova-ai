@@ -11,7 +11,7 @@ interface ClientQuery {
   messages: Array<{ sender: 'client' | 'agent'; text: string; time: string }>;
 }
 
-export const SupportCustomerQueriesPage: React.FC = () => {
+const SupportCustomerQueriesPage: React.FC = () => {
   const [queries, setQueries] = useState<ClientQuery[]>([
     {
       id: 'QRY-8801',
@@ -186,3 +186,5 @@ export const SupportCustomerQueriesPage: React.FC = () => {
     </div>
   );
 };
+
+export default SupportCustomerQueriesPage;

@@ -18,7 +18,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 
-export const Reconciliation: React.FC = () => {
+const Reconciliation: React.FC = () => {
   const [filters, setFilters] = useState<DataTransferFilters>({
     startDate: '',
     endDate: '',
@@ -177,3 +177,5 @@ export const Reconciliation: React.FC = () => {
     </div>
   );
 };
+
+export default Reconciliation;

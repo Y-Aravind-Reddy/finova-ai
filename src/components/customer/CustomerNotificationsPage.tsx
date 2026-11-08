@@ -10,7 +10,7 @@ interface AlertNotice {
   type: 'security' | 'transaction' | 'system';
 }
 
-export const CustomerNotificationsPage: React.FC = () => {
+const CustomerNotificationsPage: React.FC = () => {
   const [notices, setNotices] = useState<AlertNotice[]>([
     {
       id: 'NOT-01',
@@ -100,3 +100,5 @@ export const CustomerNotificationsPage: React.FC = () => {
     </div>
   );
 };
+
+export default CustomerNotificationsPage;

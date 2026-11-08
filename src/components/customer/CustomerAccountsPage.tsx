@@ -9,7 +9,7 @@ interface CustomerAccountsPageProps {
   currentUser?: UserAccount;
 }
 
-export const CustomerAccountsPage: React.FC<CustomerAccountsPageProps> = ({ currentUser: propUser }) => {
+const CustomerAccountsPage: React.FC<CustomerAccountsPageProps> = ({ currentUser: propUser }) => {
   const activeUser = propUser || getStoredSession()?.user;
   const tenantId = activeUser?.tenantId || 'tenant_apex_bank';
   const tenant = getTenantById(tenantId);
@@ -188,3 +188,5 @@ export const CustomerAccountsPage: React.FC<CustomerAccountsPageProps> = ({ curr
     </div>
   );
 };
+
+export default CustomerAccountsPage;

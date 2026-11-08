@@ -28,7 +28,7 @@ interface SuspiciousAlert {
   timestamp: string;
 }
 
-export const FraudAmlPage: React.FC = () => {
+const FraudAmlPage: React.FC = () => {
   const [sarModalAlert, setSarModalAlert] = useState<SuspiciousAlert | null>(null);
 
   const [alerts, setAlerts] = useState<SuspiciousAlert[]>([
@@ -307,3 +307,5 @@ export const FraudAmlPage: React.FC = () => {
     </div>
   );
 };
+
+export default FraudAmlPage;

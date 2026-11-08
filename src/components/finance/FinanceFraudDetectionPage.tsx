@@ -26,7 +26,7 @@ interface FinanceFraudDetectionPageProps {
   tenantId?: string;
 }
 
-export const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
+const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
   currentUser,
   tenantId: propTenantId,
 }) => {
@@ -449,3 +449,5 @@ export const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps>
     </div>
   );
 };
+
+export default FinanceFraudDetectionPage;

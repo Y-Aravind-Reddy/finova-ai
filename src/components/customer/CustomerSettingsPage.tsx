@@ -7,7 +7,7 @@ interface CustomerSettingsPageProps {
   currentUser?: UserAccount;
 }
 
-export const CustomerSettingsPage: React.FC<CustomerSettingsPageProps> = ({ currentUser: propUser }) => {
+const CustomerSettingsPage: React.FC<CustomerSettingsPageProps> = ({ currentUser: propUser }) => {
   const activeUser = propUser || getStoredSession()?.user;
   const [biometricEnabled, setBiometricEnabled] = useState(true);
   const [smsAlerts, setSmsAlerts] = useState(true);
@@ -105,3 +105,5 @@ export const CustomerSettingsPage: React.FC<CustomerSettingsPageProps> = ({ curr
     </div>
   );
 };
+
+export default CustomerSettingsPage;

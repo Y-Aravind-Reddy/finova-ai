@@ -12,7 +12,7 @@ interface PermissionMatrixRow {
   description: string;
 }
 
-export const SuperAdminRbacPage: React.FC = () => {
+const SuperAdminRbacPage: React.FC = () => {
   const permissions: PermissionMatrixRow[] = [
     {
       module: 'User Creation & Deletion',
@@ -188,3 +188,5 @@ export const SuperAdminRbacPage: React.FC = () => {
     </div>
   );
 };
+
+export default SuperAdminRbacPage;

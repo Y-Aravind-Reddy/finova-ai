@@ -30,7 +30,7 @@ interface FinanceTransactionAnalyticsPageProps {
   tenantId?: string;
 }
 
-export const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyticsPageProps> = ({
+const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyticsPageProps> = ({
   currentUser,
   tenantId: propTenantId,
 }) => {
@@ -488,3 +488,5 @@ export const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyti
     </div>
   );
 };
+
+export default FinanceTransactionAnalyticsPage;

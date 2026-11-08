@@ -16,7 +16,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 
-export const TransferExceptions: React.FC = () => {
+const TransferExceptions: React.FC = () => {
   const [filters, setFilters] = useState<DataTransferFilters>({
     startDate: '',
     endDate: '',
@@ -171,3 +171,5 @@ export const TransferExceptions: React.FC = () => {
     </div>
   );
 };
+
+export default TransferExceptions;

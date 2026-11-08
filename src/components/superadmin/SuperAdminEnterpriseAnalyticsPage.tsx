@@ -5,7 +5,7 @@ import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDTransactionHeatmap } from '../charts3d/ThreeDTransactionHeatmap';
 
-export const SuperAdminEnterpriseAnalyticsPage: React.FC = () => {
+const SuperAdminEnterpriseAnalyticsPage: React.FC = () => {
   const throughputData = [
     { label: '00:00', value: 18400 },
     { label: '04:00', value: 24200 },
@@ -124,3 +124,5 @@ export const SuperAdminEnterpriseAnalyticsPage: React.FC = () => {
     </div>
   );
 };
+
+export default SuperAdminEnterpriseAnalyticsPage;

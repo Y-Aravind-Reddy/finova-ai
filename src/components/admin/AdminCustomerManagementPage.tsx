@@ -8,7 +8,7 @@ interface AdminCustomerManagementPageProps {
   currentUser?: UserAccount;
 }
 
-export const AdminCustomerManagementPage: React.FC<AdminCustomerManagementPageProps> = ({
+const AdminCustomerManagementPage: React.FC<AdminCustomerManagementPageProps> = ({
   users,
   onRefreshUsers,
   currentUser,
@@ -187,3 +187,5 @@ export const AdminCustomerManagementPage: React.FC<AdminCustomerManagementPagePr
     </div>
   );
 };
+
+export default AdminCustomerManagementPage;

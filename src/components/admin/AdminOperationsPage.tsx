@@ -23,7 +23,7 @@ interface SettlementQueueItem {
   clearingBank: string;
 }
 
-export const AdminOperationsPage: React.FC = () => {
+const AdminOperationsPage: React.FC = () => {
   const [queues, setQueues] = useState<SettlementQueueItem[]>([
     {
       batchId: 'BATCH-FEDNOW-0914',
@@ -223,3 +223,5 @@ export const AdminOperationsPage: React.FC = () => {
     </div>
   );
 };
+
+export default AdminOperationsPage;

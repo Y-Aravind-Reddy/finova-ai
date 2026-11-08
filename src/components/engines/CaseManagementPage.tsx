@@ -27,7 +27,7 @@ interface CaseItem {
   notes: string[];
 }
 
-export const CaseManagementPage: React.FC = () => {
+const CaseManagementPage: React.FC = () => {
   const [selectedPriority, setSelectedPriority] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeCase, setActiveCase] = useState<CaseItem | null>(null);
@@ -341,3 +341,5 @@ export const CaseManagementPage: React.FC = () => {
     </div>
   );
 };
+
+export default CaseManagementPage;

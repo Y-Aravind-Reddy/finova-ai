@@ -4,7 +4,7 @@ import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ThreeDPieChart } from '../charts3d/ThreeDPieChart';
 
-export const SupportReportsPage: React.FC = () => {
+const SupportReportsPage: React.FC = () => {
   const resolutionData = [
     { label: 'High-Value Wires', value: 12, secondaryValue: 15 },
     { label: 'Card Issuance', value: 14, secondaryValue: 20 },
@@ -113,3 +113,5 @@ export const SupportReportsPage: React.FC = () => {
     </div>
   );
 };
+
+export default SupportReportsPage;

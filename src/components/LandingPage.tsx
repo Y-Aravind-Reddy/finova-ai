@@ -52,7 +52,7 @@ interface CapabilityItem {
   metricsValue: string;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({
+const LandingPage: React.FC<LandingPageProps> = ({
   onGoToLogin,
   onGoToSignup,
 }) => {
@@ -1464,3 +1464,5 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     </div>
   );
 };
+
+export default LandingPage;

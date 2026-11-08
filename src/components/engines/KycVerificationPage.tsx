@@ -28,7 +28,7 @@ interface KycVerificationPageProps {
   tenantId?: string;
 }
 
-export const KycVerificationPage: React.FC<KycVerificationPageProps> = ({
+const KycVerificationPage: React.FC<KycVerificationPageProps> = ({
   currentUser,
   tenantId: propTenantId,
 }) => {
@@ -331,3 +331,5 @@ export const KycVerificationPage: React.FC<KycVerificationPageProps> = ({
     </div>
   );
 };
+
+export default KycVerificationPage;

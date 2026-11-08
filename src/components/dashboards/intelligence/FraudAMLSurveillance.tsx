@@ -9,7 +9,7 @@ interface FraudAMLSurveillanceProps {
   isLoading: boolean;
 }
 
-export const FraudAMLSurveillance: React.FC<FraudAMLSurveillanceProps> = ({
+const FraudAMLSurveillance: React.FC<FraudAMLSurveillanceProps> = ({
   aggregates,
   isLoading,
 }) => {
@@ -98,3 +98,5 @@ export const FraudAMLSurveillance: React.FC<FraudAMLSurveillanceProps> = ({
     </div>
   );
 };
+
+export default FraudAMLSurveillance;

@@ -12,7 +12,7 @@ interface ComplaintItem {
   settlementDetails?: string;
 }
 
-export const SupportComplaintResolutionPage: React.FC = () => {
+const SupportComplaintResolutionPage: React.FC = () => {
   const [complaints, setComplaints] = useState<ComplaintItem[]>([
     {
       id: 'CMP-104',
@@ -142,3 +142,5 @@ export const SupportComplaintResolutionPage: React.FC = () => {
     </div>
   );
 };
+
+export default SupportComplaintResolutionPage;

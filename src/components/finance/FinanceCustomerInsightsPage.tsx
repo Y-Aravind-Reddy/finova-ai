@@ -4,7 +4,7 @@ import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 
-export const FinanceCustomerInsightsPage: React.FC = () => {
+const FinanceCustomerInsightsPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   const wealthGrowth = [
@@ -159,3 +159,5 @@ export const FinanceCustomerInsightsPage: React.FC = () => {
     </div>
   );
 };
+
+export default FinanceCustomerInsightsPage;

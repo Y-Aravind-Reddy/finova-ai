@@ -10,7 +10,7 @@ interface TransactionIntelligenceProps {
   isLoading: boolean;
 }
 
-export const TransactionIntelligence: React.FC<TransactionIntelligenceProps> = ({
+const TransactionIntelligence: React.FC<TransactionIntelligenceProps> = ({
   aggregates,
   isLoading,
 }) => {
@@ -92,3 +92,5 @@ export const TransactionIntelligence: React.FC<TransactionIntelligenceProps> = (
     </div>
   );
 };
+
+export default TransactionIntelligence;

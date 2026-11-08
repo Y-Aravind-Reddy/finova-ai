@@ -67,7 +67,7 @@ interface SuperAdminDashboardProps {
   onNavigate?: (route: string) => void;
 }
 
-export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
+const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   currentRole,
   users,
   onUpdateUsers,
@@ -760,3 +760,5 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     </div>
   );
 };
+
+export default SuperAdminDashboard;

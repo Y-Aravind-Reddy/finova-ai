@@ -28,72 +28,72 @@ import { RoleSidebar } from './components/RoleSidebar';
 import { FinovaAiCopilot } from './components/FinovaAiCopilot';
 
 // Lazy Load Pages & Views
-const ReportsView = lazy(() => import('./components/ReportsView').then(m => ({ default: m.ReportsView })));
-const ProfileView = lazy(() => import('./components/ProfileView').then(m => ({ default: m.ProfileView })));
-const SuperAdminSettingsView = lazy(() => import('./components/SuperAdminSettingsView').then(m => ({ default: m.SuperAdminSettingsView })));
-const LandingPage = lazy(() => import('./components/LandingPage').then(m => ({ default: m.LandingPage })));
-const LoginPage = lazy(() => import('./components/LoginPage').then(m => ({ default: m.LoginPage })));
-const SignupPage = lazy(() => import('./components/SignupPage').then(m => ({ default: m.SignupPage })));
+const ReportsView = lazy(() => import('./components/ReportsView'));
+const ProfileView = lazy(() => import('./components/ProfileView'));
+const SuperAdminSettingsView = lazy(() => import('./components/SuperAdminSettingsView'));
+const LandingPage = lazy(() => import('./components/LandingPage'));
+const LoginPage = lazy(() => import('./components/LoginPage'));
+const SignupPage = lazy(() => import('./components/SignupPage'));
 
 // Dashboards
-const SuperAdminDashboard = lazy(() => import('./components/dashboards/SuperAdminDashboard').then(m => ({ default: m.SuperAdminDashboard })));
-const AdminDashboard = lazy(() => import('./components/dashboards/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
-const FinanceAnalystDashboard = lazy(() => import('./components/dashboards/FinanceAnalystDashboard').then(m => ({ default: m.FinanceAnalystDashboard })));
-const SupportExecutiveDashboard = lazy(() => import('./components/dashboards/SupportExecutiveDashboard').then(m => ({ default: m.SupportExecutiveDashboard })));
-const CustomerDashboard = lazy(() => import('./components/dashboards/CustomerDashboard').then(m => ({ default: m.CustomerDashboard })));
+const SuperAdminDashboard = lazy(() => import('./components/dashboards/SuperAdminDashboard'));
+const AdminDashboard = lazy(() => import('./components/dashboards/AdminDashboard'));
+const FinanceAnalystDashboard = lazy(() => import('./components/dashboards/FinanceAnalystDashboard'));
+const SupportExecutiveDashboard = lazy(() => import('./components/dashboards/SupportExecutiveDashboard'));
+const CustomerDashboard = lazy(() => import('./components/dashboards/CustomerDashboard'));
 
 // Platform Engine Pages
-const FinovaAiAssistantPage = lazy(() => import('./components/engines/FinovaAiAssistantPage').then(m => ({ default: m.FinovaAiAssistantPage })));
-const DocumentOcrPage = lazy(() => import('./components/engines/DocumentOcrPage').then(m => ({ default: m.DocumentOcrPage })));
-const TransactionClassificationPage = lazy(() => import('./components/engines/TransactionClassificationPage').then(m => ({ default: m.TransactionClassificationPage })));
-const KycVerificationPage = lazy(() => import('./components/engines/KycVerificationPage').then(m => ({ default: m.KycVerificationPage })));
-const FraudAmlPage = lazy(() => import('./components/engines/FraudAmlPage').then(m => ({ default: m.FraudAmlPage })));
-const CaseManagementPage = lazy(() => import('./components/engines/CaseManagementPage').then(m => ({ default: m.CaseManagementPage })));
-const ExcelVisualizationPage = lazy(() => import('./components/engines/ExcelVisualizationPage').then(m => ({ default: m.ExcelVisualizationPage })));
+const FinovaAiAssistantPage = lazy(() => import('./components/engines/FinovaAiAssistantPage'));
+const DocumentOcrPage = lazy(() => import('./components/engines/DocumentOcrPage'));
+const TransactionClassificationPage = lazy(() => import('./components/engines/TransactionClassificationPage'));
+const KycVerificationPage = lazy(() => import('./components/engines/KycVerificationPage'));
+const FraudAmlPage = lazy(() => import('./components/engines/FraudAmlPage'));
+const CaseManagementPage = lazy(() => import('./components/engines/CaseManagementPage'));
+const ExcelVisualizationPage = lazy(() => import('./components/engines/ExcelVisualizationPage'));
 
 // Super Admin Pages
-const SuperAdminRbacPage = lazy(() => import('./components/superadmin/SuperAdminRbacPage').then(m => ({ default: m.SuperAdminRbacPage })));
-const SuperAdminSystemConfigPage = lazy(() => import('./components/superadmin/SuperAdminSystemConfigPage').then(m => ({ default: m.SuperAdminSystemConfigPage })));
-const SuperAdminAiConfigPage = lazy(() => import('./components/superadmin/SuperAdminAiConfigPage').then(m => ({ default: m.SuperAdminAiConfigPage })));
-const SuperAdminAuditLogsPage = lazy(() => import('./components/superadmin/SuperAdminAuditLogsPage').then(m => ({ default: m.SuperAdminAuditLogsPage })));
-const SuperAdminEnterpriseAnalyticsPage = lazy(() => import('./components/superadmin/SuperAdminEnterpriseAnalyticsPage').then(m => ({ default: m.SuperAdminEnterpriseAnalyticsPage })));
-const SuperAdminCompanyWorkspacesPage = lazy(() => import('./components/superadmin/SuperAdminCompanyWorkspacesPage').then(m => ({ default: m.SuperAdminCompanyWorkspacesPage })));
+const SuperAdminRbacPage = lazy(() => import('./components/superadmin/SuperAdminRbacPage'));
+const SuperAdminSystemConfigPage = lazy(() => import('./components/superadmin/SuperAdminSystemConfigPage'));
+const SuperAdminAiConfigPage = lazy(() => import('./components/superadmin/SuperAdminAiConfigPage'));
+const SuperAdminAuditLogsPage = lazy(() => import('./components/superadmin/SuperAdminAuditLogsPage'));
+const SuperAdminEnterpriseAnalyticsPage = lazy(() => import('./components/superadmin/SuperAdminEnterpriseAnalyticsPage'));
+const SuperAdminCompanyWorkspacesPage = lazy(() => import('./components/superadmin/SuperAdminCompanyWorkspacesPage'));
 
 // Admin Pages
-const AdminOperationsPage = lazy(() => import('./components/admin/AdminOperationsPage').then(m => ({ default: m.AdminOperationsPage })));
-const AdminCustomerManagementPage = lazy(() => import('./components/admin/AdminCustomerManagementPage').then(m => ({ default: m.AdminCustomerManagementPage })));
-const AdminUserManagementPage = lazy(() => import('./components/admin/AdminUserManagementPage').then(m => ({ default: m.AdminUserManagementPage })));
+const AdminOperationsPage = lazy(() => import('./components/admin/AdminOperationsPage'));
+const AdminCustomerManagementPage = lazy(() => import('./components/admin/AdminCustomerManagementPage'));
+const AdminUserManagementPage = lazy(() => import('./components/admin/AdminUserManagementPage'));
 
 // Finance Analyst Pages
-const FinanceTransactionAnalyticsPage = lazy(() => import('./components/finance/FinanceTransactionAnalyticsPage').then(m => ({ default: m.FinanceTransactionAnalyticsPage })));
-const FinanceFraudDetectionPage = lazy(() => import('./components/finance/FinanceFraudDetectionPage').then(m => ({ default: m.FinanceFraudDetectionPage })));
-const FinanceAmlMonitoringPage = lazy(() => import('./components/finance/FinanceAmlMonitoringPage').then(m => ({ default: m.FinanceAmlMonitoringPage })));
-const FinanceRiskScoringPage = lazy(() => import('./components/finance/FinanceRiskScoringPage').then(m => ({ default: m.FinanceRiskScoringPage })));
-const FinanceCustomerInsightsPage = lazy(() => import('./components/finance/FinanceCustomerInsightsPage').then(m => ({ default: m.FinanceCustomerInsightsPage })));
+const FinanceTransactionAnalyticsPage = lazy(() => import('./components/finance/FinanceTransactionAnalyticsPage'));
+const FinanceFraudDetectionPage = lazy(() => import('./components/finance/FinanceFraudDetectionPage'));
+const FinanceAmlMonitoringPage = lazy(() => import('./components/finance/FinanceAmlMonitoringPage'));
+const FinanceRiskScoringPage = lazy(() => import('./components/finance/FinanceRiskScoringPage'));
+const FinanceCustomerInsightsPage = lazy(() => import('./components/finance/FinanceCustomerInsightsPage'));
 
 // Support Executive Pages
-const SupportTicketsPage = lazy(() => import('./components/support/SupportTicketsPage').then(m => ({ default: m.SupportTicketsPage })));
-const SupportCustomerQueriesPage = lazy(() => import('./components/support/SupportCustomerQueriesPage').then(m => ({ default: m.SupportCustomerQueriesPage })));
-const SupportComplaintResolutionPage = lazy(() => import('./components/support/SupportComplaintResolutionPage').then(m => ({ default: m.SupportComplaintResolutionPage })));
-const SupportFollowupsPage = lazy(() => import('./components/support/SupportFollowupsPage').then(m => ({ default: m.SupportFollowupsPage })));
-const SupportReportsPage = lazy(() => import('./components/support/SupportReportsPage').then(m => ({ default: m.SupportReportsPage })));
+const SupportTicketsPage = lazy(() => import('./components/support/SupportTicketsPage'));
+const SupportCustomerQueriesPage = lazy(() => import('./components/support/SupportCustomerQueriesPage'));
+const SupportComplaintResolutionPage = lazy(() => import('./components/support/SupportComplaintResolutionPage'));
+const SupportFollowupsPage = lazy(() => import('./components/support/SupportFollowupsPage'));
+const SupportReportsPage = lazy(() => import('./components/support/SupportReportsPage'));
 
 // Data & Transfer Intelligence Pages
-const TransferOverview = lazy(() => import('./components/datatransfer/TransferOverview').then(m => ({ default: m.TransferOverview })));
-const SettlementMonitoring = lazy(() => import('./components/datatransfer/SettlementMonitoring').then(m => ({ default: m.SettlementMonitoring })));
-const TransactionRecords = lazy(() => import('./components/datatransfer/TransactionRecords').then(m => ({ default: m.TransactionRecords })));
-const Reconciliation = lazy(() => import('./components/datatransfer/Reconciliation').then(m => ({ default: m.Reconciliation })));
-const TransferExceptions = lazy(() => import('./components/datatransfer/TransferExceptions').then(m => ({ default: m.TransferExceptions })));
+const TransferOverview = lazy(() => import('./components/datatransfer/TransferOverview'));
+const SettlementMonitoring = lazy(() => import('./components/datatransfer/SettlementMonitoring'));
+const TransactionRecords = lazy(() => import('./components/datatransfer/TransactionRecords'));
+const Reconciliation = lazy(() => import('./components/datatransfer/Reconciliation'));
+const TransferExceptions = lazy(() => import('./components/datatransfer/TransferExceptions'));
 
 // Customer Pages
-const CustomerCardsView = lazy(() => import('./components/CustomerCardsView').then(m => ({ default: m.CustomerCardsView })));
-const CustomerAccountsPage = lazy(() => import('./components/customer/CustomerAccountsPage').then(m => ({ default: m.CustomerAccountsPage })));
-const CustomerTransactionsPage = lazy(() => import('./components/customer/CustomerTransactionsPage').then(m => ({ default: m.CustomerTransactionsPage })));
-const CustomerKycPage = lazy(() => import('./components/customer/CustomerKycPage').then(m => ({ default: m.CustomerKycPage })));
-const CustomerDocumentsPage = lazy(() => import('./components/customer/CustomerDocumentsPage').then(m => ({ default: m.CustomerDocumentsPage })));
-const CustomerSupportPage = lazy(() => import('./components/customer/CustomerSupportPage').then(m => ({ default: m.CustomerSupportPage })));
-const CustomerNotificationsPage = lazy(() => import('./components/customer/CustomerNotificationsPage').then(m => ({ default: m.CustomerNotificationsPage })));
-const CustomerSettingsPage = lazy(() => import('./components/customer/CustomerSettingsPage').then(m => ({ default: m.CustomerSettingsPage })));
+const CustomerCardsView = lazy(() => import('./components/CustomerCardsView'));
+const CustomerAccountsPage = lazy(() => import('./components/customer/CustomerAccountsPage'));
+const CustomerTransactionsPage = lazy(() => import('./components/customer/CustomerTransactionsPage'));
+const CustomerKycPage = lazy(() => import('./components/customer/CustomerKycPage'));
+const CustomerDocumentsPage = lazy(() => import('./components/customer/CustomerDocumentsPage'));
+const CustomerSupportPage = lazy(() => import('./components/customer/CustomerSupportPage'));
+const CustomerNotificationsPage = lazy(() => import('./components/customer/CustomerNotificationsPage'));
+const CustomerSettingsPage = lazy(() => import('./components/customer/CustomerSettingsPage'));
 
 import { getStoredTenants } from './data/tenantStore';
 

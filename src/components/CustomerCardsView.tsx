@@ -47,7 +47,7 @@ interface CustomerCardsViewProps {
   customerName?: string;
 }
 
-export const CustomerCardsView: React.FC<CustomerCardsViewProps> = ({
+const CustomerCardsView: React.FC<CustomerCardsViewProps> = ({
   customerName = 'Harrison Croft',
 }) => {
   const [cards, setCards] = useState<CardData[]>(() => {
@@ -607,3 +607,5 @@ export const CustomerCardsView: React.FC<CustomerCardsViewProps> = ({
     </div>
   );
 };
+
+export default CustomerCardsView;

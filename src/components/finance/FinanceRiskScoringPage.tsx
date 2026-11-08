@@ -4,7 +4,7 @@ import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDPieChart } from '../charts3d/ThreeDPieChart';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 
-export const FinanceRiskScoringPage: React.FC = () => {
+const FinanceRiskScoringPage: React.FC = () => {
   const riskPieData = [
     { label: 'Tier 3 Sovereign', value: 58, subtext: '58% Low Risk (Score <15)' },
     { label: 'Tier 2 Institutional', value: 28, subtext: '28% Moderate (Score 15-40)' },
@@ -111,3 +111,5 @@ export const FinanceRiskScoringPage: React.FC = () => {
     </div>
   );
 };
+
+export default FinanceRiskScoringPage;

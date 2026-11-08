@@ -12,7 +12,7 @@ interface SignupPageProps {
   onBackToLanding: () => void;
 }
 
-export const SignupPage: React.FC<SignupPageProps> = ({
+const SignupPage: React.FC<SignupPageProps> = ({
   onSignupSuccess,
   onGoToLogin,
   onBackToLanding,
@@ -297,3 +297,5 @@ export const SignupPage: React.FC<SignupPageProps> = ({
     </div>
   );
 };
+
+export default SignupPage;

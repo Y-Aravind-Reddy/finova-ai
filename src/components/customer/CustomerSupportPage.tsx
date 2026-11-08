@@ -10,7 +10,7 @@ interface CustomerSupportPageProps {
   currentUser?: UserAccount;
 }
 
-export const CustomerSupportPage: React.FC<CustomerSupportPageProps> = ({ currentUser: propUser }) => {
+const CustomerSupportPage: React.FC<CustomerSupportPageProps> = ({ currentUser: propUser }) => {
   const activeUser = propUser || getStoredSession()?.user;
   const tenantId = activeUser?.tenantId || 'tenant_apex_bank';
   const tenant = getTenantById(tenantId);
@@ -268,3 +268,5 @@ export const CustomerSupportPage: React.FC<CustomerSupportPageProps> = ({ curren
     </div>
   );
 };
+
+export default CustomerSupportPage;

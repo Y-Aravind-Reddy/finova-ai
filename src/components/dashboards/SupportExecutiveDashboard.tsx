@@ -43,7 +43,7 @@ interface SupportExecutiveDashboardProps {
   currentUser?: UserAccount;
 }
 
-export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
+const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
   currentRole,
   users,
   onUpdateUsers,
@@ -639,3 +639,5 @@ export const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps>
     </div>
   );
 };
+
+export default SupportExecutiveDashboard;

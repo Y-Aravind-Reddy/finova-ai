@@ -24,7 +24,7 @@ interface SuperAdminAuditLogsPageProps {
   };
 }
 
-export const SuperAdminAuditLogsPage: React.FC<SuperAdminAuditLogsPageProps> = ({ currentUser }) => {
+const SuperAdminAuditLogsPage: React.FC<SuperAdminAuditLogsPageProps> = ({ currentUser }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [severityFilter, setSeverityFilter] = useState('ALL');
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
@@ -225,3 +225,5 @@ export const SuperAdminAuditLogsPage: React.FC<SuperAdminAuditLogsPageProps> = (
     </div>
   );
 };
+
+export default SuperAdminAuditLogsPage;

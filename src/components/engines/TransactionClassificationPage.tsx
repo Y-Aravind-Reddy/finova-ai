@@ -26,7 +26,7 @@ interface ClassifiedTxn {
   timestamp: string;
 }
 
-export const TransactionClassificationPage: React.FC = () => {
+const TransactionClassificationPage: React.FC = () => {
   const [inputText, setInputText] = useState(
     'SWIFT GPI Outgoing Wire to Geneva Private Bank for $450,000 USD via pacs.008'
   );
@@ -248,3 +248,5 @@ export const TransactionClassificationPage: React.FC = () => {
     </div>
   );
 };
+
+export default TransactionClassificationPage;

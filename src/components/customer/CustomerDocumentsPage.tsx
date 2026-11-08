@@ -7,7 +7,7 @@ interface CustomerDocumentsPageProps {
   tenantId?: string;
 }
 
-export const CustomerDocumentsPage: React.FC<CustomerDocumentsPageProps> = ({
+const CustomerDocumentsPage: React.FC<CustomerDocumentsPageProps> = ({
   tenantId = 'tenant_apex_bank',
 }) => {
   const [docs, setDocs] = useState<CustomerDocument[]>([]);
@@ -155,3 +155,5 @@ export const CustomerDocumentsPage: React.FC<CustomerDocumentsPageProps> = ({
     </div>
   );
 };
+
+export default CustomerDocumentsPage;

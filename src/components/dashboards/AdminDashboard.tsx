@@ -21,11 +21,11 @@ import { DashboardFilterBar, DashboardFilters } from './DashboardFilterBar';
 import { ModuleSkeleton, KpiSkeleton } from './DashboardSkeletons';
 
 // Lazy load heavy intelligence modules
-const TransactionIntelligence = lazy(() => import('./intelligence/TransactionIntelligence').then(m => ({ default: m.TransactionIntelligence })));
-const FraudAMLSurveillance = lazy(() => import('./intelligence/FraudAMLSurveillance').then(m => ({ default: m.FraudAMLSurveillance })));
-const KYCCompliance = lazy(() => import('./intelligence/KYCCompliance').then(m => ({ default: m.KYCCompliance })));
-const SupportOperations = lazy(() => import('./intelligence/SupportOperations').then(m => ({ default: m.SupportOperations })));
-const AuditSecurityTrail = lazy(() => import('./intelligence/AuditSecurityTrail').then(m => ({ default: m.AuditSecurityTrail })));
+const TransactionIntelligence = lazy(() => import('./intelligence/TransactionIntelligence'));
+const FraudAMLSurveillance = lazy(() => import('./intelligence/FraudAMLSurveillance'));
+const KYCCompliance = lazy(() => import('./intelligence/KYCCompliance'));
+const SupportOperations = lazy(() => import('./intelligence/SupportOperations'));
+const AuditSecurityTrail = lazy(() => import('./intelligence/AuditSecurityTrail'));
 const InstitutionHealth = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.InstitutionHealth })));
 const RevenueAnalytics = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.RevenueAnalytics })));
 const TreasuryLiquidity = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.TreasuryLiquidity })));
@@ -34,9 +34,9 @@ const StrategicMap = lazy(() => import('./intelligence/FinalModules').then(m => 
 
 import { UserManagementModal } from '../UserManagementModal';
 import { ChangeRoleModal } from '../common/ChangeRoleModal';
-import { AdminUserManagementPage } from '../admin/AdminUserManagementPage';
-import { AdminCustomerManagementPage } from '../admin/AdminCustomerManagementPage';
-import { AdminOperationsPage } from '../admin/AdminOperationsPage';
+import AdminUserManagementPage from '../admin/AdminUserManagementPage';
+import AdminCustomerManagementPage from '../admin/AdminCustomerManagementPage';
+import AdminOperationsPage from '../admin/AdminOperationsPage';
 
 import {
   Users,
@@ -81,7 +81,7 @@ type IntelligenceModule =
   | 'system' 
   | 'strategic';
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({
+const AdminDashboard: React.FC<AdminDashboardProps> = ({
   currentRole,
   users,
   onUpdateUsers,
@@ -499,3 +499,5 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     </div>
   );
 };
+
+export default AdminDashboard;

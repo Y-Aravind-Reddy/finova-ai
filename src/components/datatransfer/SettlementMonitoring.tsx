@@ -19,7 +19,7 @@ import {
   XCircle
 } from 'lucide-react';
 
-export const SettlementMonitoring: React.FC = () => {
+const SettlementMonitoring: React.FC = () => {
   const [filters, setFilters] = useState<DataTransferFilters>({
     startDate: '',
     endDate: '',
@@ -218,3 +218,5 @@ export const SettlementMonitoring: React.FC = () => {
     </div>
   );
 };
+
+export default SettlementMonitoring;

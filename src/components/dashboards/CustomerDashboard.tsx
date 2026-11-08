@@ -20,7 +20,7 @@ import { ThreeDPieChart } from '../charts3d/ThreeDPieChart';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ThreeDProgressRing } from '../charts3d/ThreeDProgressRing';
 import { Customer3DCard } from '../Customer3DCard';
-import { CustomerCardsView } from '../CustomerCardsView';
+import CustomerCardsView from '../CustomerCardsView';
 import {
   Wallet,
   CreditCard,
@@ -57,7 +57,7 @@ interface CustomerDashboardProps {
   onNavigateSection?: (section: string) => void;
 }
 
-export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
+const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   onOpenCopilot,
   currentUser,
   activeSection = 'dashboard',
@@ -781,3 +781,5 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     </div>
   );
 };
+
+export default CustomerDashboard;

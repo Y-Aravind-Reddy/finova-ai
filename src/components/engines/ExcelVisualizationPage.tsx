@@ -22,7 +22,7 @@ import { AuditLogEntry } from '../../services/finovaDatabase';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ThreeDPieChart } from '../charts3d/ThreeDPieChart';
 
-export const ExcelVisualizationPage: React.FC = () => {
+const ExcelVisualizationPage: React.FC = () => {
   const [selectedSheet, setSelectedSheet] = useState<'finance' | 'customer' | 'admin' | 'support'>('finance');
   const [chartType, setChartType] = useState<'column' | 'pie'>('column');
   const [filterTerm, setFilterTerm] = useState('');
@@ -516,3 +516,5 @@ export const ExcelVisualizationPage: React.FC = () => {
     </div>
   );
 };
+
+export default ExcelVisualizationPage;

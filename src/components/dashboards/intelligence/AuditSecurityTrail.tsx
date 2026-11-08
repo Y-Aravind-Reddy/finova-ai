@@ -3,7 +3,7 @@ import { ThreeDAreaChart } from '../../charts3d/ThreeDAreaChart';
 import { ThreeDColumnChart } from '../../charts3d/ThreeDColumnChart';
 import { Lock, UserCheck, Shield, Globe } from 'lucide-react';
 
-export const AuditSecurityTrail: React.FC = () => {
+const AuditSecurityTrail: React.FC = () => {
   // Mocking detailed audit data for now as specific aggregate RPC for audit is not yet extensive
   const activityData = [
     { label: '00:00', value: 420 },
@@ -88,3 +88,5 @@ export const AuditSecurityTrail: React.FC = () => {
     </div>
   );
 };
+
+export default AuditSecurityTrail;

@@ -11,7 +11,7 @@ interface AdminUserManagementPageProps {
   currentUser?: UserAccount;
 }
 
-export const AdminUserManagementPage: React.FC<AdminUserManagementPageProps> = ({
+const AdminUserManagementPage: React.FC<AdminUserManagementPageProps> = ({
   users,
   onUpdateUsers,
   onRefreshUsers,
@@ -324,3 +324,5 @@ export const AdminUserManagementPage: React.FC<AdminUserManagementPageProps> = (
     </div>
   );
 };
+
+export default AdminUserManagementPage;

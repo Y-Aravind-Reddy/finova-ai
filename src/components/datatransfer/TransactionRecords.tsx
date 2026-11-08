@@ -22,7 +22,7 @@ import {
   Info
 } from 'lucide-react';
 
-export const TransactionRecords: React.FC = () => {
+const TransactionRecords: React.FC = () => {
   const [filters, setFilters] = useState<DataTransferFilters>({
     startDate: '',
     endDate: '',
@@ -323,3 +323,5 @@ export const TransactionRecords: React.FC = () => {
     </div>
   );
 };
+
+export default TransactionRecords;

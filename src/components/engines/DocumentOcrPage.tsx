@@ -24,7 +24,7 @@ interface DocumentPreset {
   confidence: number;
 }
 
-export const DocumentOcrPage: React.FC = () => {
+const DocumentOcrPage: React.FC = () => {
   const sampleDocs: DocumentPreset[] = [
     {
       id: 'doc-1',
@@ -306,3 +306,5 @@ export const DocumentOcrPage: React.FC = () => {
     </div>
   );
 };
+
+export default DocumentOcrPage;

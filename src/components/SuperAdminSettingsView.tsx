@@ -37,7 +37,7 @@ interface SuperAdminSettingsViewProps {
   initialRoleFilter?: string;
 }
 
-export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
+const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
   users,
   onUpdateUsers,
   onRefreshUsers,
@@ -666,3 +666,5 @@ export const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
     </div>
   );
 };
+
+export default SuperAdminSettingsView;

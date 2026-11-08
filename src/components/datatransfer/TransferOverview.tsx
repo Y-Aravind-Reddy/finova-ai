@@ -19,7 +19,7 @@ import {
   CreditCard
 } from 'lucide-react';
 
-export const TransferOverview: React.FC = () => {
+const TransferOverview: React.FC = () => {
   const [filters, setFilters] = useState<DataTransferFilters>({
     startDate: '',
     endDate: '',
@@ -258,3 +258,5 @@ export const TransferOverview: React.FC = () => {
     </div>
   );
 };
+
+export default TransferOverview;

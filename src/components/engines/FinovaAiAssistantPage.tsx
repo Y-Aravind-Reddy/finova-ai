@@ -35,7 +35,7 @@ interface Message {
   };
 }
 
-export const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
+const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
   currentRole,
   userName,
 }) => {
@@ -346,3 +346,5 @@ export const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
     </div>
   );
 };
+
+export default FinovaAiAssistantPage;

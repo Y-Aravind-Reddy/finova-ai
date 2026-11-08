@@ -15,7 +15,7 @@ import {
 } from '../services/finovaDatabase';
 import { CustomerTransaction, UserAccount } from '../data/finovaDatasets';
 
-export const ReportsView: React.FC = () => {
+const ReportsView: React.FC = () => {
   const [reportType, setReportType] = useState<'EXECUTIVE' | 'AML_RISK' | 'CUSTOMER_WEALTH'>(
     'EXECUTIVE'
   );
@@ -346,3 +346,5 @@ export const ReportsView: React.FC = () => {
     </div>
   );
 };
+
+export default ReportsView;

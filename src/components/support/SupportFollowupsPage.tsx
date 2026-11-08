@@ -11,7 +11,7 @@ interface FollowUpItem {
   rm: string;
 }
 
-export const SupportFollowupsPage: React.FC = () => {
+const SupportFollowupsPage: React.FC = () => {
   const [followups, setFollowups] = useState<FollowUpItem[]>([
     {
       id: 'FOL-8821',
@@ -132,3 +132,5 @@ export const SupportFollowupsPage: React.FC = () => {
     </div>
   );
 };
+
+export default SupportFollowupsPage;

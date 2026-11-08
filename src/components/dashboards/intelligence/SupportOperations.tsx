@@ -9,7 +9,7 @@ interface SupportOperationsProps {
   isLoading: boolean;
 }
 
-export const SupportOperations: React.FC<SupportOperationsProps> = ({
+const SupportOperations: React.FC<SupportOperationsProps> = ({
   aggregates,
   isLoading,
 }) => {
@@ -75,3 +75,5 @@ export const SupportOperations: React.FC<SupportOperationsProps> = ({
     </div>
   );
 };
+
+export default SupportOperations;

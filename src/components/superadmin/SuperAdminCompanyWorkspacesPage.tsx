@@ -39,7 +39,7 @@ interface SuperAdminCompanyWorkspacesPageProps {
   onInspectTenant?: (tenantId: string) => void;
 }
 
-export const SuperAdminCompanyWorkspacesPage: React.FC<SuperAdminCompanyWorkspacesPageProps> = ({
+const SuperAdminCompanyWorkspacesPage: React.FC<SuperAdminCompanyWorkspacesPageProps> = ({
   onInspectTenant,
 }) => {
   const [tenants, setTenants] = useState<TenantWorkspace[]>(getStoredTenants());
@@ -649,3 +649,5 @@ export const SuperAdminCompanyWorkspacesPage: React.FC<SuperAdminCompanyWorkspac
     </div>
   );
 };
+
+export default SuperAdminCompanyWorkspacesPage;

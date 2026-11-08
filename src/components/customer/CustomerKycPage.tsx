@@ -8,7 +8,7 @@ interface CustomerKycPageProps {
   onNavigateSection?: (section: string) => void;
 }
 
-export const CustomerKycPage: React.FC<CustomerKycPageProps> = ({
+const CustomerKycPage: React.FC<CustomerKycPageProps> = ({
   tenantId = 'tenant_apex_bank',
   onNavigateSection,
 }) => {
@@ -116,3 +116,5 @@ export const CustomerKycPage: React.FC<CustomerKycPageProps> = ({
     </div>
   );
 };
+
+export default CustomerKycPage;

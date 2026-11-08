@@ -9,7 +9,7 @@ interface KYCComplianceProps {
   isLoading: boolean;
 }
 
-export const KYCCompliance: React.FC<KYCComplianceProps> = ({
+const KYCCompliance: React.FC<KYCComplianceProps> = ({
   aggregates,
   isLoading,
 }) => {
@@ -74,3 +74,5 @@ export const KYCCompliance: React.FC<KYCComplianceProps> = ({
     </div>
   );
 };
+
+export default KYCCompliance;

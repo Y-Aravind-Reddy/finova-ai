@@ -30,7 +30,7 @@ interface SuperAdminAiConfigPageProps {
   };
 }
 
-export const SuperAdminAiConfigPage: React.FC<SuperAdminAiConfigPageProps> = ({ currentUser }) => {
+const SuperAdminAiConfigPage: React.FC<SuperAdminAiConfigPageProps> = ({ currentUser }) => {
   const [model, setModel] = useState<string>(DEFAULT_AI_CONFIGURATION.model);
   const [temperature, setTemperature] = useState<number>(DEFAULT_AI_CONFIGURATION.temperature);
   const [latencySla, setLatencySla] = useState<number>(DEFAULT_AI_CONFIGURATION.latencySla);
@@ -466,3 +466,5 @@ export const SuperAdminAiConfigPage: React.FC<SuperAdminAiConfigPageProps> = ({ 
     </div>
   );
 };
+
+export default SuperAdminAiConfigPage;

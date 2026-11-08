@@ -32,7 +32,7 @@ interface ProfileViewProps {
   onUpdateUser?: (updated: UserAccount) => void;
 }
 
-export const ProfileView: React.FC<ProfileViewProps> = ({
+const ProfileView: React.FC<ProfileViewProps> = ({
   currentRole,
   userName,
   currentUser: propUser,
@@ -428,3 +428,5 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     </div>
   );
 };
+
+export default ProfileView;

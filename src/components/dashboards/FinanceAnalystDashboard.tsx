@@ -49,7 +49,7 @@ interface FinanceAnalystDashboardProps {
   currentUser?: UserAccount;
 }
 
-export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
+const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
   currentRole,
   users,
   onUpdateUsers,
@@ -739,3 +739,5 @@ export const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = (
     </div>
   );
 };
+
+export default FinanceAnalystDashboard;
