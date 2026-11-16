@@ -15,6 +15,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { UserRole } from '../../data/finovaDatasets';
+import { supabase } from '../../lib/supabase';
 
 interface FinovaAiAssistantPageProps {
   currentRole: UserRole;
@@ -62,6 +63,50 @@ const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
 
   const [messages, setMessages] = useState<Message[]>(initialMessages);
 
+  React.useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData?.session;
+        if (!session) return;
+
+        // Fetch latest thread for this user
+        const { data: threads } = await supabase
+          .from('ai_chat_threads')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .order('updated_at', { ascending: false })
+          .limit(1);
+
+        if (threads && threads.length > 0) {
+          const latestThreadId = threads[0].id;
+          setThreadId(latestThreadId);
+
+          const { data: history } = await supabase
+            .from('ai_chat_messages')
+            .select('*')
+            .eq('thread_id', latestThreadId)
+            .order('created_at', { ascending: true });
+
+          if (history && history.length > 0) {
+            const mapped: Message[] = history.map((m: any) => ({
+              id: m.id,
+              sender: m.role === 'user' ? 'user' : 'assistant',
+              text: m.content,
+              timestamp: new Date(m.created_at).toLocaleTimeString() + ' UTC',
+              telemetry: m.telemetry,
+            }));
+            setMessages([...initialMessages, ...mapped]);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load chat history:', err);
+      }
+    };
+
+    fetchHistory();
+  }, [currentRole]);
+
   const quickPrompts = [
     {
       title: 'Portfolio Stress Test',
@@ -85,9 +130,11 @@ const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
     },
   ];
 
-  const handleSend = (textToSend?: string) => {
-    const query = textToSend || input;
-    if (!query.trim() || isGenerating) return;
+  const [threadId, setThreadId] = useState<string | null>(null);
+
+  const handleSend = async (textToSend?: string) => {
+    const query = (textToSend || input).trim();
+    if (!query || isGenerating) return;
 
     const userMsg: Message = {
       id: `msg-${Date.now()}`,
@@ -100,35 +147,70 @@ const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
     setInput('');
     setIsGenerating(true);
 
-    setTimeout(() => {
-      let reply = '';
-      if (query.toLowerCase().includes('stress') || query.toLowerCase().includes('monte carlo')) {
-        reply = `**FINOVA CAPITAL STRESS TEST TELEMETRY (CONFIDENCE 99.4%):**\n\n• **Simulated Shock:** +150 bps sudden rate steepening across USD/CHF sovereign yields.\n• **Portfolio Delta:** Fixed-income custody duration exhibits -2.14% mark-to-market variance, offset by +3.82% yield reinvestment accretion.\n• **Liquidity Coverage Ratio (LCR):** 168.4% (Comfortably exceeding Basel III 100% threshold).\n• **Recommended Action:** Allocate $14.5M USD from overnight repos into short-duration Treasury bills (maturity <90 days) to lock in peak nominal curve spread.`;
-      } else if (query.toLowerCase().includes('aml') || query.toLowerCase().includes('structuring')) {
-        reply = `**FORENSIC SURVEILLANCE REPORT (SENTINEL AML ENGINE):**\n\n• **Scanned Wire Records:** 1,420 cross-border transfers evaluated.\n• **Flagged Entities:** Detected 1 micro-structuring cluster under Account #FNV-CUST-9104 (Aegis Offshore Holdings Ltd) with 3 transfers of $9,850 USD spaced by 42 minutes.\n• **Risk Assessment:** High Probability of Rule 103 (Bank Secrecy Act Structuring Threshold).\n• **Disposition:** Automatic escrow hold placed on settlement relay. Case file forwarded to Julian Thorne (Lead AML Analyst) for FINMA SAR filing.`;
-      } else if (query.toLowerCase().includes('fednow') || query.toLowerCase().includes('settlement')) {
-        reply = `**FEDNOW & SWIFT GPI INSTANT SETTLEMENT STATUS:**\n\n• **Throughput:** 48,200 messages processed today with 0.0001% rejection rate.\n• **Validation Standard:** ISO 20022 pacs.008.001.09 compliant with zero XML schema faults.\n• **Settlement Latency:** Average 1.84 seconds end-to-end clearing.\n• **Total Intraday Liquidity Inflow:** $184,200,000 USD successfully matched with central bank reserve accounts.`;
-      } else {
-        reply = `**FINOVA COGNITIVE SYNTHESIS FOR ${userName.toUpperCase()}:**\n\nBased on your institutional query, Finova AI Sentinel analyzed recent telemetry across your permissions.\n\n• **Key Finding:** All monitored parameters are nominal. Core reserve ratios maintain full solvency backing.\n• **Real-Time Data:** Operating Vault Yield is currently 5.18% APY with sovereign tier 3 guarantees.\n• **Compliance Integrity:** No unauthorized credential leaks or authentication discrepancies detected.`;
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const session = sessionData?.session;
+
+      if (!session) {
+        throw new Error('Institutional session required. Please re-authenticate.');
+      }
+
+      const startTime = Date.now();
+      const { data, error } = await supabase.functions.invoke('finova-ai-chat', {
+        body: {
+          message: query,
+          thread_id: threadId,
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (error) {
+        let details = error.message;
+        try {
+          const errorContext = (error as any).context;
+          if (errorContext && typeof errorContext.json === 'function') {
+            const body = await errorContext.json();
+            details = body.details || body.error || details;
+          }
+        } catch (e) {
+          console.warn('Could not extract granular error metadata', e);
+        }
+        throw new Error(details);
+      }
+
+      if (data.thread_id) {
+        setThreadId(data.thread_id);
       }
 
       const aiMsg: Message = {
         id: `msg-${Date.now() + 1}`,
         sender: 'assistant',
-        text: reply,
+        text: data.answer || 'Finova AI encountered a synchronization anomaly.',
         timestamp: new Date().toLocaleTimeString() + ' UTC',
         telemetry: {
-          model: 'Finova-Sentinel-Ultra-4.2',
-          latencyMs: Math.floor(180 + Math.random() * 90),
-          tokensPrompt: Math.floor(120 + Math.random() * 40),
-          tokensCompletion: Math.floor(180 + Math.random() * 60),
-          groundingConfidence: 99.7,
+          model: data.model || 'Gemini 3.8 Flash',
+          latencyMs: data.latencyMs || (Date.now() - startTime),
+          tokensPrompt: data.usage?.promptTokenCount || 0,
+          tokensCompletion: data.usage?.candidatesTokenCount || 0,
+          groundingConfidence: data.citations?.length > 0 ? 99.8 : 85.0,
         },
       };
 
       setMessages((prev) => [...prev, aiMsg]);
+    } catch (err: any) {
+      console.error('AI Assistant Subsystem Error:', err);
+      const errMsg: Message = {
+        id: `msg-err-${Date.now()}`,
+        sender: 'assistant',
+        text: `**SECURITY ALERT / SYSTEM ERROR:** ${err.message || 'The neural link was interrupted.'}`,
+        timestamp: new Date().toLocaleTimeString() + ' UTC',
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    } finally {
       setIsGenerating(false);
-    }, 900);
+    }
   };
 
   const handleCopy = (id: string, text: string) => {

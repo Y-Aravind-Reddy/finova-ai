@@ -26,11 +26,11 @@ const FraudAMLSurveillance = lazy(() => import('./intelligence/FraudAMLSurveilla
 const KYCCompliance = lazy(() => import('./intelligence/KYCCompliance'));
 const SupportOperations = lazy(() => import('./intelligence/SupportOperations'));
 const AuditSecurityTrail = lazy(() => import('./intelligence/AuditSecurityTrail'));
-const InstitutionHealth = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.InstitutionHealth })));
-const RevenueAnalytics = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.RevenueAnalytics })));
-const TreasuryLiquidity = lazy(() => import('./intelligence/BatchModules').then(m => ({ default: m.TreasuryLiquidity })));
-const SystemHealth = lazy(() => import('./intelligence/FinalModules').then(m => ({ default: m.SystemHealth })));
-const StrategicMap = lazy(() => import('./intelligence/FinalModules').then(m => ({ default: m.StrategicMap })));
+const InstitutionHealth = lazy(() => import('./intelligence/InstitutionHealth'));
+const RevenueAnalytics = lazy(() => import('./intelligence/RevenueAnalytics'));
+const TreasuryLiquidity = lazy(() => import('./intelligence/TreasuryLiquidity'));
+const SystemHealth = lazy(() => import('./intelligence/SystemHealth'));
+const StrategicMap = lazy(() => import('./intelligence/StrategicMap'));
 
 import { UserManagementModal } from '../UserManagementModal';
 import { ChangeRoleModal } from '../common/ChangeRoleModal';

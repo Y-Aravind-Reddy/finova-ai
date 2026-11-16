@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FinovaLogo } from './FinovaLogo';
 import { UserRole } from '../data/finovaDatasets';
+import { supabase } from '../lib/supabase';
 
 interface FinovaAiCopilotProps {
   currentRole: UserRole;
@@ -38,6 +39,53 @@ export const FinovaAiCopilot: React.FC<FinovaAiCopilotProps> = ({
   ]);
   const [inputQuery, setInputQuery] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [threadId, setThreadId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    const fetchHistory = async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData?.session;
+        if (!session) return;
+
+        const { data: threads } = await supabase
+          .from('ai_chat_threads')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .order('updated_at', { ascending: false })
+          .limit(1);
+
+        if (threads && threads.length > 0) {
+          const latestThreadId = threads[0].id;
+          setThreadId(latestThreadId);
+
+          const { data: history } = await supabase
+            .from('ai_chat_messages')
+            .select('*')
+            .eq('thread_id', latestThreadId)
+            .order('created_at', { ascending: true });
+
+          if (history && history.length > 0) {
+            const initialAiMessage = messages[0];
+            const mapped: ChatMessage[] = history.map((m: any) => ({
+              id: m.id,
+              sender: m.role === 'user' ? 'user' : 'ai',
+              text: m.content,
+              timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              insights: m.telemetry?.rag ? [{ label: 'Sources', value: String(m.telemetry.rag.chunk_count) }] : undefined,
+            }));
+            setMessages([initialAiMessage, ...mapped]);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load copilot history:', err);
+      }
+    };
+
+    fetchHistory();
+  }, [isOpen, currentRole]);
 
   const QUICK_PROMPTS = [
     'Analyze high-risk AML flagged transactions',
@@ -46,9 +94,10 @@ export const FinovaAiCopilot: React.FC<FinovaAiCopilotProps> = ({
     'Institutional revenue growth projection',
   ];
 
-  const handleSend = (textToSend?: string) => {
+
+  const handleSend = async (textToSend?: string) => {
     const query = (textToSend || inputQuery).trim();
-    if (!query) return;
+    if (!query || isTyping) return;
 
     const userMsg: ChatMessage = {
       id: `usr-${Date.now()}`,
@@ -61,74 +110,68 @@ export const FinovaAiCopilot: React.FC<FinovaAiCopilotProps> = ({
     setInputQuery('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      let reply = '';
-      let insights: { label: string; value: string }[] | undefined;
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const session = sessionData?.session;
 
-      const qLower = query.toLowerCase();
+      if (!session) {
+        throw new Error('Institutional session required. Please sign in.');
+      }
 
-      if (qLower.includes('risk') || qLower.includes('aml') || qLower.includes('fraud')) {
-        reply = `Forensic Analysis & Risk Telemetry:
-• PostgreSQL Fraud Cases: Active multi-hop velocity monitoring and international sanction IP screening.
-• Escrow Governance: High-risk wires exceeding institutional thresholds are routed to the dual-key authorization queue.
-• Model Status: Sentinel AML engine active with automated risk scoring.`;
-        insights = [
-          { label: 'Subsystem', value: 'AML Sentinel' },
-          { label: 'Status', value: 'Active' },
-          { label: 'Enforcement', value: 'Strict RLS' },
-        ];
-      } else if (qLower.includes('credit') || qLower.includes('wealth') || qLower.includes('customer')) {
-        reply = `Private Wealth Custody Dossier:
-• Account Verification: Sovereign Tier 3 KYC verification status active.
-• Settlement Rails: SWIFT GPI, FedNow, and SEPA Instant settlement integration.
-• Data Source: Scoped customer query against verified database tables.`;
-        insights = [
-          { label: 'Vault Status', value: 'Encrypted' },
-          { label: 'Verification', value: 'Compliant' },
-          { label: 'Currency Base', value: 'USD Base' },
-        ];
-      } else if (qLower.includes('sla') || qLower.includes('ticket') || qLower.includes('support')) {
-        reply = `Support Concierge Telemetry:
-• Inquiry Management: Real-time ticket routing with dedicated private wealth response tiers.
-• SLA Monitoring: Automatic escalation triggers for urgent wire callbacks and card locks.
-• Protocol: Secure institutional ticket logging with audit trails.`;
-        insights = [
-          { label: 'Queue Status', value: 'Nominal' },
-          { label: 'SLA Guard', value: 'Enforced' },
-          { label: 'Escalations', value: 'Active' },
-        ];
-      } else if (qLower.includes('revenue') || qLower.includes('growth') || qLower.includes('admin')) {
-        reply = `Executive System Health:
-• Database Connection: Live Supabase PostgreSQL connection with unpaginated financial aggregation.
-• Security & Isolation: Multi-tenant row level security with strict tenant scoping.
-• High Availability: Multi-region failover across European and North American vault clusters.`;
-        insights = [
-          { label: 'Database', value: 'Connected' },
-          { label: 'Latency', value: '22ms' },
-          { label: 'Architecture', value: 'Multi-Tenant' },
-        ];
-      } else {
-        reply = `Finova AI Synthesis: Operating under strict regulatory standards with verified database queries.
+      const startTime = Date.now();
+      const { data, error } = await supabase.functions.invoke('finova-ai-chat', {
+        body: {
+          message: query,
+          thread_id: threadId,
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
 
-Key Observation: System health is nominal. Database transactions and security events are verified with SHA-256 integrity hashing and row level security policies. Please specify if you require transaction tracing, compliance auditing, or portfolio allocation review.`;
-        insights = [
-          { label: 'Engine', value: 'Finova Sentinel' },
-          { label: 'Integrity', value: '100% Verified' },
-          { label: 'Base Currency', value: 'USD' },
-        ];
+      if (error) {
+        let details = error.message;
+        try {
+          const errorContext = (error as any).context;
+          if (errorContext && typeof errorContext.json === 'function') {
+            const body = await errorContext.json();
+            details = body.details || body.error || details;
+          }
+        } catch (e) {
+          console.warn('Could not extract copilot error metadata', e);
+        }
+        throw new Error(details);
+      }
+
+      if (data.thread_id) {
+        setThreadId(data.thread_id);
       }
 
       const aiMsg: ChatMessage = {
         id: `ai-${Date.now()}`,
         sender: 'ai',
-        text: reply,
+        text: data.answer || 'Finova AI encountered a synchronization anomaly.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        insights,
+        insights: [
+          { label: 'Intelligence', value: data.model || 'Gemini 3.8' },
+          { label: 'Latency', value: `${data.latencyMs || (Date.now() - startTime)}ms` },
+          { label: 'Grounding', value: String(data.citations?.length || 0) },
+        ],
       };
 
       setMessages((prev) => [...prev, aiMsg]);
+    } catch (err: any) {
+      console.error('Copilot Critical Error:', err);
+      const errMsg: ChatMessage = {
+        id: `ai-err-${Date.now()}`,
+        sender: 'ai',
+        text: `**SECURITY ALERT:** ${err.message || 'The neural link was interrupted.'}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    } finally {
       setIsTyping(false);
-    }, 600);
+    }
   };
 
   if (!isOpen) return null;
