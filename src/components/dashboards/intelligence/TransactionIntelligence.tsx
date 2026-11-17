@@ -3,7 +3,7 @@ import { ThreeDAreaChart } from '../../charts3d/ThreeDAreaChart';
 import { ThreeDDonutChart } from '../../charts3d/ThreeDDonutChart';
 import { ThreeDColumnChart } from '../../charts3d/ThreeDColumnChart';
 import { TransactionAggregates } from '../../../services/finovaDatabase';
-import { TrendingUp, DollarSign, Activity, Globe } from 'lucide-react';
+import { Activity, AlertTriangle } from 'lucide-react';
 
 interface TransactionIntelligenceProps {
   aggregates: TransactionAggregates;
@@ -41,7 +41,13 @@ const TransactionIntelligence: React.FC<TransactionIntelligenceProps> = ({
   }, [aggregates.topMerchants]);
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${isLoading ? 'opacity-70 transition-opacity' : ''}`}>
+      {aggregates.error && (
+        <div className="rounded-xl p-3.5 bg-amber-950/50 border border-amber-500/40 text-amber-200 flex items-center gap-2 text-xs">
+          <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+          <span>Transaction Telemetry Notice: {aggregates.error}</span>
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ThreeDAreaChart
           title="3D Settlement Velocity"

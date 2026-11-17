@@ -8,11 +8,6 @@ import {
   CustomerDocument,
 } from '../data/finovaDatasets';
 import {
-  getTransactionsForTenant,
-  getFraudTransactionsForTenant,
-  getTicketsForTenant,
-} from '../data/tenantDatasets';
-import {
   TenantWorkspace,
   getStoredTenants,
   getTenantById,
@@ -27,8 +22,11 @@ export type QueryResultState =
   | 'live_records'
   | 'zero_records'
   | 'demo_session_rls'
+  | 'restricted'
   | 'query_error'
   | 'unconfigured';
+
+export type TelemetryNodeStatus = 'OPERATIONAL' | 'DEGRADED' | 'RESTRICTED' | 'UNAVAILABLE';
 
 export interface QueryFilterOptions {
   page?: number;
@@ -61,6 +59,7 @@ export interface KycAggregates {
   docTypeDistribution: { label: string; value: number }[];
   source: 'supabase' | 'fallback';
   state: QueryResultState;
+  error?: string | null;
   isPartial: boolean;
   rejectedRecordsCount: number;
 }
@@ -74,6 +73,90 @@ export interface PlatformExecutiveKpis {
   activeUsers: number;
   netLiquidBalance: number;
   riskExposureScore: number;
+  source?: 'supabase' | 'error' | 'unconfigured';
+  state?: QueryResultState;
+  error?: string | null;
+}
+
+export function isPermissionDeniedError(err: unknown): boolean {
+  if (!err) return false;
+  const anyErr = err as Record<string, any>;
+  const code = String(anyErr?.code || '').toUpperCase();
+  const status = Number(anyErr?.status || 0);
+  const msg = String(anyErr?.message || (typeof err === 'string' ? err : '')).toLowerCase();
+  return (
+    code === '42501' ||
+    code === 'PGRST301' ||
+    status === 401 ||
+    status === 403 ||
+    msg.includes('permission denied') ||
+    msg.includes('access denied') ||
+    msg.includes('row-level security') ||
+    msg.includes('insufficient privilege') ||
+    msg.includes('unauthorized')
+  );
+}
+
+export function classifyErrorState(err: unknown, hasAuthSession: boolean): QueryResultState {
+  if (isPermissionDeniedError(err)) {
+    return hasAuthSession ? 'restricted' : 'demo_session_rls';
+  }
+  return 'query_error';
+}
+
+export function canRoleAccessFraudTelemetry(role?: UserRole | string | null): boolean {
+  return role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'FINANCE_ANALYST';
+}
+
+export function canRoleAccessInstitutionalKyc(role?: UserRole | string | null): boolean {
+  return role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'FINANCE_ANALYST' || role === 'SUPPORT_EXECUTIVE';
+}
+
+export function canRoleAccessSupportTelemetry(role?: UserRole | string | null): boolean {
+  return role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'SUPPORT_EXECUTIVE';
+}
+
+export function mapResultStateToTelemetryStatus(
+  state?: QueryResultState,
+  source?: 'supabase' | 'fallback' | 'error' | 'unconfigured',
+  isLoading?: boolean
+): TelemetryNodeStatus {
+  if (state === 'restricted' || state === 'demo_session_rls') return 'RESTRICTED';
+  if (state === 'unconfigured' || source === 'unconfigured') return 'UNAVAILABLE';
+  if (state === 'query_error' || source === 'error') return 'DEGRADED';
+  if (source === 'supabase' && (state === 'live_records' || state === 'zero_records')) return 'OPERATIONAL';
+  if (isLoading) return 'OPERATIONAL';
+  return 'DEGRADED';
+}
+
+function getActiveSessionRole(clientOverride?: any): UserRole | null {
+  if (clientOverride !== undefined) return null;
+  try {
+    const sess = getStoredSession();
+    return sess?.user?.role || null;
+  } catch {
+    return null;
+  }
+}
+
+async function shouldSkipUnauthenticatedQuery(client: any, clientOverride?: any): Promise<boolean> {
+  if (clientOverride !== undefined && !client?.auth?.getSession) {
+    return false;
+  }
+  const hasSession = await checkHasSupabaseAuthSession(client);
+  return !hasSession;
+}
+
+function isMissingRpcError(err: any): boolean {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    code === '42883' ||
+    code === 'PGRST202' ||
+    msg.includes('could not find the function') ||
+    (msg.includes('function') && msg.includes('does not exist'))
+  );
 }
 
 export interface DatabaseQueryResult<T> {
@@ -212,6 +295,29 @@ export async function fetchTransactionsResultFromDb(
     };
   }
 
+  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+    const notice = 'Authentication required: Active Supabase Auth session needed to query transactions.';
+    databaseStatusStore.transactions = {
+      source: 'fallback',
+      error: notice,
+      state: 'demo_session_rls',
+      details: 'Postgres RLS restricts unauthenticated queries. Sign in with an authenticated session to view ledger telemetry.',
+    };
+    return {
+      data: [],
+      source: 'fallback',
+      error: notice,
+      count: 0,
+      totalCount: 0,
+      state: 'demo_session_rls',
+      details: 'Postgres RLS restricts unauthenticated queries to 0 rows.',
+      hasAuthSession: false,
+      page,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
   try {
     const buildQuery = (q: any) => {
       let filtered = q.order('date', { ascending: false });
@@ -253,11 +359,13 @@ export async function fetchTransactionsResultFromDb(
 
     // Check for query execution / permission errors
     if (error) {
+      const hasSession = await checkHasSupabaseAuthSession(client);
+      const errState = classifyErrorState(error, hasSession);
       const errorMsg = `${error.code || 'ERR'}: ${error.message || 'Database query failed'}`;
       databaseStatusStore.transactions = {
         source: 'fallback',
         error: errorMsg,
-        state: 'query_error',
+        state: errState,
         details: error.message,
       };
       return {
@@ -266,9 +374,9 @@ export async function fetchTransactionsResultFromDb(
         error: errorMsg,
         count: 0,
         totalCount: 0,
-        state: 'query_error',
+        state: errState,
         details: `Supabase query failed: ${error.message}`,
-        hasAuthSession: false,
+        hasAuthSession: hasSession,
         page,
         pageSize,
         totalPages: 1,
@@ -355,32 +463,18 @@ export async function fetchTransactionsResultFromDb(
       };
     }
 
-    // When unauthenticated, provide tenant-isolated baseline transactions with verified INR conversions
-    const fallbackList = getTransactionsForTenant(tenantId).map((t) => {
-      const rawCurr = (t.currency || (tenantId === 'tenant_crest_capital' ? 'GBP' : tenantId === 'tenant_vanguard_wealth' || tenantId === 'tenant_solaris_credit' ? 'EUR' : 'INR')).toUpperCase();
-      const conv = convertToInr(t.amount, rawCurr);
-      return {
-        ...t,
-        currency: rawCurr,
-        amountInr: conv.amountInr,
-        amountUsd: conv.amountUsd,
-        exchangeRate: conv.exchangeRate,
-        exchangeRateDate: conv.effectiveDate,
-      };
-    });
-
     return {
-      data: fallbackList,
+      data: [],
       source: 'fallback',
       error: notice,
-      count: fallbackList.length,
-      totalCount: 52000, // Verified database evidence count
+      count: 0,
+      totalCount: 0,
       state: 'demo_session_rls',
-      details: 'Postgres RLS restricts unauthenticated queries to 0 rows. Displaying verified institutional dataset baseline (Total: 52,000 transactions).',
+      details: 'Postgres RLS restricts unauthenticated queries to 0 rows. Sign in with an authenticated Supabase session to view institutional transactions.',
       hasAuthSession: false,
       page,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(52000 / pageSize)),
+      totalPages: 1,
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Network error querying Supabase';
@@ -435,28 +529,52 @@ export interface TransactionAggregates {
   typeBreakdown?: Record<string, { count: number; volumeInr: number }>;
   statusBreakdown?: Record<string, { count: number; volumeInr: number }>;
   topMerchants?: { merchant: string; count: number; volumeInr: number }[];
+  unconvertedCount?: number;
+  unconvertedVolumeOriginal?: number;
+  hasUnconvertedRecords?: boolean;
   source: 'supabase' | 'fallback';
   state: QueryResultState;
+  error?: string | null;
   hasAuthSession: boolean;
   reportingBaseCurrency: 'INR';
   isPartial: boolean;
   rejectedRecordsCount: number;
 }
 
-// Deterministic 30-day daily transaction volume series for 52,000 transaction dataset
-function getBaselineTransactionVolumeByDay(): { date: string; volumeInr: number; count: number }[] {
-  const result: { date: string; volumeInr: number; count: number }[] = [];
-  const now = new Date();
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now.getTime() - i * 86400000);
-    const dateStr = d.toISOString().split('T')[0];
-    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-    const baseTx = isWeekend ? 650 : 2100;
-    const count = baseTx + ((i * 137) % 450);
-    const volumeInr = Math.round(count * (58000 + ((i * 1940) % 18000)));
-    result.push({ date: dateStr, volumeInr, count });
-  }
-  return result;
+function emptyTransactionAggregates(
+  state: QueryResultState,
+  error: string | null,
+  hasAuthSession: boolean = false
+): TransactionAggregates {
+  return {
+    totalCount: 0,
+    settledCount: 0,
+    settledVolumeInr: 0,
+    settledVolumeUsd: 0,
+    settledVolumeOriginal: 0,
+    creditsVolumeInr: 0,
+    creditsVolumeUsd: 0,
+    debitsVolumeInr: 0,
+    debitsVolumeUsd: 0,
+    netLiquidBalanceInr: 0,
+    netLiquidBalanceUsd: 0,
+    volumeByCurrency: {},
+    volumeByDay: [],
+    categoryBreakdown: {},
+    typeBreakdown: {},
+    statusBreakdown: {},
+    topMerchants: [],
+    unconvertedCount: 0,
+    unconvertedVolumeOriginal: 0,
+    hasUnconvertedRecords: false,
+    source: 'fallback',
+    state,
+    error,
+    hasAuthSession,
+    reportingBaseCurrency: 'INR',
+    isPartial: false,
+    rejectedRecordsCount: 0,
+  };
 }
 
 /**
@@ -472,26 +590,19 @@ export async function fetchTransactionAggregatesResultFromDb(
   const configured = clientOverride !== undefined ? Boolean(clientOverride) : isSupabaseConfigured();
 
   if (!configured || !client) {
-    return {
-      totalCount: 0,
-      settledCount: 0,
-      settledVolumeInr: 0,
-      settledVolumeUsd: 0,
-      settledVolumeOriginal: 0,
-      creditsVolumeInr: 0,
-      creditsVolumeUsd: 0,
-      debitsVolumeInr: 0,
-      debitsVolumeUsd: 0,
-      netLiquidBalanceInr: 0,
-      netLiquidBalanceUsd: 0,
-      volumeByCurrency: {},
-      source: 'fallback',
-      state: 'unconfigured',
-      hasAuthSession: false,
-      reportingBaseCurrency: 'INR',
-      isPartial: false,
-      rejectedRecordsCount: 0,
-    };
+    return emptyTransactionAggregates(
+      'unconfigured',
+      'Supabase client is not configured (missing URL or anon key).',
+      false
+    );
+  }
+
+  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+    return emptyTransactionAggregates(
+      'demo_session_rls',
+      'Authentication required: Active Supabase Auth session needed for transaction aggregates.',
+      false
+    );
   }
 
   // 1. Attempt PostgreSQL server-side RPC aggregate function
@@ -510,7 +621,7 @@ export async function fetchTransactionAggregatesResultFromDb(
     if (!rpcError && rpcData && typeof rpcData === 'object' && 'totalCount' in rpcData) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
       const usdRate = 84.070000;
-      
+
       const settledVolumeInr = rpcData.settledVolumeInr !== undefined
         ? Number(rpcData.settledVolumeInr) || 0
         : Math.round((Number(rpcData.settledVolumeUsd) || 0) * usdRate * 100) / 100;
@@ -535,7 +646,9 @@ export async function fetchTransactionAggregatesResultFromDb(
       const netLiquidBalanceInr = rpcData.netLiquidBalanceInr !== undefined
         ? Number(rpcData.netLiquidBalanceInr) || 0
         : Math.round((creditsVolumeInr - debitsVolumeInr) * 100) / 100;
-      const netLiquidBalanceUsd = Math.round((netLiquidBalanceInr / usdRate) * 100) / 100;
+      const netLiquidBalanceUsd = rpcData.netLiquidBalanceUsd !== undefined
+        ? Number(rpcData.netLiquidBalanceUsd) || 0
+        : Math.round((netLiquidBalanceInr / usdRate) * 100) / 100;
 
       return {
         totalCount: Number(rpcData.totalCount) || 0,
@@ -550,26 +663,44 @@ export async function fetchTransactionAggregatesResultFromDb(
         netLiquidBalanceInr,
         netLiquidBalanceUsd,
         volumeByCurrency: rpcData.volumeByCurrency || {},
-        volumeByDay: rpcData.volumeByDay,
-        categoryBreakdown: rpcData.categoryBreakdown,
-        typeBreakdown: rpcData.typeBreakdown,
-        statusBreakdown: rpcData.statusBreakdown,
-        topMerchants: rpcData.topMerchants,
+        volumeByDay: Array.isArray(rpcData.volumeByDay) ? rpcData.volumeByDay : [],
+        categoryBreakdown: rpcData.categoryBreakdown || {},
+        typeBreakdown: rpcData.typeBreakdown || {},
+        statusBreakdown: rpcData.statusBreakdown || {},
+        topMerchants: Array.isArray(rpcData.topMerchants) ? rpcData.topMerchants : [],
+        unconvertedCount: Number(rpcData.unconvertedCount) || 0,
+        unconvertedVolumeOriginal: Number(rpcData.unconvertedVolumeOriginal) || 0,
+        hasUnconvertedRecords: Boolean(rpcData.hasUnconvertedRecords),
         source: 'supabase',
         state: (Number(rpcData.totalCount) > 0) ? 'live_records' : (hasAuthSession ? 'zero_records' : 'demo_session_rls'),
+        error: null,
         hasAuthSession,
         reportingBaseCurrency: 'INR',
         isPartial: Boolean(rpcData.isPartial),
         rejectedRecordsCount: Number(rpcData.rejectedRecordsCount) || 0,
       };
     }
-  } catch {
-    // Fall through to chunked client aggregation
+
+    if (rpcError && !isMissingRpcError(rpcError)) {
+      const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      return emptyTransactionAggregates(
+        classifyErrorState(rpcError, hasAuthSession),
+        rpcError.message || 'Transaction aggregate RPC failed.',
+        hasAuthSession
+      );
+    }
+  } catch (err: any) {
+    const hasAuthSession = await checkHasSupabaseAuthSession(client);
+    return emptyTransactionAggregates(
+      classifyErrorState(err, hasAuthSession),
+      err?.message || 'Unexpected error invoking get_transaction_aggregates.',
+      hasAuthSession
+    );
   }
 
-  // 2. Resilient Chunked Batch Fetch (guarantees retrieval beyond PostgREST 1,000-row limit)
+  // 2. Fallback Chunked Batch Fetch ONLY when RPC is absent in target database
   try {
-    const MAX_FALLBACK_ROWS = 2000; // Limit client-side aggregation to prevent browser hangs
+    const MAX_FALLBACK_ROWS = 2000;
     const CHUNK_SIZE = 1000;
     let offset = 0;
     let allRows: any[] = [];
@@ -622,7 +753,14 @@ export async function fetchTransactionAggregatesResultFromDb(
 
     const hasAuthSession = await checkHasSupabaseAuthSession(client);
 
-    // If query returned live rows, compute comprehensive dynamic breakdowns
+    if (lastQueryError) {
+      return emptyTransactionAggregates(
+        classifyErrorState(lastQueryError, hasAuthSession),
+        lastQueryError.message || 'Database query failed while loading transactions.',
+        hasAuthSession
+      );
+    }
+
     if (allRows.length > 0) {
       let settledCount = 0;
       let settledVolumeInr = 0;
@@ -666,30 +804,25 @@ export async function fetchTransactionAggregatesResultFromDb(
           debitsVolumeInr += conv.amountInr;
         }
 
-        // Category breakdown
         const cat = row.category || 'Securities & Equities';
         if (!categoryBreakdown[cat]) categoryBreakdown[cat] = { count: 0, volumeInr: 0 };
         categoryBreakdown[cat].count += 1;
         categoryBreakdown[cat].volumeInr += conv.amountInr;
 
-        // Type breakdown
         const typeLabel = tyUpper === 'CREDIT' ? 'Credit' : 'Debit';
         if (!typeBreakdown[typeLabel]) typeBreakdown[typeLabel] = { count: 0, volumeInr: 0 };
         typeBreakdown[typeLabel].count += 1;
         typeBreakdown[typeLabel].volumeInr += conv.amountInr;
 
-        // Status breakdown
         if (!statusBreakdown[st]) statusBreakdown[st] = { count: 0, volumeInr: 0 };
         statusBreakdown[st].count += 1;
         statusBreakdown[st].volumeInr += conv.amountInr;
 
-        // Merchant breakdown
         const merch = row.merchant || 'Institutional Wire';
         if (!merchantMap[merch]) merchantMap[merch] = { count: 0, volumeInr: 0 };
         merchantMap[merch].count += 1;
         merchantMap[merch].volumeInr += conv.amountInr;
 
-        // Day breakdown
         const dStr = row.date || 'Unknown';
         if (dStr === 'Unknown') {
           rejected++;
@@ -736,8 +869,12 @@ export async function fetchTransactionAggregatesResultFromDb(
         typeBreakdown,
         statusBreakdown,
         topMerchants,
+        unconvertedCount: 0,
+        unconvertedVolumeOriginal: 0,
+        hasUnconvertedRecords: false,
         source: 'supabase',
         state: 'live_records',
+        error: null,
         hasAuthSession,
         reportingBaseCurrency: 'INR',
         isPartial: allRows.length >= MAX_FALLBACK_ROWS,
@@ -745,106 +882,24 @@ export async function fetchTransactionAggregatesResultFromDb(
       };
     }
 
-    // Authenticated user query returned 0 rows (genuine empty state)
     if (hasAuthSession) {
       return {
-        totalCount: 0,
-        settledCount: 0,
-        settledVolumeInr: 0,
-        settledVolumeUsd: 0,
-        settledVolumeOriginal: 0,
-        creditsVolumeInr: 0,
-        creditsVolumeUsd: 0,
-        debitsVolumeInr: 0,
-        debitsVolumeUsd: 0,
-        netLiquidBalanceInr: 0,
-        netLiquidBalanceUsd: 0,
-        volumeByCurrency: {},
+        ...emptyTransactionAggregates('zero_records', null, true),
         source: 'supabase',
-        state: 'zero_records',
-        hasAuthSession: true,
-        reportingBaseCurrency: 'INR',
-        isPartial: false,
-        rejectedRecordsCount: 0,
       };
     }
 
-    // When unauthenticated, return verified database evidence aggregates (52,000 transactions, Apex Global Bank)
-    const baselineVolumeByDay = getBaselineTransactionVolumeByDay();
-    const usdRate = 84.070000;
-    const settledVolumeInr = 324850000;
-    const creditsVolumeInr = 175200000;
-    const debitsVolumeInr = 149650000;
-    const netLiquidBalanceInr = 25550000;
-
-    return {
-      totalCount: 52000,
-      settledCount: 48250,
-      settledVolumeInr,
-      settledVolumeUsd: Math.round((settledVolumeInr / usdRate) * 100) / 100,
-      settledVolumeOriginal: 3864000, // USD original equivalent
-      creditsVolumeInr,
-      creditsVolumeUsd: Math.round((creditsVolumeInr / usdRate) * 100) / 100,
-      debitsVolumeInr,
-      debitsVolumeUsd: Math.round((debitsVolumeInr / usdRate) * 100) / 100,
-      netLiquidBalanceInr,
-      netLiquidBalanceUsd: Math.round((netLiquidBalanceInr / usdRate) * 100) / 100,
-      volumeByCurrency: {
-        INR: { original: settledVolumeInr, inr: settledVolumeInr, usd: Math.round(settledVolumeInr / usdRate), rate: 1.0, effectiveDate: new Date().toISOString().split('T')[0] },
-      },
-      volumeByDay: baselineVolumeByDay,
-      categoryBreakdown: {
-        'Securities & Equities': { count: 19760, volumeInr: 123443000 },
-        'Private Equity': { count: 13520, volumeInr: 84461000 },
-        'Prime Real Estate': { count: 9360, volumeInr: 58473000 },
-        'Treasury & Yield': { count: 6240, volumeInr: 38982000 },
-        'Structured Trade Finance': { count: 3120, volumeInr: 19491000 },
-      },
-      typeBreakdown: {
-        'Credit': { count: 27040, volumeInr: 175200000 },
-        'Debit': { count: 24960, volumeInr: 149650000 },
-      },
-      statusBreakdown: {
-        'Settled': { count: 48250, volumeInr: 301460000 },
-        'Escrow Secured': { count: 2180, volumeInr: 15840000 },
-        'Clearing': { count: 1570, volumeInr: 7550000 },
-      },
-      topMerchants: [
-        { merchant: 'Goldman Sachs Prime', count: 12480, volumeInr: 78200000 },
-        { merchant: 'Blackstone Operations', count: 10400, volumeInr: 64900000 },
-        { merchant: "Sotheby's Escrow", count: 8320, volumeInr: 52000000 },
-        { merchant: 'US Treasury Direct', count: 7280, volumeInr: 45500000 },
-        { merchant: 'JP Morgan Institutional', count: 6760, volumeInr: 42200000 },
-        { merchant: 'UBS Securities Zurich', count: 6760, volumeInr: 42050000 },
-      ],
-      source: 'fallback',
-      state: 'demo_session_rls',
-      hasAuthSession: false,
-      reportingBaseCurrency: 'INR',
-      isPartial: false,
-      rejectedRecordsCount: 0,
-    };
-  } catch (err) {
-    return {
-      totalCount: 52000,
-      settledCount: 48250,
-      settledVolumeInr: 324850000,
-      settledVolumeUsd: Math.round(324850000 / 84.07),
-      settledVolumeOriginal: 3864000,
-      creditsVolumeInr: 175200000,
-      creditsVolumeUsd: Math.round(175200000 / 84.07),
-      debitsVolumeInr: 149650000,
-      debitsVolumeUsd: Math.round(149650000 / 84.07),
-      netLiquidBalanceInr: 25550000,
-      netLiquidBalanceUsd: Math.round(25550000 / 84.07),
-      volumeByCurrency: {},
-      source: 'fallback',
-      state: 'demo_session_rls',
-      hasAuthSession: false,
-      reportingBaseCurrency: 'INR',
-      isPartial: false,
-      rejectedRecordsCount: 0,
-    };
+    return emptyTransactionAggregates(
+      'demo_session_rls',
+      'Authentication required: Supabase RLS restricts unauthenticated access.',
+      false
+    );
+  } catch (err: any) {
+    return emptyTransactionAggregates(
+      'query_error',
+      err?.message || 'Unexpected error querying transaction aggregates.',
+      false
+    );
   }
 }
 
@@ -888,6 +943,53 @@ export async function fetchFraudCasesResultFromDb(
     };
   }
 
+  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+    const notice = 'Authentication required: Active Supabase Auth session needed to query fraud_cases.';
+    databaseStatusStore.fraudCases = {
+      source: 'fallback',
+      error: notice,
+      state: 'demo_session_rls',
+      details: 'Postgres RLS restricts unauthenticated access to fraud_cases.',
+    };
+    return {
+      data: [],
+      source: 'fallback',
+      error: notice,
+      count: 0,
+      totalCount: 0,
+      state: 'demo_session_rls',
+      details: 'Authenticate with an active Supabase Auth session to access protected fraud surveillance records.',
+      hasAuthSession: false,
+      page: 1,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
+  const activeRole = getActiveSessionRole(clientOverride);
+  if (activeRole && !canRoleAccessFraudTelemetry(activeRole)) {
+    const notice = `Restricted: Role ${activeRole} is not authorized to query fraud_cases.`;
+    databaseStatusStore.fraudCases = {
+      source: 'fallback',
+      error: notice,
+      state: 'restricted',
+      details: notice,
+    };
+    return {
+      data: [],
+      source: 'fallback',
+      error: notice,
+      count: 0,
+      totalCount: 0,
+      state: 'restricted',
+      details: notice,
+      hasAuthSession: true,
+      page: 1,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
   try {
     let query = client
       .from('fraud_cases')
@@ -918,8 +1020,8 @@ export async function fetchFraudCasesResultFromDb(
     const { data, error, count } = await query;
 
     if (error) {
+      const hasAuthSession = await checkHasSupabaseAuthSession(client);
       if (error.code === 'PGRST103' || error.message?.includes('range not satisfiable')) {
-        const hasAuthSession = await checkHasSupabaseAuthSession(client);
         return {
           data: [],
           source: 'supabase',
@@ -934,11 +1036,12 @@ export async function fetchFraudCasesResultFromDb(
           totalPages: 1,
         };
       }
+      const errState = classifyErrorState(error, hasAuthSession);
       const errorMsg = `${error.code || 'ERR'}: ${error.message || 'Database query failed'}`;
       databaseStatusStore.fraudCases = {
         source: 'fallback',
         error: errorMsg,
-        state: 'query_error',
+        state: errState,
         details: error.message,
       };
       return {
@@ -947,9 +1050,9 @@ export async function fetchFraudCasesResultFromDb(
         error: errorMsg,
         count: 0,
         totalCount: 0,
-        state: 'query_error',
-        details: `Supabase query failed: ${error.message}`,
-        hasAuthSession: false,
+        state: errState,
+        details: `Supabase query rejected: ${error.message}`,
+        hasAuthSession,
         page,
         pageSize,
         totalPages: 1,
@@ -1037,32 +1140,18 @@ export async function fetchFraudCasesResultFromDb(
       };
     }
 
-    // When unauthenticated, provide tenant-isolated baseline fraud cases with verified INR conversions
-    const fallbackList = getFraudTransactionsForTenant(tenantId).map((f) => {
-      const rawCurr = (f.currency || 'INR').toUpperCase();
-      const conv = convertToInr(f.amount, rawCurr);
-      return {
-        ...f,
-        currency: (rawCurr as any) || 'INR',
-        amountInr: conv.amountInr,
-        amountUsd: conv.amountUsd,
-        exchangeRate: conv.exchangeRate,
-        exchangeRateDate: conv.effectiveDate,
-      };
-    });
-
     return {
-      data: fallbackList,
+      data: [],
       source: 'fallback',
       error: notice,
-      count: fallbackList.length,
-      totalCount: 25958, // Verified database evidence count for fraud_cases
+      count: 0,
+      totalCount: 0,
       state: 'demo_session_rls',
-      details: 'Postgres RLS restricts unauthenticated queries to 0 rows. Displaying verified institutional dataset baseline (Total: 25,958 fraud cases).',
+      details: 'Postgres RLS restricts unauthenticated queries to 0 rows. Sign in with an authenticated Supabase session to view fraud cases.',
       hasAuthSession: false,
       page,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(25958 / pageSize)),
+      totalPages: 1,
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Network error querying Supabase';
@@ -1113,8 +1202,37 @@ export interface FraudAggregates {
   casesByDay?: { date: string; count: number; preventedInr: number }[];
   source: 'supabase' | 'fallback';
   state: QueryResultState;
+  error?: string | null;
   hasAuthSession: boolean;
   reportingBaseCurrency: 'INR';
+}
+
+function emptyFraudAggregates(
+  state: QueryResultState,
+  error: string | null,
+  hasAuthSession: boolean = false
+): FraudAggregates {
+  return {
+    totalCases: 0,
+    flaggedCount: 0,
+    frozenCount: 0,
+    clearedCount: 0,
+    preventedVolumeInr: 0,
+    preventedVolumeUsd: 0,
+    preventedVolumeOriginal: 0,
+    monitoredVolumeInr: 0,
+    monitoredVolumeUsd: 0,
+    volumeByCurrency: {},
+    riskTierDistribution: [],
+    channelDistribution: [],
+    ruleDistribution: [],
+    casesByDay: [],
+    source: 'fallback',
+    state,
+    error,
+    hasAuthSession,
+    reportingBaseCurrency: 'INR',
+  };
 }
 
 /**
@@ -1130,66 +1248,31 @@ export async function fetchFraudAggregatesResultFromDb(
   const configured = clientOverride !== undefined ? Boolean(clientOverride) : isSupabaseConfigured();
 
   if (!configured || !client) {
-    return {
-      totalCases: 0,
-      flaggedCount: 0,
-      frozenCount: 0,
-      clearedCount: 0,
-      preventedVolumeInr: 0,
-      preventedVolumeUsd: 0,
-      preventedVolumeOriginal: 0,
-      monitoredVolumeInr: 0,
-      monitoredVolumeUsd: 0,
-      volumeByCurrency: {},
-      source: 'fallback',
-      state: 'unconfigured',
-      hasAuthSession: false,
-      reportingBaseCurrency: 'INR',
-    };
+    return emptyFraudAggregates(
+      'unconfigured',
+      'Supabase client is not configured (missing URL or anon key).',
+      false
+    );
   }
 
-  // Baseline verified dataset for tenant_apex_bank (25,958 fraud cases)
-  const baselineFraudVolumeInr = 138420000; // ₹138.42M INR Prevented
-  const baselineMonitoredVolumeInr = 148650000; // ₹148.65M INR Monitored
+  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+    return emptyFraudAggregates(
+      'demo_session_rls',
+      'Authentication required: Active Supabase Auth session needed for fraud surveillance aggregates.',
+      false
+    );
+  }
+
+  const activeRole = getActiveSessionRole(clientOverride);
+  if (activeRole && !canRoleAccessFraudTelemetry(activeRole)) {
+    return emptyFraudAggregates(
+      'restricted',
+      `Restricted: Role ${activeRole} is not authorized for fraud surveillance analytics.`,
+      true
+    );
+  }
+
   const usdRate = 84.070000;
-
-  const baselineRiskTiers = [
-    { tier: 'Critical Anomaly (Risk ≥ 80)', count: 14200, volumeInr: 88500000 },
-    { tier: 'High Threat (Risk 50-79)', count: 8210, volumeInr: 49920000 },
-    { tier: 'Nominal Surveillance (< 50)', count: 3548, volumeInr: 10230000 },
-  ];
-
-  const baselineChannels = [
-    { channel: 'SWIFT GPI Cross-Border', count: 11400, volumeInr: 68200000 },
-    { channel: 'Fedwire Large-Value', count: 7850, volumeInr: 44800000 },
-    { channel: 'SEPA Instant B2B', count: 4120, volumeInr: 23650000 },
-    { channel: 'RTGS High-Value Rails', count: 2588, volumeInr: 12000000 },
-  ];
-
-  const baselineRules = [
-    { rule: 'Rapid Velocity Outlier Spike', count: 8420 },
-    { rule: 'Sanctioned Corridor Trace', count: 6120 },
-    { rule: 'AML Structuring / Smurfing Threshold', count: 5430 },
-    { rule: 'Impossible Geolocation Mismatch', count: 3890 },
-    { rule: 'High-Value Unverified Counterparty', count: 2098 },
-  ];
-
-  const baselineCasesByDay = [
-    { date: 'Oct 14', count: 1820, preventedInr: 9800000 },
-    { date: 'Oct 15', count: 1940, preventedInr: 10400000 },
-    { date: 'Oct 16', count: 1780, preventedInr: 9200000 },
-    { date: 'Oct 17', count: 2110, preventedInr: 11500000 },
-    { date: 'Oct 18', count: 2280, preventedInr: 12400000 },
-    { date: 'Oct 19', count: 1420, preventedInr: 7600000 },
-    { date: 'Oct 20', count: 1390, preventedInr: 7200000 },
-    { date: 'Oct 21', count: 2050, preventedInr: 11100000 },
-    { date: 'Oct 22', count: 2180, preventedInr: 11800000 },
-    { date: 'Oct 23', count: 2340, preventedInr: 12900000 },
-    { date: 'Oct 24', count: 2420, preventedInr: 13200000 },
-    { date: 'Oct 25', count: 2510, preventedInr: 13600000 },
-    { date: 'Oct 26', count: 910, preventedInr: 4120000 },
-    { date: 'Oct 27', count: 798, preventedInr: 3600000 },
-  ];
 
   // 1. Attempt PostgreSQL server-side RPC aggregate function
   try {
@@ -1198,7 +1281,7 @@ export async function fetchFraudAggregatesResultFromDb(
       p_currency: options?.currency && options.currency !== 'ALL' ? options.currency : null,
       p_start_date: options?.startDate || null,
       p_end_date: options?.endDate || null,
-      p_customer_id: options?.userId || null, // Mapping userId to customer_id for fraud deep-dives
+      p_customer_id: options?.userId || null,
       p_status: options?.status && options.status !== 'ALL' ? options.status : null,
     };
     const { data: rpcData, error: rpcError } = await client.rpc('get_fraud_aggregates', rpcParams);
@@ -1232,21 +1315,36 @@ export async function fetchFraudAggregatesResultFromDb(
         monitoredVolumeInr,
         monitoredVolumeUsd,
         volumeByCurrency: rpcData.volumeByCurrency || {},
-        riskTierDistribution: baselineRiskTiers,
-        channelDistribution: baselineChannels,
-        ruleDistribution: baselineRules,
-        casesByDay: baselineCasesByDay,
+        riskTierDistribution: Array.isArray(rpcData.riskTierDistribution) ? rpcData.riskTierDistribution : [],
+        channelDistribution: Array.isArray(rpcData.channelDistribution) ? rpcData.channelDistribution : [],
+        ruleDistribution: Array.isArray(rpcData.ruleDistribution) ? rpcData.ruleDistribution : [],
+        casesByDay: Array.isArray(rpcData.casesByDay) ? rpcData.casesByDay : [],
         source: 'supabase',
         state: (Number(rpcData.totalCases) > 0) ? 'live_records' : (hasAuthSession ? 'zero_records' : 'demo_session_rls'),
+        error: null,
         hasAuthSession,
         reportingBaseCurrency: 'INR',
       };
     }
-  } catch {
-    // Fall through to chunked client aggregation
+
+    if (rpcError && !isMissingRpcError(rpcError)) {
+      const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      return emptyFraudAggregates(
+        classifyErrorState(rpcError, hasAuthSession),
+        rpcError.message || 'Fraud aggregate RPC failed.',
+        hasAuthSession
+      );
+    }
+  } catch (err: any) {
+    const hasAuthSession = await checkHasSupabaseAuthSession(client);
+    return emptyFraudAggregates(
+      classifyErrorState(err, hasAuthSession),
+      err?.message || 'Unexpected error invoking get_fraud_aggregates.',
+      hasAuthSession
+    );
   }
 
-  // 2. Resilient Chunked Batch Fetch (guarantees retrieval beyond PostgREST 1,000-row limit)
+  // 2. Fallback Chunked Batch Fetch ONLY when RPC is absent in target database
   try {
     const MAX_FALLBACK_ROWS = 5000;
     const CHUNK_SIZE = 1000;
@@ -1288,54 +1386,27 @@ export async function fetchFraudAggregatesResultFromDb(
 
     const hasAuthSession = await checkHasSupabaseAuthSession(client);
 
+    if (lastQueryError) {
+      return emptyFraudAggregates(
+        classifyErrorState(lastQueryError, hasAuthSession),
+        lastQueryError.message || 'Database query failed while loading fraud cases.',
+        hasAuthSession
+      );
+    }
+
     if (allRows.length === 0) {
-      if (hasAuthSession && !lastQueryError) {
-        // Authenticated user with 0 records
+      if (hasAuthSession) {
         return {
-          totalCases: 0,
-          flaggedCount: 0,
-          frozenCount: 0,
-          clearedCount: 0,
-          preventedVolumeInr: 0,
-          preventedVolumeUsd: 0,
-          preventedVolumeOriginal: 0,
-          monitoredVolumeInr: 0,
-          monitoredVolumeUsd: 0,
-          volumeByCurrency: {},
-          riskTierDistribution: [],
-          channelDistribution: [],
-          ruleDistribution: [],
-          casesByDay: [],
+          ...emptyFraudAggregates('zero_records', null, true),
           source: 'supabase',
-          state: 'zero_records',
-          hasAuthSession: true,
-          reportingBaseCurrency: 'INR',
         };
       }
 
-      // Demo/unauthenticated or PostgREST RLS restricted: Return verified database evidence baseline (25,958 rows)
-      return {
-        totalCases: 25958,
-        flaggedCount: 2728,
-        frozenCount: 22410,
-        clearedCount: 820,
-        preventedVolumeInr: baselineFraudVolumeInr,
-        preventedVolumeUsd: Math.round((baselineFraudVolumeInr / usdRate) * 100) / 100,
-        preventedVolumeOriginal: 1646500,
-        monitoredVolumeInr: baselineMonitoredVolumeInr,
-        monitoredVolumeUsd: Math.round((baselineMonitoredVolumeInr / usdRate) * 100) / 100,
-        volumeByCurrency: {
-          INR: { original: baselineFraudVolumeInr, inr: baselineFraudVolumeInr, usd: Math.round(baselineFraudVolumeInr / usdRate), rate: 1.0, effectiveDate: new Date().toISOString().split('T')[0] },
-        },
-        riskTierDistribution: baselineRiskTiers,
-        channelDistribution: baselineChannels,
-        ruleDistribution: baselineRules,
-        casesByDay: baselineCasesByDay,
-        source: 'fallback',
-        state: 'demo_session_rls',
-        hasAuthSession: false,
-        reportingBaseCurrency: 'INR',
-      };
+      return emptyFraudAggregates(
+        'demo_session_rls',
+        'Authentication required: Supabase RLS restricts unauthenticated access.',
+        false
+      );
     }
 
     let flaggedCount = 0;
@@ -1430,30 +1501,16 @@ export async function fetchFraudAggregatesResultFromDb(
       casesByDay: Object.entries(dayMap).map(([date, d]) => ({ date, count: d.count, preventedInr: Math.round(d.preventedInr) })),
       source: 'supabase',
       state: 'live_records',
+      error: null,
       hasAuthSession,
       reportingBaseCurrency: 'INR',
     };
-  } catch (err) {
-    return {
-      totalCases: 25958,
-      flaggedCount: 2728,
-      frozenCount: 22410,
-      clearedCount: 820,
-      preventedVolumeInr: baselineFraudVolumeInr,
-      preventedVolumeUsd: Math.round(baselineFraudVolumeInr / usdRate),
-      preventedVolumeOriginal: 1646500,
-      monitoredVolumeInr: baselineMonitoredVolumeInr,
-      monitoredVolumeUsd: Math.round(baselineMonitoredVolumeInr / usdRate),
-      volumeByCurrency: {},
-      riskTierDistribution: baselineRiskTiers,
-      channelDistribution: baselineChannels,
-      ruleDistribution: baselineRules,
-      casesByDay: baselineCasesByDay,
-      source: 'fallback',
-      state: 'demo_session_rls',
-      hasAuthSession: false,
-      reportingBaseCurrency: 'INR',
-    };
+  } catch (err: any) {
+    return emptyFraudAggregates(
+      'query_error',
+      err?.message || 'Unexpected error querying fraud aggregates.',
+      false
+    );
   }
 }
 
@@ -1472,13 +1529,39 @@ export interface SupportAggregates {
   resolutionTimeNote: string;
   source: 'supabase' | 'fallback';
   state: QueryResultState;
+  error?: string | null;
   hasAuthSession: boolean;
 }
 
-/**
- * Fetch Support Ticket Aggregates from Supabase / Complete Dataset
- * Follows Requirement 4: "Do not treat hours_open as completed resolution time."
- */
+const SUPPORT_RESOLUTION_NOTE =
+  'Completed duration unavailable: public.support_tickets stores hours_open (elapsed open duration) without a completed resolution duration timestamp.';
+
+function emptySupportAggregates(
+  state: QueryResultState,
+  error: string | null,
+  hasAuthSession: boolean = false,
+  display: string = 'Unavailable'
+): SupportAggregates {
+  return {
+    totalTickets: 0,
+    openCount: 0,
+    closedCount: 0,
+    inProgressCount: 0,
+    pendingClientCount: 0,
+    priorityDistribution: [],
+    categoryDistribution: [],
+    executiveWorkload: [],
+    slaCompliancePct: 0,
+    averageCsat: 0,
+    resolutionTimeDisplay: display,
+    resolutionTimeNote: SUPPORT_RESOLUTION_NOTE,
+    source: 'fallback',
+    state,
+    error,
+    hasAuthSession,
+  };
+}
+
 /**
  * Fetch Support Ticket Aggregates from Supabase / Complete Dataset
  * Uses public.get_support_aggregates RPC for performance and SECURITY INVOKER RLS compliance.
@@ -1491,52 +1574,32 @@ export async function fetchSupportAggregatesResultFromDb(
   const client = clientOverride !== undefined ? clientOverride : supabase;
   const configured = clientOverride !== undefined ? Boolean(clientOverride) : isSupabaseConfigured();
 
-  const baselineAssignedWorkload = [
-    { executive: 'Claire Montgomery', activeTickets: 3840, resolvedTickets: 8420 },
-    { executive: 'David Vance', activeTickets: 4120, resolvedTickets: 7910 },
-    { executive: 'Amara Okafor', activeTickets: 3410, resolvedTickets: 8200 },
-    { executive: 'Sophia Lin', activeTickets: 3450, resolvedTickets: 8120 },
-  ];
-
-  const baselineCategories = [
-    { category: 'High-Value Wire Authorization', count: 18200, percentage: 35.0 },
-    { category: 'KYC & Institutional Re-verification', count: 11440, percentage: 22.0 },
-    { category: 'Escrow & Custody Clearance', count: 9360, percentage: 18.0 },
-    { category: 'SWIFT MT103 / ISO20022 Trace', count: 7800, percentage: 15.0 },
-    { category: 'FX Spot & Cross-Border Settlement', count: 5200, percentage: 10.0 },
-  ];
-
-  const baselinePriorities = [
-    { priority: 'Urgent', count: 3640, color: '#B87333' },
-    { priority: 'High', count: 12480, color: '#D4A017' },
-    { priority: 'Medium', count: 23400, color: '#E6C78B' },
-    { priority: 'Low', count: 12480, color: '#9CA3AF' },
-  ];
-
-  const baselineResolutionNote =
-    'Completed duration unavailable: public.support_tickets stores hours_open (elapsed open duration) without a completed resolution duration timestamp.';
-
   if (!configured || !client) {
-    return {
-      totalTickets: 0,
-      openCount: 0,
-      closedCount: 0,
-      inProgressCount: 0,
-      pendingClientCount: 0,
-      priorityDistribution: [],
-      categoryDistribution: [],
-      executiveWorkload: [],
-      slaCompliancePct: 0,
-      averageCsat: 0,
-      resolutionTimeDisplay: 'Unavailable',
-      resolutionTimeNote: baselineResolutionNote,
-      source: 'fallback',
-      state: 'unconfigured',
-      hasAuthSession: false,
-    };
+    return emptySupportAggregates(
+      'unconfigured',
+      'Supabase client is not configured (missing URL or anon key).',
+      false
+    );
   }
 
-  // 1. Attempt PostgreSQL server-side RPC aggregate function (V5.2)
+  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+    return emptySupportAggregates(
+      'demo_session_rls',
+      'Authentication required: Active Supabase Auth session needed for support aggregates.',
+      false
+    );
+  }
+
+  const activeRole = getActiveSessionRole(clientOverride);
+  if (activeRole && !canRoleAccessSupportTelemetry(activeRole)) {
+    return emptySupportAggregates(
+      'restricted',
+      `Restricted: Role ${activeRole} is not authorized for institutional support aggregates.`,
+      true
+    );
+  }
+
+  // 1. Attempt PostgreSQL server-side RPC aggregate function (Stage 2)
   try {
     const { data: rpcData, error: rpcError } = await client.rpc('get_support_aggregates', {
       p_tenant_id: tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root' ? tenantId : null,
@@ -1544,35 +1607,52 @@ export async function fetchSupportAggregatesResultFromDb(
 
     if (!rpcError && rpcData && typeof rpcData === 'object' && 'totalTickets' in rpcData) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      const totalTickets = Number(rpcData.totalTickets) || 0;
       return {
-        totalTickets: Number(rpcData.totalTickets) || 0,
+        totalTickets,
         openCount: Number(rpcData.openCount) || 0,
         closedCount: Number(rpcData.closedCount) || 0,
         inProgressCount: Number(rpcData.inProgressCount) || 0,
         pendingClientCount: Number(rpcData.pendingClientCount) || 0,
-        priorityDistribution: rpcData.priorityDistribution || baselinePriorities,
-        categoryDistribution: rpcData.categoryDistribution || baselineCategories,
-        executiveWorkload: rpcData.executiveWorkload || baselineAssignedWorkload,
-        slaCompliancePct: Number(rpcData.slaCompliancePct) || 94.2,
-        averageCsat: Number(rpcData.averageCsat) || 4.86,
-        resolutionTimeDisplay: 'Open Duration Only',
-        resolutionTimeNote: baselineResolutionNote,
+        priorityDistribution: Array.isArray(rpcData.priorityDistribution) ? rpcData.priorityDistribution : [],
+        categoryDistribution: Array.isArray(rpcData.categoryDistribution) ? rpcData.categoryDistribution : [],
+        executiveWorkload: Array.isArray(rpcData.executiveWorkload) ? rpcData.executiveWorkload : [],
+        slaCompliancePct: Number(rpcData.slaCompliancePct ?? 0),
+        averageCsat: Number(rpcData.averageCsat ?? 0),
+        resolutionTimeDisplay: totalTickets > 0 ? 'Open Duration Only' : 'No Records',
+        resolutionTimeNote: SUPPORT_RESOLUTION_NOTE,
         source: 'supabase',
-        state: 'live_records',
+        state: totalTickets > 0 ? 'live_records' : (hasAuthSession ? 'zero_records' : 'demo_session_rls'),
+        error: null,
         hasAuthSession,
       };
     }
-  } catch {
-    // Fall through to manual client aggregation
+
+    if (rpcError && !isMissingRpcError(rpcError)) {
+      const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      return emptySupportAggregates(
+        classifyErrorState(rpcError, hasAuthSession),
+        rpcError.message || 'Support aggregate RPC failed.',
+        hasAuthSession
+      );
+    }
+  } catch (err: any) {
+    const hasAuthSession = await checkHasSupabaseAuthSession(client);
+    return emptySupportAggregates(
+      classifyErrorState(err, hasAuthSession),
+      err?.message || 'Unexpected error invoking get_support_aggregates.',
+      hasAuthSession
+    );
   }
 
-  // 2. Resilient chunk query for authenticated users
+  // 2. Resilient chunk query ONLY when RPC is absent
   try {
     const hasAuthSession = await checkHasSupabaseAuthSession(client);
     const CHUNK_SIZE = 1000;
     let offset = 0;
     let allRows: any[] = [];
     let hasMore = true;
+    let lastQueryError: any = null;
 
     while (hasMore) {
       let query = client
@@ -1585,7 +1665,10 @@ export async function fetchSupportAggregatesResultFromDb(
       }
 
       const { data, error } = await query;
-      if (error) break;
+      if (error) {
+        lastQueryError = error;
+        break;
+      }
 
       if (!data || data.length === 0) {
         hasMore = false;
@@ -1599,45 +1682,27 @@ export async function fetchSupportAggregatesResultFromDb(
       }
     }
 
+    if (lastQueryError) {
+      return emptySupportAggregates(
+        classifyErrorState(lastQueryError, hasAuthSession),
+        lastQueryError.message || 'Database query failed while loading support tickets.',
+        hasAuthSession
+      );
+    }
+
     if (allRows.length === 0) {
       if (hasAuthSession) {
         return {
-          totalTickets: 0,
-          openCount: 0,
-          closedCount: 0,
-          inProgressCount: 0,
-          pendingClientCount: 0,
-          priorityDistribution: [],
-          categoryDistribution: [],
-          executiveWorkload: [],
-          slaCompliancePct: 0,
-          averageCsat: 0,
-          resolutionTimeDisplay: 'No Records',
-          resolutionTimeNote: baselineResolutionNote,
+          ...emptySupportAggregates('zero_records', null, true, 'No Records'),
           source: 'supabase',
-          state: 'zero_records',
-          hasAuthSession: true,
         };
       }
 
-      // Demo/unauthenticated session: return verified dataset baseline (52,000 support tickets)
-      return {
-        totalTickets: 52000,
-        openCount: 14820,
-        closedCount: 25650,
-        inProgressCount: 7410,
-        pendingClientCount: 4120,
-        priorityDistribution: baselinePriorities,
-        categoryDistribution: baselineCategories,
-        executiveWorkload: baselineAssignedWorkload,
-        slaCompliancePct: 94.2,
-        averageCsat: 4.86,
-        resolutionTimeDisplay: 'Open Duration Only',
-        resolutionTimeNote: baselineResolutionNote,
-        source: 'fallback',
-        state: 'demo_session_rls',
-        hasAuthSession: false,
-      };
+      return emptySupportAggregates(
+        'demo_session_rls',
+        'Authentication required: Supabase RLS restricts unauthenticated access.',
+        false
+      );
     }
 
     let openCount = 0;
@@ -1712,29 +1777,18 @@ export async function fetchSupportAggregatesResultFromDb(
       slaCompliancePct,
       averageCsat,
       resolutionTimeDisplay: 'Open Duration Only',
-      resolutionTimeNote: baselineResolutionNote,
+      resolutionTimeNote: SUPPORT_RESOLUTION_NOTE,
       source: 'supabase',
       state: 'live_records',
+      error: null,
       hasAuthSession,
     };
-  } catch (err) {
-    return {
-      totalTickets: 52000,
-      openCount: 14820,
-      closedCount: 25650,
-      inProgressCount: 7410,
-      pendingClientCount: 4120,
-      priorityDistribution: baselinePriorities,
-      categoryDistribution: baselineCategories,
-      executiveWorkload: baselineAssignedWorkload,
-      slaCompliancePct: 94.2,
-      averageCsat: 4.86,
-      resolutionTimeDisplay: 'Open Duration Only',
-      resolutionTimeNote: baselineResolutionNote,
-      source: 'fallback',
-      state: 'demo_session_rls',
-      hasAuthSession: false,
-    };
+  } catch (err: any) {
+    return emptySupportAggregates(
+      'query_error',
+      err?.message || 'Unexpected error querying support aggregates.',
+      false
+    );
   }
 }
 
@@ -1778,6 +1832,29 @@ export async function fetchSupportTicketsResultFromDb(
     };
   }
 
+  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+    const notice = 'Authentication required: Active Supabase Auth session needed to query support_tickets.';
+    databaseStatusStore.supportTickets = {
+      source: 'fallback',
+      error: notice,
+      state: 'demo_session_rls',
+      details: 'Postgres RLS restricts unauthenticated access to support_tickets.',
+    };
+    return {
+      data: [],
+      source: 'fallback',
+      error: notice,
+      count: 0,
+      totalCount: 0,
+      state: 'demo_session_rls',
+      details: 'Authentication required to view support tickets.',
+      hasAuthSession: false,
+      page,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
   try {
     const buildQuery = (q: any) => {
       let filtered = q.order('opened_at', { ascending: false });
@@ -1812,11 +1889,13 @@ export async function fetchSupportTicketsResultFromDb(
     );
 
     if (error) {
+      const hasSession = await checkHasSupabaseAuthSession(client);
+      const errState = classifyErrorState(error, hasSession);
       const errorMsg = `${error.code || 'ERR'}: ${error.message || 'Database query failed'}`;
       databaseStatusStore.supportTickets = {
         source: 'fallback',
         error: errorMsg,
-        state: 'query_error',
+        state: errState,
         details: error.message,
       };
       return {
@@ -1825,9 +1904,9 @@ export async function fetchSupportTicketsResultFromDb(
         error: errorMsg,
         count: 0,
         totalCount: 0,
-        state: 'query_error',
+        state: errState,
         details: `Supabase query failed: ${error.message}`,
-        hasAuthSession: false,
+        hasAuthSession: hasSession,
         page,
         pageSize,
         totalPages: 1,
@@ -1881,25 +1960,24 @@ export async function fetchSupportTicketsResultFromDb(
       : 'Unauthenticated session: Supabase Row-Level Security (RLS) restricts access to confirmed users.';
 
     if (!hasAuthSession) {
-      const fallbackList = getTicketsForTenant(tenantId);
       databaseStatusStore.supportTickets = {
         source: 'fallback',
         error: notice,
         state: 'demo_session_rls',
-        details: 'Postgres RLS restricts anon queries to 0 rows. Displaying verified institutional dataset baseline (Total: 52,000 support tickets).',
+        details: 'Postgres RLS restricts unauthenticated queries to 0 rows. Sign in with an authenticated Supabase session to access support tickets.',
       };
       return {
-        data: fallbackList,
+        data: [],
         source: 'fallback',
         error: notice,
-        count: fallbackList.length,
-        totalCount: 52000,
+        count: 0,
+        totalCount: 0,
         state: 'demo_session_rls',
-        details: 'Postgres RLS restricts unauthenticated queries to 0 rows. Displaying verified institutional dataset baseline (Total: 52,000 support tickets).',
+        details: 'Postgres RLS restricts unauthenticated queries to 0 rows. Sign in with an authenticated Supabase session to access support tickets.',
         hasAuthSession: false,
         page,
         pageSize,
-        totalPages: Math.max(1, Math.ceil(52000 / pageSize)),
+        totalPages: 1,
       };
     }
 
@@ -2043,9 +2121,35 @@ export async function fetchKycRecordsResultFromDb(
   }
 
   try {
+    const hasSession = await checkHasSupabaseAuthSession(supabase);
+    if (!hasSession) {
+      const notice = 'Authentication required: Active Supabase Auth session needed to query kyc_records.';
+      databaseStatusStore.kycRecords = {
+        source: 'fallback',
+        error: notice,
+        state: 'demo_session_rls',
+        details: 'Postgres RLS restricts unauthenticated access to kyc_records.',
+      };
+      return {
+        data: [],
+        source: 'fallback',
+        state: 'demo_session_rls',
+        error: notice,
+        count: 0,
+        totalCount: 0,
+        hasAuthSession: false,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+      };
+    }
+
     let query = supabase.from('kyc_records').select('*', { count: 'exact' });
     if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
       query = query.eq('tenant_id', tenantId);
+    }
+    if (options?.userId) {
+      query = query.eq('user_id', options.userId);
     }
 
     if (options?.search) {
@@ -2057,21 +2161,21 @@ export async function fetchKycRecordsResultFromDb(
       query = query.eq('status', options.status);
     }
 
-    const hasSession = await checkHasSupabaseAuthSession(supabase);
     const { data, error, count } = await query;
 
     if (error) {
+      const errState = classifyErrorState(error, hasSession);
       const msg = `Database query on kyc_records: ${error.message}`;
       databaseStatusStore.kycRecords = {
-        source: 'supabase',
+        source: 'fallback',
         error: msg,
-        state: 'query_error',
+        state: errState,
         details: msg,
       };
       return {
         data: [],
-        source: 'supabase',
-        state: 'query_error',
+        source: 'fallback',
+        state: errState,
         error: msg,
         count: 0,
         totalCount: 0,
@@ -2089,8 +2193,14 @@ export async function fetchKycRecordsResultFromDb(
         documentType: k.document_type || 'Passport',
         fileSize: k.file_size || '1.2 MB',
         uploadedAt: k.uploaded_at ? k.uploaded_at.split('T')[0] : 'Today',
-        verifiedBy: k.verified_by || 'Compliance Officer',
-        status: (k.status === 'Verified' || k.status === 'Approved' ? 'Verified' : k.status === 'Under Review' ? 'Under Review' : 'Archived') as any,
+        verifiedBy: k.verified_by || 'Pending Compliance Review',
+        status: (k.status === 'Verified' || k.status === 'Approved'
+          ? 'Verified'
+          : k.status === 'Under Review'
+          ? 'Under Review'
+          : k.status === 'Pending'
+          ? 'Pending'
+          : 'Archived') as any,
         tenantId: k.tenant_id,
         tenantName: k.tenant_name,
       }));
@@ -2140,19 +2250,21 @@ export async function fetchKycRecordsResultFromDb(
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Network error querying kyc_records';
+    const hasSession = await checkHasSupabaseAuthSession(supabase);
+    const errState = classifyErrorState(err, hasSession);
     databaseStatusStore.kycRecords = {
-      source: 'supabase',
+      source: 'fallback',
       error: errorMsg,
-      state: 'query_error',
+      state: errState,
     };
     return {
       data: [],
-      source: 'supabase',
+      source: 'fallback',
       error: errorMsg,
       count: 0,
       totalCount: 0,
-      state: 'query_error',
-      hasAuthSession: false,
+      state: errState,
+      hasAuthSession: hasSession,
       page: 1,
       pageSize: 50,
       totalPages: 1,
@@ -2182,39 +2294,65 @@ export async function uploadKycRecordToDb(doc: {
   verifiedBy?: string;
 }): Promise<{ success: boolean; data?: CustomerDocument; error?: string }> {
   const newId = `KYC-${Math.floor(10000 + Math.random() * 90000)}`;
+  let resolvedUserId = doc.userId || null;
+  let resolvedStatus = doc.status || 'Pending';
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (!resolvedUserId && userData?.user?.id) {
+        resolvedUserId = userData.user.id;
+      }
+      const sessRole = getActiveSessionRole();
+      if (sessRole === 'CUSTOMER' && resolvedStatus === 'Verified') {
+        resolvedStatus = 'Pending';
+      }
+    } catch {
+      // ignore fallback resolution error
+    }
+  }
+
   const record = {
     id: newId,
-    user_id: doc.userId || null,
+    user_id: resolvedUserId,
     tenant_id: doc.tenantId,
     tenant_name: doc.tenantName || getTenantById(doc.tenantId)?.name || 'Apex Global Bank',
     title: doc.title,
     document_type: doc.documentType,
     file_size: doc.fileSize || '1.8 MB',
-    status: doc.status || 'Under Review',
+    status: resolvedStatus,
     verified_by: doc.verifiedBy || null,
   };
 
   if (isSupabaseConfigured()) {
     try {
       const { data, error } = await supabase.from('kyc_records').insert([record]).select().single();
-      if (!error && data) {
+      if (error || !data) {
         return {
-          success: true,
-          data: {
-            id: data.id,
-            title: data.title,
-            documentType: data.document_type,
-            fileSize: data.file_size,
-            uploadedAt: data.uploaded_at ? data.uploaded_at.split('T')[0] : new Date().toISOString().split('T')[0],
-            verifiedBy: data.verified_by || 'Compliance Verification Engine',
-            status: data.status,
-            tenantId: data.tenant_id,
-            tenantName: data.tenant_name,
-          },
+          success: false,
+          error: error?.message || 'Failed to insert KYC record into Supabase.',
         };
       }
+      return {
+        success: true,
+        data: {
+          id: data.id,
+          title: data.title,
+          documentType: data.document_type,
+          fileSize: data.file_size,
+          uploadedAt: data.uploaded_at ? data.uploaded_at.split('T')[0] : new Date().toISOString().split('T')[0],
+          verifiedBy: data.verified_by || 'Compliance Verification Engine',
+          status: data.status,
+          tenantId: data.tenant_id,
+          tenantName: data.tenant_name,
+        },
+      };
     } catch (err: any) {
-      console.warn('Supabase KYC insert notice:', err);
+      console.warn('Supabase KYC insert error:', err);
+      return {
+        success: false,
+        error: err?.message || 'Unexpected exception inserting KYC record into Supabase.',
+      };
     }
   }
 
@@ -2543,6 +2681,28 @@ export async function fetchProfilesResultFromDb(
     };
   }
 
+  if (await shouldSkipUnauthenticatedQuery(supabase)) {
+    const notice = 'Authentication required: Active Supabase Auth session needed to query profiles.';
+    databaseStatusStore.profiles = {
+      source: 'fallback',
+      error: notice,
+      state: 'demo_session_rls',
+      details: notice,
+    };
+    return {
+      data: [],
+      source: 'fallback',
+      error: notice,
+      count: 0,
+      totalCount: 0,
+      state: 'demo_session_rls',
+      hasAuthSession: false,
+      page: 1,
+      pageSize: 50,
+      totalPages: 1,
+    };
+  }
+
   try {
     let query = supabase.from('profiles').select('*', { count: 'exact' });
     if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
@@ -2591,10 +2751,11 @@ export async function fetchProfilesResultFromDb(
           totalPages: 1,
         };
       }
+      const errState = classifyErrorState(error, hasSession);
       databaseStatusStore.profiles = {
         source: 'fallback',
         error: error.message,
-        state: 'query_error',
+        state: errState,
         details: error.message,
       };
       return {
@@ -2603,7 +2764,7 @@ export async function fetchProfilesResultFromDb(
         error: error.message,
         count: 0,
         totalCount: 0,
-        state: 'query_error',
+        state: errState,
         hasAuthSession: hasSession,
         page: options?.page || 1,
         pageSize: options?.pageSize || 50,
@@ -2832,7 +2993,6 @@ export async function saveProfileToDb(
         tenantName: userData.tenantName || 'Apex Global Bank',
         notes: userData.notes,
         authSource: 'supabase',
-        passwordHash: 'finova2026',
       });
     }
     saveStoredUsers(updatedUsers);
@@ -3128,24 +3288,70 @@ export async function fetchTenantWorkspacesResultFromDb(): Promise<DatabaseQuery
       };
     }
 
-    const fallback = getStoredTenants();
     return {
-      data: fallback,
-      source: 'fallback',
+      data: [],
+      source: 'supabase',
       error: null,
-      count: fallback.length,
+      count: 0,
       state: 'zero_records',
       hasAuthSession: hasSession,
     };
   } catch (err: any) {
-    const fallback = getStoredTenants();
     return {
-      data: fallback,
+      data: [],
       source: 'fallback',
       error: err?.message || 'Error querying tenant workspaces',
-      count: fallback.length,
+      count: 0,
       state: 'query_error',
       hasAuthSession: false,
+    };
+  }
+}
+
+export interface PublicTenantDirectoryEntry {
+  id: string;
+  name: string;
+  shortName: string;
+}
+
+/**
+ * Safe public signup tenant directory via get_public_tenant_directory() RPC.
+ * Exposes ONLY (id, name, short_name) for active non-platform-root institutions.
+ */
+export async function fetchPublicTenantDirectoryFromDb(): Promise<{
+  data: PublicTenantDirectoryEntry[];
+  source: 'supabase' | 'fallback' | 'error';
+  error: string | null;
+}> {
+  if (!isSupabaseConfigured()) {
+    const localTenants = getStoredTenants()
+      .filter((t) => t.status === 'Active' && t.id !== 'platform_root')
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        shortName: t.shortName || t.name,
+      }));
+    return { data: localTenants, source: 'fallback', error: null };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('get_public_tenant_directory');
+    if (error) {
+      return { data: [], source: 'error', error: error.message || 'Unable to load financial institutions directory.' };
+    }
+
+    const mapped: PublicTenantDirectoryEntry[] = (Array.isArray(data) ? data : []).map((row: any) => ({
+      id: String(row.id),
+      name: String(row.name),
+      shortName: String(row.short_name || row.name),
+    }));
+
+    return { data: mapped, source: 'supabase', error: null };
+  } catch (err: any) {
+    return {
+      data: [],
+      source: 'error',
+      error: err?.message || 'Network error loading financial institutions directory.',
     };
   }
 }
@@ -3164,35 +3370,66 @@ export async function fetchTenantWorkspacesFromDb(): Promise<TenantWorkspace[]> 
 export async function saveTenantWorkspaceToDb(
   tenantData: Partial<TenantWorkspace>
 ): Promise<{ success: boolean; data: TenantWorkspace | null; error: string | null }> {
-  // 1. Create or update in local store first
-  let localTenant: TenantWorkspace;
-  if (tenantData.id && getTenantById(tenantData.id)) {
-    localTenant = updateTenant(tenantData.id, tenantData) || createTenant(tenantData);
-  } else {
-    localTenant = createTenant(tenantData);
-  }
+  const existingLocal = tenantData.id ? getTenantById(tenantData.id) : undefined;
+  const candidateTenant: TenantWorkspace = existingLocal
+    ? { ...existingLocal, ...tenantData }
+    : {
+        id: tenantData.id || `tenant_${Date.now()}`,
+        name: tenantData.name || 'New Financial Institution',
+        shortName: tenantData.shortName || (tenantData.name ? tenantData.name.slice(0, 12) : 'Finova'),
+        type: tenantData.type || 'Commercial Bank',
+        status: tenantData.status || 'Active',
+        plan: tenantData.plan || 'Growth SaaS',
+        mrr: tenantData.mrr ?? 25000,
+        currency: tenantData.currency || 'USD',
+        currencySymbol: tenantData.currencySymbol || '$',
+        headquarters: tenantData.headquarters || 'New York, USA',
+        licenseNo: tenantData.licenseNo || `FINOVA-REG-${Math.floor(10000 + Math.random() * 90000)}`,
+        primaryContact: tenantData.primaryContact || {
+          name: tenantData.adminName || 'Workspace Admin',
+          email: tenantData.adminEmail || 'admin@institution.com',
+          phone: '+1 (555) 019-4820',
+        },
+        adminUserId: tenantData.adminUserId || `USR-${Math.floor(5000 + Math.random() * 4000)}`,
+        adminName: tenantData.adminName || 'Workspace Admin',
+        adminEmail: tenantData.adminEmail || 'admin@institution.com',
+        createdDate: tenantData.createdDate || new Date().toISOString().split('T')[0],
+        usersCount: tenantData.usersCount ?? 0,
+        transactionVolumeYTD: tenantData.transactionVolumeYTD ?? 0,
+        complianceScore: tenantData.complianceScore ?? 98.5,
+        activeEngines: tenantData.activeEngines || {
+          aiAssistant: true,
+          documentOcr: true,
+          transactionClassification: true,
+          kycVerification: true,
+          fraudAml: true,
+          caseManagement: true,
+          excelVisualization: true,
+        },
+        notes: tenantData.notes,
+      };
 
-  // 2. If Supabase configured, persist directly to public.tenant_workspaces
+  // Persist to Supabase FIRST before mutating local cache when Supabase is configured
   if (isSupabaseConfigured()) {
     try {
-      const payload: any = {
-        id: localTenant.id,
-        name: localTenant.name,
-        short_name: localTenant.shortName,
-        type: localTenant.type,
-        status: localTenant.status,
-        plan: localTenant.plan,
-        mrr: localTenant.mrr,
-        currency: localTenant.currency,
-        currency_symbol: localTenant.currencySymbol,
-        headquarters: localTenant.headquarters,
-        license_no: localTenant.licenseNo,
-        admin_name: localTenant.adminName,
-        admin_email: localTenant.adminEmail,
-        users_count: localTenant.usersCount,
-        transaction_volume_ytd: localTenant.transactionVolumeYTD,
-        compliance_score: localTenant.complianceScore,
-        notes: localTenant.notes,
+      const payload: Record<string, unknown> = {
+        id: candidateTenant.id,
+        name: candidateTenant.name,
+        short_name: candidateTenant.shortName,
+        type: candidateTenant.type,
+        status: candidateTenant.status,
+        plan: candidateTenant.plan,
+        mrr: candidateTenant.mrr,
+        currency: candidateTenant.currency,
+        currency_symbol: candidateTenant.currencySymbol,
+        headquarters: candidateTenant.headquarters,
+        license_no: candidateTenant.licenseNo,
+        admin_name: candidateTenant.adminName,
+        admin_email: candidateTenant.adminEmail,
+        users_count: candidateTenant.usersCount,
+        transaction_volume_ytd: candidateTenant.transactionVolumeYTD,
+        compliance_score: candidateTenant.complianceScore,
+        notes: candidateTenant.notes,
         updated_at: new Date().toISOString(),
       };
 
@@ -3201,16 +3438,20 @@ export async function saveTenantWorkspaceToDb(
         .upsert(payload, { onConflict: 'id' });
 
       if (error) {
-        console.warn('Supabase upsert tenant_workspaces note:', error.message);
-        return { success: true, data: localTenant, error: error.message };
+        console.warn('Supabase upsert tenant_workspaces error:', error.message);
+        return { success: false, data: null, error: error.message };
       }
     } catch (err: any) {
       console.warn('Supabase tenant_workspaces exception:', err);
-      return { success: true, data: localTenant, error: err?.message };
+      return { success: false, data: null, error: err?.message || 'Tenant workspace save failed' };
     }
   }
 
-  return { success: true, data: localTenant, error: null };
+  const syncedTenant = existingLocal
+    ? updateTenant(candidateTenant.id, candidateTenant) || candidateTenant
+    : createTenant(candidateTenant);
+
+  return { success: true, data: syncedTenant, error: null };
 }
 
 /**
@@ -3220,9 +3461,6 @@ export async function updateTenantWorkspaceStatusInDb(
   tenantId: string,
   status: 'Active' | 'Suspended' | 'Pending Review' | 'Provisioning'
 ): Promise<{ success: boolean; error: string | null }> {
-  // Sync to local store
-  updateTenant(tenantId, { status });
-
   if (isSupabaseConfigured()) {
     try {
       const { error } = await supabase
@@ -3231,14 +3469,15 @@ export async function updateTenantWorkspaceStatusInDb(
         .eq('id', tenantId);
 
       if (error) {
-        console.warn('Supabase update tenant_workspaces status note:', error.message);
+        console.warn('Supabase update tenant_workspaces status error:', error.message);
         return { success: false, error: error.message };
       }
     } catch (err: any) {
-      return { success: false, error: err?.message };
+      return { success: false, error: err?.message || 'Workspace status update failed' };
     }
   }
 
+  updateTenant(tenantId, { status });
   return { success: true, error: null };
 }
 
@@ -3288,120 +3527,83 @@ export interface AiConfigQueryResult {
 }
 
 /**
- * Loads the active enterprise AI engine configuration from Supabase storage
- * Reuses the platform_root record in public.tenant_workspaces notes column (or public.ai_configurations if table exists)
+ * Loads the active enterprise AI engine configuration exclusively from public.ai_configurations.
+ * Never reads from tenant_workspaces.notes and reports DB errors honestly.
  */
 export async function fetchAiConfigurationResultFromDb(): Promise<AiConfigQueryResult> {
-  // 1. Check local cached backup first as default baseline
-  let baselineConfig: AiConfiguration = { ...DEFAULT_AI_CONFIGURATION };
+  let cachedConfig: AiConfiguration = { ...DEFAULT_AI_CONFIGURATION };
   try {
     const rawLocal = localStorage.getItem(LOCAL_AI_CONFIG_KEY);
     if (rawLocal) {
       const parsed = JSON.parse(rawLocal);
-      baselineConfig = { ...DEFAULT_AI_CONFIGURATION, ...parsed };
+      cachedConfig = { ...DEFAULT_AI_CONFIGURATION, ...parsed };
     }
   } catch {
-    // Ignore local storage error
+    // Ignore cache read error
   }
 
   if (!isSupabaseConfigured()) {
     return {
-      config: baselineConfig,
+      config: cachedConfig,
       isDbConnected: false,
       isPersistent: false,
-      error: 'Supabase credentials unconfigured; operating on localized default parameters.',
+      error: 'Supabase is not configured; live database persistence for AI configuration is unavailable.',
       source: 'local_fallback',
     };
   }
 
-  // 2. Attempt reading from public.ai_configurations first (if table created via migration)
   try {
     const { data: dedicatedData, error: dedicatedErr } = await supabase
       .from('ai_configurations')
       .select('*')
+      .eq('is_active', true)
+      .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (!dedicatedErr && dedicatedData) {
-      const dbConfig: AiConfiguration = {
-        model: dedicatedData.model || baselineConfig.model,
-        temperature: Number(dedicatedData.temperature ?? baselineConfig.temperature),
-        latencySla: Number(dedicatedData.latency_sla ?? baselineConfig.latencySla),
-        guardrailActive: Boolean(dedicatedData.guardrail_active ?? baselineConfig.guardrailActive),
-        hallucinationFilter: Boolean(dedicatedData.hallucination_filter ?? baselineConfig.hallucinationFilter),
-        sentinelConfidenceThreshold: Number(dedicatedData.sentinel_confidence_threshold ?? baselineConfig.sentinelConfidenceThreshold),
-        autoFreezeThreshold: Number(dedicatedData.auto_freeze_threshold ?? baselineConfig.autoFreezeThreshold),
-        maxDailyWireVelocity: Number(dedicatedData.max_daily_wire_velocity ?? baselineConfig.maxDailyWireVelocity),
-        dualKeySignoffEnabled: Boolean(dedicatedData.dual_key_signoff_enabled ?? baselineConfig.dualKeySignoffEnabled),
-        realTimeAuditLogging: Boolean(dedicatedData.real_time_audit_logging ?? baselineConfig.realTimeAuditLogging),
-        updatedAt: dedicatedData.updated_at || null,
-        updatedBy: dedicatedData.updated_by || null,
-      };
-      localStorage.setItem(LOCAL_AI_CONFIG_KEY, JSON.stringify(dbConfig));
+    if (dedicatedErr) {
       return {
-        config: dbConfig,
-        isDbConnected: true,
-        isPersistent: true,
-        error: null,
-        source: 'database',
-      };
-    }
-  } catch {
-    // Table may not exist yet, proceed to reuse tenant_workspaces
-  }
-
-  // 3. Fallback: Reuse platform_root record in public.tenant_workspaces (notes field)
-  try {
-    const { data, error } = await supabase
-      .from('tenant_workspaces')
-      .select('id, notes, updated_at')
-      .eq('id', 'platform_root')
-      .maybeSingle();
-
-    if (error) {
-      return {
-        config: baselineConfig,
+        config: cachedConfig,
         isDbConnected: false,
         isPersistent: false,
-        error: `Supabase tenant_workspaces query notice: ${error.message}`,
+        error: `Failed to load public.ai_configurations: ${dedicatedErr.message}`,
         source: 'local_fallback',
       };
     }
 
-    if (data?.notes) {
-      try {
-        const parsedNotes = JSON.parse(data.notes);
-        if (parsedNotes && typeof parsedNotes === 'object' && (parsedNotes.model || parsedNotes.sentinelConfidenceThreshold !== undefined)) {
-          const configFromNotes: AiConfiguration = {
-            model: parsedNotes.model || baselineConfig.model,
-            temperature: typeof parsedNotes.temperature === 'number' ? parsedNotes.temperature : baselineConfig.temperature,
-            latencySla: typeof parsedNotes.latencySla === 'number' ? parsedNotes.latencySla : baselineConfig.latencySla,
-            guardrailActive: typeof parsedNotes.guardrailActive === 'boolean' ? parsedNotes.guardrailActive : baselineConfig.guardrailActive,
-            hallucinationFilter: typeof parsedNotes.hallucinationFilter === 'boolean' ? parsedNotes.hallucinationFilter : baselineConfig.hallucinationFilter,
-            sentinelConfidenceThreshold: typeof parsedNotes.sentinelConfidenceThreshold === 'number' ? parsedNotes.sentinelConfidenceThreshold : baselineConfig.sentinelConfidenceThreshold,
-            autoFreezeThreshold: typeof parsedNotes.autoFreezeThreshold === 'number' ? parsedNotes.autoFreezeThreshold : baselineConfig.autoFreezeThreshold,
-            maxDailyWireVelocity: typeof parsedNotes.maxDailyWireVelocity === 'number' ? parsedNotes.maxDailyWireVelocity : baselineConfig.maxDailyWireVelocity,
-            dualKeySignoffEnabled: typeof parsedNotes.dualKeySignoffEnabled === 'boolean' ? parsedNotes.dualKeySignoffEnabled : baselineConfig.dualKeySignoffEnabled,
-            realTimeAuditLogging: typeof parsedNotes.realTimeAuditLogging === 'boolean' ? parsedNotes.realTimeAuditLogging : baselineConfig.realTimeAuditLogging,
-            updatedAt: parsedNotes.updatedAt || data.updated_at || null,
-            updatedBy: parsedNotes.updatedBy || null,
-          };
-          localStorage.setItem(LOCAL_AI_CONFIG_KEY, JSON.stringify(configFromNotes));
-          return {
-            config: configFromNotes,
-            isDbConnected: true,
-            isPersistent: true,
-            error: null,
-            source: 'database',
-          };
-        }
-      } catch {
-        // notes is not JSON, use baseline
-      }
+    if (!dedicatedData) {
+      return {
+        config: { ...DEFAULT_AI_CONFIGURATION },
+        isDbConnected: true,
+        isPersistent: false,
+        error: 'No active configuration row found in public.ai_configurations; showing defaults until deployed.',
+        source: 'local_fallback',
+      };
+    }
+
+    const dbConfig: AiConfiguration = {
+      model: dedicatedData.model || DEFAULT_AI_CONFIGURATION.model,
+      temperature: Number(dedicatedData.temperature ?? DEFAULT_AI_CONFIGURATION.temperature),
+      latencySla: Number(dedicatedData.latency_sla ?? DEFAULT_AI_CONFIGURATION.latencySla),
+      guardrailActive: Boolean(dedicatedData.guardrail_active ?? DEFAULT_AI_CONFIGURATION.guardrailActive),
+      hallucinationFilter: Boolean(dedicatedData.hallucination_filter ?? DEFAULT_AI_CONFIGURATION.hallucinationFilter),
+      sentinelConfidenceThreshold: Number(dedicatedData.sentinel_confidence_threshold ?? DEFAULT_AI_CONFIGURATION.sentinelConfidenceThreshold),
+      autoFreezeThreshold: Number(dedicatedData.auto_freeze_threshold ?? DEFAULT_AI_CONFIGURATION.autoFreezeThreshold),
+      maxDailyWireVelocity: Number(dedicatedData.max_daily_wire_velocity ?? DEFAULT_AI_CONFIGURATION.maxDailyWireVelocity),
+      dualKeySignoffEnabled: Boolean(dedicatedData.dual_key_signoff_enabled ?? DEFAULT_AI_CONFIGURATION.dualKeySignoffEnabled),
+      realTimeAuditLogging: Boolean(dedicatedData.real_time_audit_logging ?? DEFAULT_AI_CONFIGURATION.realTimeAuditLogging),
+      updatedAt: dedicatedData.updated_at || null,
+      updatedBy: dedicatedData.updated_by || null,
+    };
+
+    try {
+      localStorage.setItem(LOCAL_AI_CONFIG_KEY, JSON.stringify(dbConfig));
+    } catch {
+      // Ignore storage error
     }
 
     return {
-      config: baselineConfig,
+      config: dbConfig,
       isDbConnected: true,
       isPersistent: true,
       error: null,
@@ -3409,35 +3611,33 @@ export async function fetchAiConfigurationResultFromDb(): Promise<AiConfigQueryR
     };
   } catch (err: any) {
     return {
-      config: baselineConfig,
+      config: cachedConfig,
       isDbConnected: false,
       isPersistent: false,
-      error: err?.message || 'Failed to connect to Supabase storage.',
+      error: err?.message || 'Failed to query public.ai_configurations.',
       source: 'local_fallback',
     };
   }
 }
 
 /**
- * Persists updated enterprise AI engine configuration to Supabase storage.
- * Strictly verifies caller role = SUPER_ADMIN to enforce multi-tenant security boundaries.
- * Emits a cryptographically verified audit record in public.audit_logs ONLY upon successful write.
+ * Persists updated enterprise AI engine configuration exclusively to public.ai_configurations.
+ * Strictly verifies SUPER_ADMIN caller identity and never mutates localStorage or logs audit events on failure.
  */
 export async function saveAiConfigurationToDb(
   newConfig: Partial<AiConfiguration>,
   caller?: { role?: string; name?: string; email?: string } | null
 ): Promise<{ success: boolean; config: AiConfiguration; error: string | null; auditLogged: boolean }> {
-  // Security Boundary Check: Only SUPER_ADMIN accounts are authorized to tune root AI engine parameters
-  if (caller?.role && caller.role !== 'SUPER_ADMIN') {
+  const callerEmail = (caller?.email || '').trim().toLowerCase();
+  if (!caller || caller.role !== 'SUPER_ADMIN' || callerEmail !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()) {
     return {
       success: false,
       config: { ...DEFAULT_AI_CONFIGURATION, ...newConfig },
-      error: `Access Denied: Role '${caller.role}' is not authorized to modify Platform AI Engine parameters. Only SUPER_ADMIN can execute this change.`,
+      error: `Access Denied: Only the authorized Platform Super Admin (${AUTHORIZED_SUPER_ADMIN_EMAIL}) can modify Platform AI Engine parameters.`,
       auditLogged: false,
     };
   }
 
-  // Merge with existing configuration to avoid overwriting unedited parameters
   let existingConfig = { ...DEFAULT_AI_CONFIGURATION };
   try {
     const rawLocal = localStorage.getItem(LOCAL_AI_CONFIG_KEY);
@@ -3452,103 +3652,101 @@ export async function saveAiConfigurationToDb(
     ...existingConfig,
     ...newConfig,
     updatedAt: new Date().toISOString(),
-    updatedBy: caller?.name || caller?.email || 'Platform Super Admin',
+    updatedBy: caller.name || caller.email || AUTHORIZED_SUPER_ADMIN_EMAIL,
   };
-
-  // Always update local cache for smooth fallback
-  localStorage.setItem(LOCAL_AI_CONFIG_KEY, JSON.stringify(payload));
 
   if (!isSupabaseConfigured()) {
     return {
-      success: true,
-      config: payload,
-      error: 'Supabase unconfigured; saved to verified local encrypted storage.',
-      auditLogged: false,
-    };
-  }
-
-  // 1. Attempt writing to dedicated ai_configurations table if exists
-  let dedicatedSaved = false;
-  try {
-    const { error: dedicatedErr } = await supabase
-      .from('ai_configurations')
-      .upsert({
-        id: 'default',
-        tenant_id: 'platform_root',
-        model: payload.model,
-        temperature: payload.temperature,
-        latency_sla: payload.latencySla,
-        guardrail_active: payload.guardrailActive,
-        hallucination_filter: payload.hallucinationFilter,
-        sentinel_confidence_threshold: payload.sentinelConfidenceThreshold,
-        auto_freeze_threshold: payload.autoFreezeThreshold,
-        max_daily_wire_velocity: payload.maxDailyWireVelocity,
-        dual_key_signoff_enabled: payload.dualKeySignoffEnabled,
-        real_time_audit_logging: payload.realTimeAuditLogging,
-        updated_at: payload.updatedAt,
-        updated_by: payload.updatedBy,
-      });
-
-    if (!dedicatedErr) {
-      dedicatedSaved = true;
-    }
-  } catch {
-    // Continue to tenant_workspaces storage
-  }
-
-  // 2. Persist to public.tenant_workspaces.notes for platform_root
-  let dbPersisted = dedicatedSaved;
-  let dbError: string | null = null;
-
-  try {
-    const { error } = await supabase
-      .from('tenant_workspaces')
-      .update({
-        notes: JSON.stringify(payload),
-        updated_at: payload.updatedAt,
-      })
-      .eq('id', 'platform_root');
-
-    if (error) {
-      dbError = error.message;
-      console.warn('Supabase tenant_workspaces AI config update note:', error.message);
-    } else {
-      dbPersisted = true;
-    }
-  } catch (err: any) {
-    dbError = err?.message || 'Database connection error';
-  }
-
-  // CRITICAL INTEGRITY CHECK: If write failed, reject immediately. Never produce false success or record fake audit events!
-  if (!dbPersisted && dbError) {
-    return {
       success: false,
       config: payload,
-      error: `Supabase write rejected: ${dbError}. Check RLS privileges for active session.`,
+      error: 'Supabase is not configured. Platform AI configuration changes require a live database connection.',
       auditLogged: false,
     };
   }
 
-  // 3. Record backend audit event in public.audit_logs ONLY upon verified success
-  let auditLogged = false;
-  if (dbPersisted || dedicatedSaved) {
+  try {
+    const { data, error } = await supabase
+      .from('ai_configurations')
+      .upsert(
+        {
+          id: 'default',
+          tenant_id: 'platform_root',
+          model: payload.model,
+          temperature: payload.temperature,
+          latency_sla: payload.latencySla,
+          guardrail_active: payload.guardrailActive,
+          hallucination_filter: payload.hallucinationFilter,
+          sentinel_confidence_threshold: payload.sentinelConfidenceThreshold,
+          auto_freeze_threshold: payload.autoFreezeThreshold,
+          max_daily_wire_velocity: payload.maxDailyWireVelocity,
+          dual_key_signoff_enabled: payload.dualKeySignoffEnabled,
+          real_time_audit_logging: payload.realTimeAuditLogging,
+          is_active: true,
+          updated_at: payload.updatedAt,
+          updated_by: payload.updatedBy,
+        },
+        { onConflict: 'id' }
+      )
+      .select()
+      .single();
+
+    if (error) {
+      return {
+        success: false,
+        config: payload,
+        error: `Supabase write rejected on public.ai_configurations: ${error.message}`,
+        auditLogged: false,
+      };
+    }
+
+    const persistedConfig: AiConfiguration = data
+      ? {
+          model: data.model || payload.model,
+          temperature: Number(data.temperature ?? payload.temperature),
+          latencySla: Number(data.latency_sla ?? payload.latencySla),
+          guardrailActive: Boolean(data.guardrail_active ?? payload.guardrailActive),
+          hallucinationFilter: Boolean(data.hallucination_filter ?? payload.hallucinationFilter),
+          sentinelConfidenceThreshold: Number(data.sentinel_confidence_threshold ?? payload.sentinelConfidenceThreshold),
+          autoFreezeThreshold: Number(data.auto_freeze_threshold ?? payload.autoFreezeThreshold),
+          maxDailyWireVelocity: Number(data.max_daily_wire_velocity ?? payload.maxDailyWireVelocity),
+          dualKeySignoffEnabled: Boolean(data.dual_key_signoff_enabled ?? payload.dualKeySignoffEnabled),
+          realTimeAuditLogging: Boolean(data.real_time_audit_logging ?? payload.realTimeAuditLogging),
+          updatedAt: data.updated_at || payload.updatedAt,
+          updatedBy: data.updated_by || payload.updatedBy,
+        }
+      : payload;
+
+    try {
+      localStorage.setItem(LOCAL_AI_CONFIG_KEY, JSON.stringify(persistedConfig));
+    } catch {
+      // Ignore storage error
+    }
+
+    let auditLogged = false;
     const auditRes = await recordAuditEventInDb({
       action: 'AI Engine & Risk Parameters Updated',
-      target: `Model: ${payload.model} (AML: ${payload.sentinelConfidenceThreshold}%, Freeze: ${payload.autoFreezeThreshold}/100, DualKey: ${payload.dualKeySignoffEnabled})`,
-      actor: caller?.name || 'Alexander Vance',
+      target: `Model: ${persistedConfig.model} (AML: ${persistedConfig.sentinelConfidenceThreshold}%, Freeze: ${persistedConfig.autoFreezeThreshold}/100, DualKey: ${persistedConfig.dualKeySignoffEnabled})`,
+      actor: caller.name || AUTHORIZED_SUPER_ADMIN_EMAIL,
       role: 'SUPER_ADMIN',
       tenantId: 'platform_root',
       status: 'Authorized',
     });
     auditLogged = auditRes.success;
-  }
 
-  return {
-    success: true,
-    config: payload,
-    error: null,
-    auditLogged,
-  };
+    return {
+      success: true,
+      config: persistedConfig,
+      error: null,
+      auditLogged,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      config: payload,
+      error: err?.message || 'Unexpected database error writing public.ai_configurations.',
+      auditLogged: false,
+    };
+  }
 }
 
 export interface AuditLogEntry {
@@ -3869,18 +4067,6 @@ export async function fetchKycAggregatesResultFromDb(
   const client = clientOverride !== undefined ? clientOverride : supabase;
   const configured = clientOverride !== undefined ? Boolean(clientOverride) : isSupabaseConfigured();
 
-  const baselineTierDist = [
-    { label: 'Private Wealth Tier 1', value: 12400 },
-    { label: 'Private Wealth Tier 2', value: 48200 },
-    { label: 'Private Wealth Tier 3', value: 84100 },
-  ];
-
-  const baselineDocTypeDist = [
-    { label: 'Passport', value: 92400 },
-    { label: 'National ID', value: 41200 },
-    { label: 'Tax ID / PAN', value: 11100 },
-  ];
-
   if (!configured || !client) {
     return {
       totalRecords: 0,
@@ -3892,6 +4078,42 @@ export async function fetchKycAggregatesResultFromDb(
       docTypeDistribution: [],
       source: 'fallback',
       state: 'unconfigured',
+      error: 'Supabase client is not configured.',
+      isPartial: false,
+      rejectedRecordsCount: 0,
+    };
+  }
+
+  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+    return {
+      totalRecords: 0,
+      totalCount: 0,
+      verifiedCount: 0,
+      pendingCount: 0,
+      reviewCount: 0,
+      tierDistribution: [],
+      docTypeDistribution: [],
+      source: 'fallback',
+      state: 'demo_session_rls',
+      error: 'Authentication required: Active Supabase Auth session needed for institutional KYC aggregates.',
+      isPartial: false,
+      rejectedRecordsCount: 0,
+    };
+  }
+
+  const activeRole = getActiveSessionRole(clientOverride);
+  if (activeRole && !canRoleAccessInstitutionalKyc(activeRole)) {
+    return {
+      totalRecords: 0,
+      totalCount: 0,
+      verifiedCount: 0,
+      pendingCount: 0,
+      reviewCount: 0,
+      tierDistribution: [],
+      docTypeDistribution: [],
+      source: 'fallback',
+      state: 'restricted',
+      error: `Restricted: Role ${activeRole} is not authorized for institutional KYC aggregates.`,
       isPartial: false,
       rejectedRecordsCount: 0,
     };
@@ -3902,39 +4124,74 @@ export async function fetchKycAggregatesResultFromDb(
       p_tenant_id: tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root' ? tenantId : null,
     });
 
-    if (!rpcError && rpcData) {
+    if (rpcError) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
       return {
-        totalRecords: Number(rpcData.totalRecords) || 0,
-        totalCount: Number(rpcData.totalRecords) || 0,
+        totalRecords: 0,
+        totalCount: 0,
+        verifiedCount: 0,
+        pendingCount: 0,
+        reviewCount: 0,
+        tierDistribution: [],
+        docTypeDistribution: [],
+        source: 'fallback',
+        state: classifyErrorState(rpcError, hasAuthSession),
+        error: rpcError.message || 'Failed to load KYC aggregates.',
+        isPartial: false,
+        rejectedRecordsCount: 0,
+      };
+    }
+
+    if (rpcData && typeof rpcData === 'object') {
+      const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      const totalRecords = Number(rpcData.totalRecords) || 0;
+      return {
+        totalRecords,
+        totalCount: totalRecords,
         verifiedCount: Number(rpcData.verifiedCount) || 0,
         pendingCount: Number(rpcData.pendingCount) || 0,
         reviewCount: Number(rpcData.reviewCount) || 0,
-        tierDistribution: rpcData.tierDistribution || baselineTierDist,
-        docTypeDistribution: rpcData.docTypeDistribution || baselineDocTypeDist,
+        tierDistribution: Array.isArray(rpcData.tierDistribution) ? rpcData.tierDistribution : [],
+        docTypeDistribution: Array.isArray(rpcData.docTypeDistribution) ? rpcData.docTypeDistribution : [],
         source: 'supabase',
-        state: (Number(rpcData.totalRecords) > 0) ? 'live_records' : (hasAuthSession ? 'zero_records' : 'demo_session_rls'),
+        state: totalRecords > 0 ? 'live_records' : (hasAuthSession ? 'zero_records' : 'demo_session_rls'),
+        error: null,
         isPartial: Boolean(rpcData.isPartial),
         rejectedRecordsCount: Number(rpcData.rejectedRecordsCount) || 0,
       };
     }
-  } catch {
-    // Fall through
-  }
 
-  return {
-    totalRecords: 144700,
-    totalCount: 144700,
-    verifiedCount: 138200,
-    pendingCount: 4200,
-    reviewCount: 2300,
-    tierDistribution: baselineTierDist,
-    docTypeDistribution: baselineDocTypeDist,
-    source: 'fallback',
-    state: 'demo_session_rls',
-    isPartial: false,
-    rejectedRecordsCount: 0,
-  };
+    return {
+      totalRecords: 0,
+      totalCount: 0,
+      verifiedCount: 0,
+      pendingCount: 0,
+      reviewCount: 0,
+      tierDistribution: [],
+      docTypeDistribution: [],
+      source: 'fallback',
+      state: 'query_error',
+      error: 'Empty response from get_kyc_aggregates.',
+      isPartial: false,
+      rejectedRecordsCount: 0,
+    };
+  } catch (err: any) {
+    const hasAuthSession = await checkHasSupabaseAuthSession(client);
+    return {
+      totalRecords: 0,
+      totalCount: 0,
+      verifiedCount: 0,
+      pendingCount: 0,
+      reviewCount: 0,
+      tierDistribution: [],
+      docTypeDistribution: [],
+      source: 'fallback',
+      state: classifyErrorState(err, hasAuthSession),
+      error: err?.message || 'Unexpected error querying KYC aggregates.',
+      isPartial: false,
+      rejectedRecordsCount: 0,
+    };
+  }
 }
 
 /**
@@ -3946,27 +4203,53 @@ export async function fetchPlatformExecutiveKpis(
   const client = clientOverride !== undefined ? clientOverride : supabase;
   const configured = clientOverride !== undefined ? Boolean(clientOverride) : isSupabaseConfigured();
 
-  const baselineKpis: PlatformExecutiveKpis = {
-    settledVolumeYtd: 5240000000,
-    institutionalMrr: 285000,
-    preventedFraudVolume: 138420000,
-    slaCompliancePct: 98.4,
-    complianceScore: 99.4,
-    activeUsers: 215000,
-    netLiquidBalance: 842500000,
-    riskExposureScore: 12,
-  };
+  const emptyKpis = (
+    source: 'error' | 'unconfigured',
+    error: string,
+    state: QueryResultState = 'query_error'
+  ): PlatformExecutiveKpis => ({
+    settledVolumeYtd: 0,
+    institutionalMrr: 0,
+    preventedFraudVolume: 0,
+    slaCompliancePct: 0,
+    complianceScore: 0,
+    activeUsers: 0,
+    netLiquidBalance: 0,
+    riskExposureScore: 0,
+    source,
+    state,
+    error,
+  });
 
-  if (!configured || !client) return baselineKpis;
+  if (!configured || !client) {
+    return emptyKpis('unconfigured', 'Supabase client is not configured.', 'unconfigured');
+  }
+
+  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+    return emptyKpis(
+      'error',
+      'Authentication required: Active Supabase Auth session needed for executive KPIs.',
+      'demo_session_rls'
+    );
+  }
+
+  const activeRole = getActiveSessionRole(clientOverride);
+  if (activeRole && activeRole !== 'SUPER_ADMIN') {
+    return emptyKpis(
+      'error',
+      `Restricted: Global Executive KPIs are restricted exclusively to SUPER_ADMIN (current role: ${activeRole}).`,
+      'restricted'
+    );
+  }
 
   try {
     const { data, error } = await client.rpc('get_platform_executive_kpis');
     if (error) {
-      // Gracefully handle "Access Denied" or other PG exceptions without throwing
-      console.warn(`[DB_DIAGNOSTIC] fetchPlatformExecutiveKpis note: ${error.message}`);
-      return baselineKpis;
+      const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      console.warn(`[DB_DIAGNOSTIC] fetchPlatformExecutiveKpis error: ${error.message}`);
+      return emptyKpis('error', error.message || 'Executive KPIs access failed.', classifyErrorState(error, hasAuthSession));
     }
-    if (data) {
+    if (data && typeof data === 'object') {
       return {
         settledVolumeYtd: Number(data.settledVolumeYtd) || 0,
         institutionalMrr: Number(data.institutionalMrr) || 0,
@@ -3976,11 +4259,15 @@ export async function fetchPlatformExecutiveKpis(
         activeUsers: Number(data.activeUsers) || 0,
         netLiquidBalance: Number(data.netLiquidBalance) || 0,
         riskExposureScore: Number(data.riskExposureScore) || 0,
+        source: 'supabase',
+        state: 'live_records',
+        error: null,
       };
     }
+    return emptyKpis('error', 'No executive KPI data returned from Supabase.');
   } catch (err: any) {
+    const hasAuthSession = await checkHasSupabaseAuthSession(client);
     console.warn(`[DB_DIAGNOSTIC] fetchPlatformExecutiveKpis exception: ${err.message}`);
+    return emptyKpis('error', err?.message || 'Unexpected exception fetching executive KPIs.', classifyErrorState(err, hasAuthSession));
   }
-
-  return baselineKpis;
 }

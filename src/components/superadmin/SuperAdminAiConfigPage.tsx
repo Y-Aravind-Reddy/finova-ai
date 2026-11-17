@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Cpu,
-  Sliders,
-  Zap,
-  ShieldAlert,
   Save,
   RefreshCw,
   CheckCircle2,
@@ -12,7 +9,6 @@ import {
   Lock,
   Clock,
   ShieldCheck,
-  FileCheck2,
 } from 'lucide-react';
 import {
   fetchAiConfigurationResultFromDb,
@@ -63,12 +59,8 @@ const SuperAdminAiConfigPage: React.FC<SuperAdminAiConfigPageProps> = ({ current
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [updatedBy, setUpdatedBy] = useState<string | null>(null);
 
-  // Determine active user (prop, stored session, or default)
-  const activeUser = currentUser || getStoredSession()?.user || {
-    role: 'SUPER_ADMIN',
-    name: 'Alexander Vance',
-    email: 'superadmin@finova.ai',
-  };
+  // Determine active authenticated operator (never synthesize a fake fallback SUPER_ADMIN)
+  const activeUser = currentUser || getStoredSession()?.user || null;
 
   const loadConfiguration = useCallback(async () => {
     setLoading(true);
@@ -90,11 +82,11 @@ const SuperAdminAiConfigPage: React.FC<SuperAdminAiConfigPageProps> = ({ current
       setLastUpdated(result.config.updatedAt || null);
       setUpdatedBy(result.config.updatedBy || null);
 
-      if (result.error && !result.isDbConnected) {
+      if (result.error) {
         setErrorMessage(result.error);
       }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Failed to reload AI configuration from Supabase storage.');
+      setErrorMessage(err?.message || 'Failed to load AI configuration from Supabase storage.');
     } finally {
       setLoading(false);
     }
@@ -132,12 +124,13 @@ const SuperAdminAiConfigPage: React.FC<SuperAdminAiConfigPageProps> = ({ current
         setSaveSuccess(false);
       } else {
         setSaveSuccess(true);
+        setIsDbConnected(true);
         setLastUpdated(result.config.updatedAt || new Date().toISOString());
-        setUpdatedBy(result.config.updatedBy || activeUser.name || 'Super Admin');
+        setUpdatedBy(result.config.updatedBy || activeUser?.name || 'Super Admin');
         setSuccessDetails(
           result.auditLogged
-            ? 'Parameters persisted to Supabase and immutable audit event recorded in public.audit_logs.'
-            : 'Parameters saved to persistent configuration cache.'
+            ? 'Parameters persisted to public.ai_configurations and immutable audit event recorded in public.audit_logs.'
+            : 'Parameters persisted to public.ai_configurations.'
         );
 
         setTimeout(() => {
@@ -458,10 +451,11 @@ const SuperAdminAiConfigPage: React.FC<SuperAdminAiConfigPageProps> = ({ current
 
       {/* Footer Operator Info */}
       <div className="p-3 bg-[#1E1E1E]/60 rounded-xl border border-[#D4A017]/20 flex flex-col sm:flex-row items-start sm:items-center justify-between text-[10px] text-[#6B7280] gap-2">
-        <span>Active Operator: {activeUser.name} ({activeUser.role})</span>
-        {lastUpdated && (
-          <span>Last Synchronized: {new Date(lastUpdated).toLocaleString()} • Persistence Rail: public.tenant_workspaces (platform_root)</span>
-        )}
+        <span>Active Operator: {activeUser ? `${activeUser.name} (${activeUser.role})` : 'Unauthenticated Session'}</span>
+        <span>
+          {lastUpdated ? `Last Synchronized: ${new Date(lastUpdated).toLocaleString()} • ` : ''}
+          Persistence Rail: public.ai_configurations (platform_root)
+        </span>
       </div>
     </div>
   );

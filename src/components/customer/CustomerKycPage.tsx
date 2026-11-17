@@ -1,29 +1,38 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, CheckCircle2, FileText, Fingerprint, Award, Lock, RotateCw, Loader2, UploadCloud } from 'lucide-react';
-import { CustomerDocument } from '../../data/finovaDatasets';
+import { ShieldCheck, CheckCircle2, RotateCw, Loader2, UploadCloud, AlertTriangle } from 'lucide-react';
+import { CustomerDocument, UserAccount } from '../../data/finovaDatasets';
 import { fetchKycRecordsResultFromDb } from '../../services/finovaDatabase';
 
 interface CustomerKycPageProps {
   tenantId?: string;
+  currentUser?: UserAccount;
   onNavigateSection?: (section: string) => void;
 }
 
 const CustomerKycPage: React.FC<CustomerKycPageProps> = ({
   tenantId = 'tenant_apex_bank',
+  currentUser,
   onNavigateSection,
 }) => {
   const [records, setRecords] = useState<CustomerDocument[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadKyc = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetchKycRecordsResultFromDb(tenantId);
+      const res = await fetchKycRecordsResultFromDb(tenantId, {
+        userId: currentUser?.id,
+      });
       setRecords(res.data || []);
+      if (res.error) {
+        setLoadError(res.error);
+      }
     } finally {
       setLoading(false);
     }
-  }, [tenantId]);
+  }, [tenantId, currentUser?.id]);
 
   useEffect(() => {
     loadKyc();
@@ -64,6 +73,13 @@ const CustomerKycPage: React.FC<CustomerKycPageProps> = ({
           </div>
         </div>
       </div>
+
+      {loadError && (
+        <div className="p-3 bg-amber-950/60 border border-amber-500/50 rounded-xl text-amber-200 flex items-center gap-2">
+          <AlertTriangle size={16} className="text-amber-400 shrink-0" />
+          <span>KYC Telemetry Notice: {loadError}</span>
+        </div>
+      )}
 
       <div className="rounded-2xl bg-[#1E1E1E]/95 border border-[#D4A017]/30 p-5 shadow-lg space-y-4">
         <h3 className="text-sm font-bold text-[#FFF8E7] flex items-center gap-2 pb-3 border-b border-[#D4A017]/20">

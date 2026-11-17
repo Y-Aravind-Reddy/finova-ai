@@ -1,29 +1,39 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FileText, Download, Upload, ShieldCheck, Lock, CheckCircle2, RotateCw, Loader2 } from 'lucide-react';
-import { CustomerDocument } from '../../data/finovaDatasets';
+import { FileText, Download, Upload, ShieldCheck, Lock, CheckCircle2, RotateCw, Loader2, AlertTriangle } from 'lucide-react';
+import { CustomerDocument, UserAccount } from '../../data/finovaDatasets';
 import { fetchKycRecordsResultFromDb, uploadKycRecordToDb } from '../../services/finovaDatabase';
 
 interface CustomerDocumentsPageProps {
   tenantId?: string;
+  currentUser?: UserAccount;
 }
 
 const CustomerDocumentsPage: React.FC<CustomerDocumentsPageProps> = ({
   tenantId = 'tenant_apex_bank',
+  currentUser,
 }) => {
   const [docs, setDocs] = useState<CustomerDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadDocs = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetchKycRecordsResultFromDb(tenantId);
+      const res = await fetchKycRecordsResultFromDb(tenantId, {
+        userId: currentUser?.id,
+      });
       setDocs(res.data || []);
+      if (res.error) {
+        setLoadError(res.error);
+      }
     } finally {
       setLoading(false);
     }
-  }, [tenantId]);
+  }, [tenantId, currentUser?.id]);
 
   useEffect(() => {
     loadDocs();
@@ -31,22 +41,27 @@ const CustomerDocumentsPage: React.FC<CustomerDocumentsPageProps> = ({
 
   const handleUploadGenuineDocument = async () => {
     setUploading(true);
+    setUploadError(null);
+    setUploadSuccess(false);
     try {
       const res = await uploadKycRecordToDb({
+        userId: currentUser?.id,
         tenantId,
+        tenantName: currentUser?.tenantName,
         title: 'Custody Account Supplemental Trust Declaration',
         documentType: 'Custody Agreement',
         fileSize: '3.8 MB',
-        status: 'Verified',
-        verifiedBy: 'Finova Gold Identity Guard',
+        status: 'Pending',
       });
       if (res.success && res.data) {
         setDocs((prev) => [res.data!, ...prev]);
         setUploadSuccess(true);
         setTimeout(() => setUploadSuccess(false), 3500);
+      } else {
+        setUploadError(res.error || 'Document upload failed in database.');
       }
-    } catch (err) {
-      console.warn('Document upload error:', err);
+    } catch (err: any) {
+      setUploadError(err?.message || 'Unexpected exception uploading document.');
     } finally {
       setUploading(false);
     }
@@ -88,6 +103,20 @@ const CustomerDocumentsPage: React.FC<CustomerDocumentsPageProps> = ({
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="p-3 bg-amber-950/60 border border-amber-500/50 rounded-xl text-amber-200 flex items-center gap-2">
+          <AlertTriangle size={16} className="text-amber-400 shrink-0" />
+          <span>Document Vault Notice: {loadError}</span>
+        </div>
+      )}
+
+      {uploadError && (
+        <div className="p-3 bg-red-950/70 border border-red-500/60 rounded-xl text-red-200 flex items-center gap-2">
+          <AlertTriangle size={16} className="text-red-400 shrink-0" />
+          <span>Upload rejected: {uploadError}</span>
+        </div>
+      )}
 
       {uploadSuccess && (
         <div className="p-3 bg-[#301B05] border border-[#D4A017] rounded-xl text-[#F5C542] flex items-center gap-2">

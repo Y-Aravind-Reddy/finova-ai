@@ -4,7 +4,6 @@ import {
   CustomerDocument,
   UserAccount,
 } from '../../data/finovaDatasets';
-import { getTransactionsForTenant } from '../../data/tenantDatasets';
 import {
   fetchTransactionsResultFromDb,
   fetchKycRecordsResultFromDb,
@@ -12,7 +11,7 @@ import {
   fetchTransactionAggregatesResultFromDb,
   TransactionAggregates,
 } from '../../services/finovaDatabase';
-import { convertToInr, convertToUsd, formatCurrencyWithInrDisclosure, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
+import { convertToInr, convertToUsd } from '../../services/currencyService';
 
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
@@ -29,25 +28,14 @@ import {
   Download,
   Bot,
   ShieldCheck,
-  Send,
   Building,
   UploadCloud,
   CheckCircle,
-  Bell,
-  Settings,
-  HelpCircle,
-  Clock,
-  ArrowUpRight,
-  ArrowDownLeft,
   Search,
-  Filter,
-  Fingerprint,
-  Key,
-  Smartphone,
-  Lock,
   Building2,
   RotateCw,
-  Activity
+  Activity,
+  AlertTriangle
 } from 'lucide-react';
 
 interface CustomerDashboardProps {
@@ -83,8 +71,9 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         fetchTransactionsResultFromDb(tenantId, { userId: customerUserId }),
         fetchTransactionAggregatesResultFromDb(tenantId, { userId: customerUserId }),
       ]);
-      setDbSource(result.source);
-      setDbError(result.error);
+      const errs = [result.error, aggResult.error].filter((msg): msg is string => Boolean(msg));
+      setDbSource(result.source === 'supabase' && aggResult.source === 'supabase' ? 'supabase' : result.source);
+      setDbError(errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null);
       setTenantTransactions(result.data || []);
       setCustomerAggregates(aggResult);
     } catch (err: any) {
@@ -104,17 +93,25 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<'transactions' | 'documents'>('transactions');
   // Strict requirement 8: Keep public.kyc_records empty in UI until genuine records exist
   const [uploadedDocs, setUploadedDocs] = useState<CustomerDocument[]>([]);
+  const [kycError, setKycError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
+  const customerUserId = currentUser && 'id' in currentUser ? (currentUser as any).id : undefined;
+
   const loadKycDocuments = React.useCallback(async () => {
-    const result = await fetchKycRecordsResultFromDb(tenantId);
+    setKycError(null);
+    const result = await fetchKycRecordsResultFromDb(tenantId, { userId: customerUserId });
+    if (result.error) {
+      setKycError(result.error);
+    }
     if (result.data && result.data.length > 0) {
       setUploadedDocs(result.data);
     } else {
       setUploadedDocs([]);
     }
-  }, [tenantId]);
+  }, [tenantId, customerUserId]);
 
   React.useEffect(() => {
     loadKycDocuments();
@@ -220,24 +217,27 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   }, [tenantTransactions, currencyCode]);
 
   const handleSimulateUpload = async () => {
+    setUploadError(null);
+    setUploadSuccess(false);
     try {
       const res = await uploadKycRecordToDb({
         tenantId,
         tenantName: companyName,
-        userId: currentUser && 'id' in currentUser ? currentUser.id : undefined,
+        userId: customerUserId,
         title: 'Custody Account Supplemental Trust Declaration',
         documentType: 'Custody Agreement',
         fileSize: '3.4 MB',
-        status: 'Verified',
-        verifiedBy: 'Finova Gold Identity Guard',
+        status: 'Pending',
       });
       if (res.success && res.data) {
         setUploadedDocs((prev) => [res.data!, ...prev]);
         setUploadSuccess(true);
         setTimeout(() => setUploadSuccess(false), 3000);
+      } else {
+        setUploadError(res.error || 'KYC document upload rejected by database.');
       }
-    } catch (e) {
-      console.warn('KYC upload note:', e);
+    } catch (e: any) {
+      setUploadError(e?.message || 'Unexpected exception uploading KYC document.');
     }
   };
 
@@ -416,6 +416,24 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         </div>
       </div>
 
+      {(dbError || kycError) && (
+        <div className="rounded-xl p-3.5 bg-amber-950/50 border border-amber-500/50 text-amber-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+            <span>Database Notice: {[dbError, kycError].filter(Boolean).join(' | ')}</span>
+          </div>
+          <button
+            onClick={() => {
+              loadCustomerData();
+              loadKycDocuments();
+            }}
+            className="px-3 py-1 rounded-lg bg-[#121212] border border-amber-400/50 text-amber-200 text-[10px] hover:bg-[#262626] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Database Derived Custody Overview */}
       <div className="flex items-center justify-between text-xs text-[#9CA3AF] px-1">
         <span className="font-semibold text-[#FAF7F0] flex items-center gap-1.5">
@@ -467,7 +485,11 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         <ThreeDKpiCard
           title="KYC Status"
           value={uploadedDocs.length > 0 ? 'Accredited' : '0 Documents on File'}
-          subValue="public.kyc_records is empty (0 records on file)"
+          subValue={
+            uploadedDocs.length > 0
+              ? `${uploadedDocs.length} verified records on file`
+              : 'public.kyc_records is empty (0 records on file)'
+          }
           change={uploadedDocs.length > 0 ? 'Verified' : 'Queue Empty'}
           trend={uploadedDocs.length > 0 ? 'up' : 'down'}
           tag="Compliance"
@@ -511,26 +533,29 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         <div className="lg:col-span-7 rounded-2xl bg-[#262626]/95 border border-[#3A3A3A] p-5 shadow-[0_12px_36px_rgba(0,0,0,0.6)] flex flex-col justify-between">
           <ThreeDProgressRing
             title="3D Credit Utilization & Covenant"
-            subtitle="Tier 3 accredited threshold parameters"
+            subtitle="Live account & custody compliance ratios"
             size={240}
             items={[
               {
                 label: 'Credit Utilization',
-                value: 18.4,
-                displayValue: '18.4%',
-                subtext: `${currencySymbol}46,000 used of ${currencySymbol}250,000 limit`,
+                value: metrics.creditLimit > 0 ? Math.round((metrics.creditUsed / metrics.creditLimit) * 1000) / 10 : 0,
+                displayValue: '0.0%',
+                subtext: `${currencySymbol}${metrics.creditUsedUsd.toLocaleString()} used of ${currencySymbol}${metrics.creditLimitUsd.toLocaleString()} limit`,
               },
               {
                 label: 'KYC Vault Verification',
-                value: 100,
-                displayValue: '100%',
-                subtext: '5 of 5 Sovereign documents certified',
+                value: uploadedDocs.length > 0 ? 100 : 0,
+                displayValue: uploadedDocs.length > 0 ? '100%' : '0%',
+                subtext: `${uploadedDocs.length} Sovereign document${uploadedDocs.length === 1 ? '' : 's'} on file`,
               },
               {
-                label: 'Portfolio Net Yield',
-                value: 86.5,
-                displayValue: '+8.65%',
-                subtext: 'Annualized net Treasury & equity yield',
+                label: 'Settlement Ratio',
+                value: metrics.totalTransactions > 0 ? Math.round((metrics.settledTransactions / metrics.totalTransactions) * 1000) / 10 : 0,
+                displayValue:
+                  metrics.totalTransactions > 0
+                    ? `${((metrics.settledTransactions / metrics.totalTransactions) * 100).toFixed(1)}%`
+                    : '0.0%',
+                subtext: `${metrics.settledTransactions} of ${metrics.totalTransactions} transactions settled`,
               },
             ]}
           />
@@ -611,6 +636,13 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
             )}
           </div>
         </div>
+
+        {uploadError && (
+          <div className="mt-3 p-2.5 rounded-xl bg-red-950/70 border border-red-500/60 text-xs text-red-200 flex items-center gap-2">
+            <AlertTriangle size={14} className="text-red-400 shrink-0" />
+            <span>Upload failed: {uploadError}</span>
+          </div>
+        )}
 
         {uploadSuccess && (
           <div className="mt-3 p-2.5 rounded-xl bg-[#121212] border border-[#D4A017] text-xs text-[#E6C78B] flex items-center gap-2">

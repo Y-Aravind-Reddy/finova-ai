@@ -8,7 +8,6 @@ import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { 
   AlertTriangle, 
   ShieldAlert, 
-  Clock, 
   RotateCw, 
   FileWarning, 
   Activity,
@@ -28,22 +27,28 @@ const TransferExceptions: React.FC = () => {
     tenantId: 'ALL'
   });
 
-  const { data: metrics, isLoading, refetch } = useQuery({
+  const { data: metrics, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['exception-metrics', filters],
     queryFn: () => transferIntelligenceService.fetchExceptionMetrics(filters.tenantId, filters),
   });
 
-  const { data: txData } = useQuery({
+  const { data: txData, isError: txIsError, error: txErrObj, refetch: refetchTx } = useQuery({
     queryKey: ['exception-records', filters],
     queryFn: () => transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, status: 'Failed', pageSize: 10 }),
   });
 
   const kpis = [
-    { title: 'Failed Transfers', value: metrics?.failedCount.toLocaleString() || '0', sub: 'Clearing rejections', icon: <XCircle size={20} />, variant: 'gold-accent' as const },
-    { title: 'Open Investigations', value: metrics?.openInvestigations.toLocaleString() || '0', sub: 'Active forensic cases', icon: <Activity size={20} /> },
-    { title: 'High-Risk Hits', value: metrics?.fraudCount.toLocaleString() || '0', sub: 'Surveillance matches', icon: <ShieldAlert size={20} /> },
-    { title: 'Error Records', value: metrics?.errorRecords.toLocaleString() || '0', sub: 'System log exceptions', icon: <FileWarning size={20} /> },
+    { title: 'Failed Transfers', value: (metrics?.failedCount ?? 0).toLocaleString(), sub: 'Clearing rejections', icon: <XCircle size={20} />, variant: 'gold-accent' as const },
+    { title: 'Open Investigations', value: (metrics?.openInvestigations ?? 0).toLocaleString(), sub: 'Active forensic cases', icon: <Activity size={20} /> },
+    { title: 'High-Risk Hits', value: (metrics?.fraudCount ?? 0).toLocaleString(), sub: 'Surveillance matches', icon: <ShieldAlert size={20} /> },
+    { title: 'Error Records', value: (metrics?.errorRecords ?? 0).toLocaleString(), sub: 'System log exceptions', icon: <FileWarning size={20} /> },
   ];
+
+  const combinedErr = isError
+    ? (error as Error)?.message
+    : txIsError
+    ? (txErrObj as Error)?.message
+    : null;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
@@ -62,23 +67,38 @@ const TransferExceptions: React.FC = () => {
       <DataTransferFilterBar 
         filters={filters} 
         onFilterChange={setFilters} 
-        onRefresh={() => refetch()} 
+        onRefresh={() => { refetch(); refetchTx(); }} 
         isLoading={isLoading} 
       />
 
+      {combinedErr && (
+        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-red-400 shrink-0" />
+            <span>Exception Telemetry Error: {combinedErr}</span>
+          </div>
+          <button
+            onClick={() => { refetch(); refetchTx(); }}
+            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi, idx) => (
-          <ThreeDKpiCard key={idx} {...kpi} trend="down" change="Critical" tag="Alert" />
+          <ThreeDKpiCard key={idx} {...kpi} trend="down" change={metrics?.source === 'supabase' ? 'Live' : 'Unavailable'} tag="Alert" />
         ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ThreeDDonutChart
-          title="Error Code Taxonomy"
-          subtitle="Top rejection reasons across rails"
+          title="Exception Taxonomy"
+          subtitle="Rejection and exception breakdown across rails"
           segments={metrics?.errorCodeDistribution || []}
           centerLabel="Errors"
-          centerValue={metrics?.failedCount.toString() || '0'}
+          centerValue={String(metrics?.failedCount ?? 0)}
           height={320}
         />
 
@@ -109,7 +129,7 @@ const TransferExceptions: React.FC = () => {
             <h3 className="font-cinzel text-base font-bold text-[#FFF8E7]">Exception Ledger</h3>
           </div>
           <div className="text-[10px] font-mono text-red-400 font-bold uppercase animate-pulse">
-            Investigations Required: {metrics?.openInvestigations}
+            Investigations Required: {metrics?.openInvestigations ?? 0}
           </div>
         </div>
 
@@ -118,16 +138,24 @@ const TransferExceptions: React.FC = () => {
             <thead className="bg-[#121212] text-[#D4A017] uppercase tracking-wider border-b border-[#3A3A3A]">
               <tr>
                 <th className="px-6 py-4 font-bold">TXN ID / Reference</th>
-                <th className="px-6 py-4 font-bold">Error Payload</th>
+                <th className="px-6 py-4 font-bold">Exception Payload</th>
                 <th className="px-6 py-4 font-bold">Amount</th>
                 <th className="px-6 py-4 font-bold text-center">Risk</th>
-                <th className="px-6 py-4 font-bold">Inv. Status</th>
+                <th className="px-6 py-4 font-bold">Status</th>
                 <th className="px-6 py-4 font-bold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#262626] text-[#FAF7F0]">
-              {txData?.data.map((tx: any, idx: number) => {
-                const errorCode = ['ERR_RAIL_TIMEOUT', 'ERR_INSUFFICIENT_FUNDS', 'ERR_AML_BLOCK'][idx % 3];
+              {(txData?.data || []).length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-[#9CA3AF]">
+                    No failed transfer exceptions matched the current filters.
+                  </td>
+                </tr>
+              ) : txData!.data.map((tx: any) => {
+                const statusLabel = tx.is_flagged_fraud
+                  ? 'AML / FRAUD FLAG'
+                  : `STATUS: ${String(tx.status || 'EXCEPTION').toUpperCase()}`;
                 return (
                   <tr key={tx.id} className="hover:bg-red-500/5 transition-colors group">
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -138,12 +166,14 @@ const TransferExceptions: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
-                        <span className="text-red-400 font-bold">{errorCode}</span>
-                        <span className="text-[9px] text-[#9CA3AF]">Rail rejection at gateway node</span>
+                        <span className="text-red-400 font-bold">{statusLabel}</span>
+                        <span className="text-[9px] text-[#9CA3AF]">
+                          {tx.channel || 'Gateway'} • {tx.category || 'Transfer'}
+                        </span>
                       </div>
                     </td>
                     <td className="px-6 py-4 font-bold text-[#9CA3AF]">
-                      {tx.currency} {tx.amount.toLocaleString()}
+                      {tx.currency} {Number(tx.amount ?? 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className={`px-2 py-0.5 rounded text-[9px] font-black ${tx.risk_score > 25 ? 'bg-red-950/40 text-red-400 border border-red-500/40' : 'bg-amber-950/40 text-amber-400 border border-amber-500/40'}`}>
@@ -153,7 +183,7 @@ const TransferExceptions: React.FC = () => {
                     <td className="px-6 py-4">
                       <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#9CA3AF]">
                         <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                        Pending Review
+                        {tx.status || 'Failed'}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">

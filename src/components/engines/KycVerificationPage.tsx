@@ -74,6 +74,7 @@ const KycVerificationPage: React.FC<KycVerificationPageProps> = ({
   }, [loadKycRecords]);
 
   const handleUpdateStatus = async (id: string, newStatus: string) => {
+    setErrorMsg(null);
     try {
       const res = await updateKycRecordStatusInDb(id, newStatus, currentUser?.name || 'Compliance Officer');
       if (res.success) {
@@ -83,10 +84,10 @@ const KycVerificationPage: React.FC<KycVerificationPageProps> = ({
         setActionSuccess(`Record ${id} updated to ${newStatus}.`);
         setTimeout(() => setActionSuccess(null), 3000);
       } else {
-        alert(`Failed updating status: ${res.error}`);
+        setErrorMsg(`Failed updating status: ${res.error || 'Unknown database error'}`);
       }
     } catch (err: any) {
-      alert(`Error updating KYC record: ${err?.message || err}`);
+      setErrorMsg(`Error updating KYC record: ${err?.message || err}`);
     }
   };
 
@@ -100,6 +101,7 @@ const KycVerificationPage: React.FC<KycVerificationPageProps> = ({
     ];
     const chosenType = docTypes[Math.floor(Math.random() * docTypes.length)];
 
+    setErrorMsg(null);
     const res = await uploadKycRecordToDb({
       tenantId: activeTenantId,
       tenantName: companyName,
@@ -115,6 +117,8 @@ const KycVerificationPage: React.FC<KycVerificationPageProps> = ({
       setRecords((prev) => [res.data!, ...prev]);
       setActionSuccess(`Genuine record ${res.data.id} ingested into public.kyc_records.`);
       setTimeout(() => setActionSuccess(null), 3500);
+    } else {
+      setErrorMsg(res.error || 'Failed to ingest KYC record into Supabase.');
     }
   };
 

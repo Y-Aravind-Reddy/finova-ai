@@ -14,16 +14,12 @@ import {
   deleteProfileFromDb,
   saveProfileToDb,
   fetchTenantWorkspacesResultFromDb,
-  fetchFraudCasesResultFromDb,
-  fetchTransactionsResultFromDb,
   fetchFraudAggregatesResultFromDb,
   fetchTransactionAggregatesResultFromDb,
   fetchSupportAggregatesResultFromDb,
   TransactionAggregates,
   SupportAggregates,
-  FraudAggregates,
 } from '../../services/finovaDatabase';
-import { convertToInr, convertToUsd, formatCurrencyWithInrDisclosure, formatCurrencyWithUsdDisclosure } from '../../services/currencyService';
 
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
@@ -38,21 +34,12 @@ import {
   Activity,
   DollarSign,
   ShieldAlert,
-  Headphones,
   Server,
   UserPlus,
-  Edit,
   Trash2,
   Lock,
   Building2,
-  Globe,
-  Power,
-  CheckCircle2,
-  ExternalLink,
-  ChevronRight,
-  Filter,
   RotateCw,
-  Database,
   ShieldCheck,
 } from 'lucide-react';
 
@@ -98,11 +85,13 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [dbTxnCount, setDbTxnCount] = useState<number>(0);
   const [dbSupportTicketCount, setDbSupportTicketCount] = useState<number>(0);
   const [dbOpenSupportTickets, setDbOpenSupportTickets] = useState<number>(0);
-  const [dbSupportSla, setDbSupportSla] = useState<number>(94.2);
+  const [dbSupportSla, setDbSupportSla] = useState<number>(0);
   const [transactionAggregates, setTransactionAggregates] = useState<TransactionAggregates | null>(null);
   const [supportAggregates, setSupportAggregates] = useState<SupportAggregates | null>(null);
   const [dbLoading, setDbLoading] = useState<boolean>(false);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{ type: 'error' | 'info'; message: string } | null>(null);
+  const [pendingDeleteUserId, setPendingDeleteUserId] = useState<string | null>(null);
 
   const loadSuperAdminData = useCallback(async () => {
     setDbLoading(true);
@@ -129,8 +118,11 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       setTransactionAggregates(tAgg);
       setSupportAggregates(sAgg);
 
-      if (wRes.error) {
-        setDbError(wRes.error);
+      const errs = [wRes.error, fAgg.error, tAgg.error, sAgg.error].filter(
+        (msg): msg is string => Boolean(msg)
+      );
+      if (errs.length > 0) {
+        setDbError(Array.from(new Set(errs)).join(' | '));
       }
     } catch (e: any) {
       console.warn('Super Admin DB query note:', e);
@@ -187,27 +179,12 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         value: Math.round((d.volumeInr / 1000000) * 10) / 10,
       }));
     }
-    return [
-      { label: 'Oct 14', value: 38.5 },
-      { label: 'Oct 15', value: 42.1 },
-      { label: 'Oct 16', value: 39.8 },
-      { label: 'Oct 17', value: 48.2 },
-      { label: 'Oct 18', value: 52.4 },
-      { label: 'Oct 19', value: 24.1 },
-      { label: 'Oct 20', value: 22.0 },
-      { label: 'Oct 21', value: 46.8 },
-      { label: 'Oct 22', value: 49.3 },
-      { label: 'Oct 23', value: 54.0 },
-      { label: 'Oct 24', value: 56.2 },
-      { label: 'Oct 25', value: 58.7 },
-      { label: 'Oct 26', value: 18.5 },
-      { label: 'Oct 27', value: 16.2 },
-    ];
+    return [];
   }, [transactionAggregates]);
 
   const workspaceTelemetryData = React.useMemo(() => {
     return tenants.map((t) => {
-      const volInr = Math.round(((t.transactionVolumeYTD || 120000000) * 84.07) / 10000000) / 10;
+      const volInr = Math.round(((Number(t.transactionVolumeYTD) || 0) * 84.07) / 10000000) / 10;
       const fraudInr = Math.round(volInr * 0.42 * 10) / 10;
       return {
         label: t.shortName || t.name.split(' ')[0],
@@ -219,6 +196,7 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
   // User Provisioning (New Account)
   const handleSaveUser = async (userData: Partial<UserAccount>) => {
+    setActionNotice(null);
     const targetTenant = getTenantById(userData.tenantId);
     const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
     const newUser: UserAccount = {
@@ -242,16 +220,26 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     if (res.success) {
       onUpdateUsers([newUser, ...users]);
       if (onRefreshUsers) onRefreshUsers();
+      setActionNotice({ type: 'info', message: `Provisioned ${newUser.name} (${newUser.role}) in database.` });
     } else {
-      alert(`Provisioning failed: ${res.error}`);
+      setActionNotice({ type: 'error', message: `Provisioning failed: ${res.error || 'Unknown error'}` });
     }
     setEditingUser(null);
   };
 
-  const handleDeleteUser = (userId: string) => {
-    if (confirm(`Super Admin Authority: Confirm permanent revocation of user ${userId}?`)) {
-      deleteProfileFromDb(userId);
+  const handleDeleteUser = async (userId: string) => {
+    setActionNotice(null);
+    if (pendingDeleteUserId !== userId) {
+      setPendingDeleteUserId(userId);
+      return;
+    }
+    setPendingDeleteUserId(null);
+    const res = await deleteProfileFromDb(userId);
+    if (res.success) {
       onUpdateUsers(users.filter((u) => u.id !== userId));
+      setActionNotice({ type: 'info', message: `Revoked user profile ${userId}.` });
+    } else {
+      setActionNotice({ type: 'error', message: `Revocation failed: ${res.error || 'Database rejected delete.'}` });
     }
   };
 
@@ -401,13 +389,28 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         </div>
       )}
 
+      {actionNotice && (
+        <div
+          className={`rounded-xl px-4 py-3 border flex items-center justify-between gap-3 ${
+            actionNotice.type === 'error'
+              ? 'bg-red-950/60 border-red-500/50 text-red-200'
+              : 'bg-emerald-950/50 border-emerald-500/40 text-emerald-200'
+          }`}
+        >
+          <span>{actionNotice.message}</span>
+          <button onClick={() => setActionNotice(null)} className="text-[10px] underline shrink-0">
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* 6 Top 3D KPI Cards - Multi-Tenant SaaS Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <ThreeDKpiCard
           title="Active Workspaces"
           value={`${tenants.filter((t) => t.status === 'Active').length} / ${tenants.length}`}
           subValue="Banks & Financial Institutions"
-          change="5 Workspaces"
+          change={`${tenants.length} Workspaces`}
           trend="up"
           tag="Multi-Tenant"
           icon={<Building2 size={20} />}
@@ -417,7 +420,7 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           title="Total Settlements"
           value={`₹${(dbSettledVolumeInr / 1000000).toFixed(2)}M`}
           subValue={`${dbTxnCount.toLocaleString()} Monitored Txns (INR)`}
-          change="+18.5%"
+          change={transactionAggregates?.source === 'supabase' ? 'Live DB' : 'Unavailable'}
           trend="up"
           tag="INR Base"
           variant="gold-accent"
@@ -455,12 +458,12 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           sparkline={[Math.max(1, users.length - 2), Math.max(1, users.length - 1), users.length]}
         />
         <ThreeDKpiCard
-          title="Platform SLA"
-          value="99.992%"
-          subValue="18.4ms Latency"
-          change="Nominal"
+          title="Support Desk SLA"
+          value={supportAggregates?.source === 'supabase' ? `${dbSupportSla.toFixed(1)}%` : 'Unavailable'}
+          subValue={dbSupportTicketCount > 0 ? `${supportAggregates?.closedCount ?? 0} Resolved / ${dbSupportTicketCount} Total` : 'No audited tickets'}
+          change={supportAggregates?.source === 'supabase' ? 'Verified' : 'Pending'}
           trend="up"
-          tag="Cluster Health"
+          tag="Desk SLA"
           icon={<Server size={20} />}
           sparkline={[99, 99, 100, 99, 100, 100, 100]}
         />
@@ -553,7 +556,7 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           subtitle="Identity Breakdown Across All Tenant Banks"
           segments={roleDonutData}
           centerLabel="Identities"
-          centerValue={saasMetrics.aggregateUsers.toLocaleString()}
+          centerValue={users.length.toLocaleString()}
           height={320}
         />
         <ThreeDColumnChart
@@ -715,13 +718,30 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           <ShieldCheck size={14} />
                           <span className="hidden sm:inline">Role</span>
                         </button>
-                        <button
-                          onClick={() => handleDeleteUser(u.id)}
-                          className="p-1.5 rounded-lg bg-[#121212] border border-[#3A3A3A] text-[#B87333] hover:bg-[#3A3A3A]"
-                          title="Delete User"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        {pendingDeleteUserId === u.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleDeleteUser(u.id)}
+                              className="px-2 py-1 rounded bg-red-600 text-white text-[10px] font-bold hover:bg-red-500"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => setPendingDeleteUserId(null)}
+                              className="px-2 py-1 rounded bg-[#121212] border border-[#3A3A3A] text-[#9CA3AF] text-[10px]"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleDeleteUser(u.id)}
+                            className="p-1.5 rounded-lg bg-[#121212] border border-[#3A3A3A] text-[#B87333] hover:bg-[#3A3A3A]"
+                            title="Delete User"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

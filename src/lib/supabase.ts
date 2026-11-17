@@ -91,7 +91,7 @@ export async function checkSupabaseConnection(): Promise<ConnectionStatus> {
 
   try {
     // Attempt a light ping against auth
-    const { error: authError } = await supabase.auth.getSession();
+    const { data: sessionData, error: authError } = await supabase.auth.getSession();
     if (authError) {
       return {
         configured: true,
@@ -102,7 +102,6 @@ export async function checkSupabaseConnection(): Promise<ConnectionStatus> {
       };
     }
 
-    // Probe existing tables
     const tableStatus = {
       profiles: false,
       transactions: false,
@@ -111,46 +110,36 @@ export async function checkSupabaseConnection(): Promise<ConnectionStatus> {
       tenant_workspaces: false,
     };
 
+    // Always verify public REST connectivity against safe public.exchange_rates (never probe private tables as anon)
+    let restReachable = false;
     try {
-      const { error: pErr } = await supabase.from('profiles').select('id').limit(1);
-      if (!pErr) tableStatus.profiles = true;
+      const { error: fxErr } = await supabase.from('exchange_rates').select('id').limit(1);
+      if (!fxErr) restReachable = true;
     } catch {
-      // table might not exist
+      // ignore
     }
 
-    try {
-      const { error: tErr } = await supabase.from('transactions').select('id').limit(1);
-      if (!tErr) tableStatus.transactions = true;
-    } catch {
-      // table might not exist
-    }
-
-    try {
-      const { error: fErr } = await supabase.from('fraud_cases').select('id').limit(1);
-      if (!fErr) tableStatus.fraud_cases = true;
-    } catch {
-      // table might not exist
-    }
-
-    try {
-      const { error: sErr } = await supabase.from('support_tickets').select('ticket_id').limit(1);
-      if (!sErr) tableStatus.support_tickets = true;
-    } catch {
-      // table might not exist
-    }
-
-    try {
-      const { error: wErr } = await supabase.from('tenant_workspaces').select('id').limit(1);
-      if (!wErr) tableStatus.tenant_workspaces = true;
-    } catch {
-      // table might not exist
+    // Only verify user profile access when an authenticated Supabase session exists
+    if (sessionData?.session?.user) {
+      try {
+        const { error: pErr } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', sessionData.session.user.id)
+          .limit(1);
+        if (!pErr) tableStatus.profiles = true;
+      } catch {
+        // ignore
+      }
     }
 
     return {
       configured: true,
       connected: true,
       url: SUPABASE_PROJECT_URL,
-      message: 'Successfully connected to Supabase project.',
+      message: restReachable
+        ? 'Successfully connected to Supabase project.'
+        : 'Supabase Auth connected; protected table telemetry activates upon sign-in.',
       tables: tableStatus,
     };
   } catch (err: unknown) {

@@ -154,6 +154,12 @@ export default function App() {
   }, []);
 
   const authInitializedRef = React.useRef(false);
+  const activeUserIdRef = React.useRef<string | null>(null);
+  const lastFocusRefreshRef = React.useRef<number>(0);
+
+  useEffect(() => {
+    activeUserIdRef.current = session?.user.id || null;
+  }, [session?.user.id]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -181,12 +187,12 @@ export default function App() {
         
         // Prevent duplicate processing for same session state
         if (authInitializedRef.current && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && sbSession?.user) {
-          // If we already have a session for this user, skip re-loading profile unless it's a fresh sign-in
-          if (session?.user.id === sbSession.user.id) return;
+          if (activeUserIdRef.current === sbSession.user.id) return;
         }
 
         if (event === 'SIGNED_OUT') {
           authInitializedRef.current = true;
+          activeUserIdRef.current = null;
           clearSession();
           setSession(null);
           setCurrentView('landing');
@@ -198,10 +204,13 @@ export default function App() {
           authInitializedRef.current = true;
           const profileRes = await loadCurrentUserProfileAsync();
           if (!isCancelled && profileRes.success && profileRes.session) {
+            activeUserIdRef.current = profileRes.session.user.id;
             setSession(profileRes.session);
             setCurrentView('app');
             handleInitialRouting(profileRes.session.user);
-            refreshUsersListAsync();
+            if (profileRes.session.user.role !== 'CUSTOMER') {
+              refreshUsersListAsync();
+            }
           }
         } else if (event === 'TOKEN_REFRESHED' && sbSession?.user) {
           const current = getStoredSession();
@@ -216,6 +225,7 @@ export default function App() {
     } else {
       const stored = getStoredSession();
       if (stored) {
+        activeUserIdRef.current = stored.user.id;
         setSession(stored);
         setCurrentView('app');
         handleInitialRouting(stored.user);
@@ -237,7 +247,9 @@ export default function App() {
           return exists ? prev.map(u => u.id === customEv.detail.id ? customEv.detail : u) : [customEv.detail, ...prev];
         });
       }
-      refreshUsersListAsync();
+      if (activeUserIdRef.current) {
+        refreshUsersListAsync();
+      }
     };
 
     const handleProfileUpdatedEvent = (e: Event) => {
@@ -254,12 +266,17 @@ export default function App() {
           }
           return updatedSession;
         });
-        refreshUsersListAsync();
+        if (updated.role !== 'CUSTOMER') {
+          refreshUsersListAsync();
+        }
       }
     };
 
     const handleWindowFocus = async () => {
-      if (isSupabaseConfigured() && !isCancelled && authInitializedRef.current) {
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < 30000) return;
+      if (isSupabaseConfigured() && !isCancelled && authInitializedRef.current && activeUserIdRef.current) {
+        lastFocusRefreshRef.current = now;
         const profileRes = await loadCurrentUserProfileAsync();
         if (!isCancelled && profileRes.success && profileRes.session) {
           setSession(prev => {
@@ -286,7 +303,7 @@ export default function App() {
         authSubscription.subscription.unsubscribe();
       }
     };
-  }, [navigateTo, refreshUsersListAsync, session?.user.id]);
+  }, [navigateTo, refreshUsersListAsync]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -309,22 +326,20 @@ export default function App() {
 
   const handleUpdateUsers = useCallback((newUsers: UserAccount[]) => {
     setUsersList(newUsers);
-    const currentStored = getStoredUsers();
-    const merged = newUsers.map((u) => {
-      const match = currentStored.find((c) => c.id === u.id);
-      return { ...u, passwordHash: match?.passwordHash || 'finova2026' };
-    });
-    saveStoredUsers(merged);
+    saveStoredUsers(newUsers);
   }, []);
 
   const handleLoginSuccess = async () => {
     setImpersonatingAdmin(null);
     const profileRes = await loadCurrentUserProfileAsync();
     if (profileRes.success && profileRes.session) {
+      activeUserIdRef.current = profileRes.session.user.id;
       setSession(profileRes.session);
       setCurrentView('app');
       navigateTo(ROLE_DEFAULT_ROUTES[profileRes.session.user.role]);
-      refreshUsersListAsync();
+      if (profileRes.session.user.role !== 'CUSTOMER') {
+        refreshUsersListAsync();
+      }
     } else {
       setCurrentView('login');
     }
@@ -409,7 +424,7 @@ export default function App() {
               case '/super-admin/ai-configuration': return <SuperAdminAiConfigPage currentUser={currentUser} />;
               case '/super-admin/audit-logs': return <SuperAdminAuditLogsPage currentUser={currentUser} />;
               case '/super-admin/enterprise-analytics': return <SuperAdminEnterpriseAnalyticsPage />;
-              case '/super-admin/reports': return <ReportsView />;
+              case '/super-admin/reports': return <ReportsView currentUser={currentUser} />;
               case '/super-admin/profile': return <ProfileView currentRole={userRole} userName={currentUser.name} currentUser={currentUser} onUpdateUser={handleProfileUpdated} />;
               case '/super-admin/ai-assistant': return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} />;
               case '/super-admin/document-ocr': return <DocumentOcrPage />;
@@ -429,7 +444,7 @@ export default function App() {
               case '/admin/operations-management':
               case '/admin/customer-management':
                 return <AdminDashboard currentRole={userRole} users={usersList} onUpdateUsers={handleUpdateUsers} onRefreshUsers={refreshUsersListAsync} currentUser={currentUser} activeSection={currentRoute.split('/').pop()} />;
-              case '/admin/reports': return <ReportsView />;
+              case '/admin/reports': return <ReportsView currentUser={currentUser} />;
               case '/admin/profile': return <ProfileView currentRole={userRole} userName={currentUser.name} currentUser={currentUser} onUpdateUser={handleProfileUpdated} />;
               case '/admin/ai-assistant': return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} />;
               case '/admin/document-ocr': return <DocumentOcrPage />;
@@ -457,7 +472,7 @@ export default function App() {
               case '/finance/kyc-verification': return <KycVerificationPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
               case '/finance/risk-scoring': return <FinanceRiskScoringPage />;
               case '/finance/customer-financial-insights': return <FinanceCustomerInsightsPage />;
-              case '/finance/reports': return <ReportsView />;
+              case '/finance/reports': return <ReportsView currentUser={currentUser} />;
               case '/finance/profile': return <ProfileView currentRole={userRole} userName={currentUser.name} currentUser={currentUser} onUpdateUser={handleProfileUpdated} />;
               case '/finance/ai-assistant': return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} />;
               case '/finance/transaction-classification': return <TransactionClassificationPage />;
@@ -488,8 +503,8 @@ export default function App() {
               case '/customer/accounts': return <CustomerAccountsPage currentUser={currentUser} />;
               case '/customer/transactions': return <CustomerTransactionsPage currentUser={currentUser} />;
               case '/customer/cards': return <CustomerCardsView customerName={currentUser.name} />;
-              case '/customer/kyc': return <CustomerKycPage tenantId={currentUser?.tenantId} onNavigateSection={navigateTo} />;
-              case '/customer/documents': return <CustomerDocumentsPage tenantId={currentUser?.tenantId} />;
+              case '/customer/kyc': return <CustomerKycPage currentUser={currentUser} tenantId={currentUser?.tenantId} onNavigateSection={navigateTo} />;
+              case '/customer/documents': return <CustomerDocumentsPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
               case '/customer/ai-assistant': return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} />;
               case '/customer/support': return <CustomerSupportPage currentUser={currentUser} />;
               case '/customer/notifications': return <CustomerNotificationsPage />;

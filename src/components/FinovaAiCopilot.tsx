@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FinovaLogo } from './FinovaLogo';
 import { UserRole } from '../data/finovaDatasets';
 import { supabase } from '../lib/supabase';
+import { invokeFinovaAiChat } from '../services/finovaAiClient';
 
 interface FinovaAiCopilotProps {
   currentRole: UserRole;
@@ -119,29 +120,10 @@ export const FinovaAiCopilot: React.FC<FinovaAiCopilotProps> = ({
       }
 
       const startTime = Date.now();
-      const { data, error } = await supabase.functions.invoke('finova-ai-chat', {
-        body: {
-          message: query,
-          thread_id: threadId,
-        },
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
+      const data = await invokeFinovaAiChat(session.access_token, {
+        message: query,
+        thread_id: threadId,
       });
-
-      if (error) {
-        let details = error.message;
-        try {
-          const errorContext = (error as any).context;
-          if (errorContext && typeof errorContext.json === 'function') {
-            const body = await errorContext.json();
-            details = body.details || body.error || details;
-          }
-        } catch (e) {
-          console.warn('Could not extract copilot error metadata', e);
-        }
-        throw new Error(details);
-      }
 
       if (data.thread_id) {
         setThreadId(data.thread_id);

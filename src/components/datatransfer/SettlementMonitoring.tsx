@@ -5,7 +5,6 @@ import { DataTransferFilterBar, DataTransferFilters } from './DataTransferFilter
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
-import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { 
   ShieldCheck, 
   Activity, 
@@ -35,29 +34,53 @@ const SettlementMonitoring: React.FC = () => {
   const pageSize = 12;
 
   // 1. Fetch Metrics
-  const { data: metrics, isLoading: metricsLoading } = useQuery({
+  const {
+    data: metrics,
+    isLoading: metricsLoading,
+    isError: metricsError,
+    error: metricsErrObj,
+    refetch: refetchMetrics,
+  } = useQuery({
     queryKey: ['settlement-metrics', filters],
     queryFn: () => transferIntelligenceService.fetchSettlementMetrics(filters.tenantId, filters),
   });
 
   // 2. Fetch Aggregates for Velocity Chart
-  const { data: aggregates } = useQuery({
+  const { data: aggregates, refetch: refetchAgg } = useQuery({
     queryKey: ['transfer-overview', filters],
     queryFn: () => transferIntelligenceService.fetchOverviewAggregates(filters.tenantId, filters),
   });
 
   // 3. Fetch Transactions for the table
-  const { data: txData, isLoading: txLoading } = useQuery({
+  const {
+    data: txData,
+    isLoading: txLoading,
+    isError: txError,
+    error: txErrObj,
+    refetch: refetchTx,
+  } = useQuery({
     queryKey: ['paginated-transactions', filters, page],
     queryFn: () => transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, page, pageSize }),
   });
 
+  const handleRefreshAll = () => {
+    refetchMetrics();
+    refetchAgg();
+    refetchTx();
+  };
+
   const kpis = [
-    { title: 'Confirmed Settlements', value: `$${((metrics?.totalSettlementVolume || 0) / 1000000).toFixed(1)}M`, sub: 'Liquidity confirmed', icon: <ShieldCheck size={20} />, variant: 'gold-accent' as const },
+    { title: 'Confirmed Settlements', value: `$${((metrics?.totalSettlementVolume || 0) / 1000000).toFixed(2)}M`, sub: 'Liquidity confirmed', icon: <ShieldCheck size={20} />, variant: 'gold-accent' as const },
     { title: 'Successful Clearing', value: metrics?.successfulSettlements.toLocaleString() || '0', sub: 'SLA Compliant', icon: <CheckCircle2 size={20} /> },
     { title: 'Pending Settlement', value: metrics?.pendingSettlements.toLocaleString() || '0', sub: 'In-flight volume', icon: <Clock size={20} /> },
     { title: 'Settlement Exceptions', value: metrics?.exceptionsCount.toLocaleString() || '0', sub: 'Action required', icon: <AlertTriangle size={20} /> },
   ];
+
+  const combinedErr = metricsError
+    ? (metricsErrObj as Error)?.message
+    : txError
+    ? (txErrObj as Error)?.message
+    : null;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
@@ -72,14 +95,29 @@ const SettlementMonitoring: React.FC = () => {
 
       <DataTransferFilterBar 
         filters={filters} 
-        onFilterChange={setFilters} 
-        onRefresh={() => {}} 
-        isLoading={metricsLoading} 
+        onFilterChange={(f) => { setFilters(f); setPage(1); }} 
+        onRefresh={handleRefreshAll} 
+        isLoading={metricsLoading || txLoading} 
       />
+
+      {combinedErr && (
+        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-red-400 shrink-0" />
+            <span>Settlement Telemetry Error: {combinedErr}</span>
+          </div>
+          <button
+            onClick={handleRefreshAll}
+            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi, idx) => (
-          <ThreeDKpiCard key={idx} {...kpi} trend="up" change="Live" tag="Settlement" />
+          <ThreeDKpiCard key={idx} {...kpi} trend="up" change={metrics?.source === 'supabase' ? 'Live' : 'Unavailable'} tag="Settlement" />
         ))}
       </div>
 
@@ -110,7 +148,7 @@ const SettlementMonitoring: React.FC = () => {
             <h3 className="font-cinzel text-base font-bold text-[#FFF8E7]">Settlement Ledger</h3>
           </div>
           <div className="text-[10px] font-mono text-[#9CA3AF]">
-            Node State: <span className="text-emerald-400 font-bold uppercase">{metrics?.source === 'supabase' ? 'Live' : 'Fallback'}</span>
+            Node State: <span className="text-emerald-400 font-bold uppercase">{metrics?.source === 'supabase' ? 'Live' : 'Unavailable'}</span>
           </div>
         </div>
 
@@ -133,7 +171,13 @@ const SettlementMonitoring: React.FC = () => {
                     <td colSpan={6} className="px-6 py-4 h-12 bg-[#1A1A1A]/30" />
                   </tr>
                 ))
-              ) : txData?.data.map((tx: any) => (
+              ) : (txData?.data || []).length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-[#9CA3AF]">
+                    No settlement transactions matched the current query or database access scope.
+                  </td>
+                </tr>
+              ) : txData!.data.map((tx: any) => (
                 <tr key={tx.id} className="hover:bg-[#D4A017]/5 transition-colors group">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-col">

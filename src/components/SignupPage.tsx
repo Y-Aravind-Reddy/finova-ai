@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { FinovaLogo } from './FinovaLogo';
-import { registerCustomer, registerCustomerAsync } from '../data/authStore';
-import { getStoredTenants } from '../data/tenantStore';
-import { isSupabaseConfigured, checkSupabaseConnection, ConnectionStatus } from '../lib/supabase';
-import { UserAccount } from '../data/finovaDatasets';
-import { Lock, Mail, User, Phone, Eye, EyeOff, Building2, ArrowRight, Database } from 'lucide-react';
+import { registerCustomerAsync } from '../data/authStore';
+import { fetchPublicTenantDirectoryFromDb, PublicTenantDirectoryEntry } from '../services/finovaDatabase';
+import { checkSupabaseConnection, ConnectionStatus } from '../lib/supabase';
+import { Lock, Mail, User, Phone, Building2, ArrowRight, Database, AlertTriangle } from 'lucide-react';
 
 interface SignupPageProps {
   onSignupSuccess: () => void;
@@ -28,20 +27,46 @@ const SignupPage: React.FC<SignupPageProps> = ({
   const [loading, setLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus | null>(null);
 
+  const [tenants, setTenants] = useState<PublicTenantDirectoryEntry[]>([]);
+  const [tenantsLoading, setTenantsLoading] = useState(true);
+  const [tenantDirectoryError, setTenantDirectoryError] = useState<string | null>(null);
+  const [selectedTenantId, setSelectedTenantId] = useState<string>('');
+
   useEffect(() => {
-    checkSupabaseConnection().then(setConnectionStatus);
+    let active = true;
+    checkSupabaseConnection().then((status) => {
+      if (active) setConnectionStatus(status);
+    });
+
+    setTenantsLoading(true);
+    fetchPublicTenantDirectoryFromDb().then((res) => {
+      if (!active) return;
+      setTenants(res.data);
+      setTenantDirectoryError(res.error);
+      if (res.data.length > 0) {
+        setSelectedTenantId(res.data[0].id);
+      } else {
+        setSelectedTenantId('');
+      }
+      setTenantsLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  // Multi-tenant institution selector (platform_root is strictly excluded from public signup)
-  const tenants = getStoredTenants().filter((t) => t.status === 'Active' && t.id !== 'platform_root');
-  const [selectedTenantId, setSelectedTenantId] = useState<string>(
-    tenants[0]?.id || 'tenant_apex_bank'
-  );
+  const selectedTenant = tenants.find((t) => t.id === selectedTenantId);
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
+
+    if (!selectedTenantId) {
+      setErrorMessage('Please wait for an active financial institution workspace to load before submitting.');
+      return;
+    }
 
     if (password !== confirmPassword) {
       setErrorMessage('Passwords do not match. Please re-enter.');
@@ -62,6 +87,7 @@ const SignupPage: React.FC<SignupPageProps> = ({
         phone,
         password,
         tenantId: selectedTenantId,
+        tenantName: selectedTenant?.name,
       });
 
       setLoading(false);
@@ -82,8 +108,6 @@ const SignupPage: React.FC<SignupPageProps> = ({
       setErrorMessage(msg);
     }
   };
-
-  const selectedTenant = tenants.find((t) => t.id === selectedTenantId);
 
   return (
     <div className="min-h-screen bg-[#121212] text-[#FAF7F0] flex flex-col justify-between p-4 sm:p-8 relative overflow-hidden">
@@ -166,18 +190,31 @@ const SignupPage: React.FC<SignupPageProps> = ({
               <select
                 value={selectedTenantId}
                 onChange={(e) => setSelectedTenantId(e.target.value)}
-                className="w-full bg-[#121212] border border-[#3A3A3A] rounded-xl px-3.5 py-2.5 text-xs text-[#FAF7F0] focus:outline-none focus:border-[#D4A017]"
+                disabled={tenantsLoading || tenants.length === 0}
+                className="w-full bg-[#121212] border border-[#3A3A3A] rounded-xl px-3.5 py-2.5 text-xs text-[#FAF7F0] focus:outline-none focus:border-[#D4A017] disabled:opacity-60"
               >
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.type} • {t.headquarters})
-                  </option>
-                ))}
+                {tenantsLoading ? (
+                  <option value="">Loading eligible institutions...</option>
+                ) : tenants.length === 0 ? (
+                  <option value="">No active institutions available</option>
+                ) : (
+                  tenants.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.shortName})
+                    </option>
+                  ))
+                )}
               </select>
-              {selectedTenant && (
+              {tenantDirectoryError && (
+                <div className="mt-1.5 p-2 rounded-lg bg-[#2D0A0A] border border-[#EF4444]/50 text-[11px] text-[#FCA5A5] flex items-center gap-1.5">
+                  <AlertTriangle size={12} className="text-[#EF4444] shrink-0" />
+                  <span>{tenantDirectoryError}</span>
+                </div>
+              )}
+              {selectedTenant && !tenantDirectoryError && (
                 <div className="mt-1 text-[11px] text-[#9CA3AF] flex items-center justify-between">
-                  <span>License: {selectedTenant.licenseNo}</span>
-                  <span className="text-[#D4A017] font-bold">Currency: {selectedTenant.currency}</span>
+                  <span>Institution Code: {selectedTenant.shortName}</span>
+                  <span className="text-[#D4A017] font-bold">Verified Public Directory</span>
                 </div>
               )}
             </div>
@@ -263,14 +300,14 @@ const SignupPage: React.FC<SignupPageProps> = ({
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || tenantsLoading || !selectedTenantId}
               className="w-full py-3 mt-2 rounded-xl bg-gradient-to-r from-[#D4A017] via-[#E6C78B] to-[#D4A017] text-[#1A1A1A] font-bold text-xs uppercase tracking-wider hover:brightness-110 shadow-[0_4px_20px_rgba(212,160,23,0.35)] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {loading ? (
                 <span>Submitting KYC Registration...</span>
               ) : (
                 <>
-                  <span>Create Account at {selectedTenant?.shortName || 'Bank'}</span>
+                  <span>Create Account at {selectedTenant?.shortName || 'Institution'}</span>
                   <ArrowRight size={14} />
                 </>
               )}

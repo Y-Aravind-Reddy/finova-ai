@@ -12,42 +12,77 @@ import {
   fetchTransactionsResultFromDb,
   TransactionAggregates,
   FraudAggregates,
+  canRoleAccessFraudTelemetry,
 } from '../services/finovaDatabase';
 import { CustomerTransaction, UserAccount } from '../data/finovaDatasets';
 
-const ReportsView: React.FC = () => {
+interface ReportsViewProps {
+  currentUser?: UserAccount;
+}
+
+const ReportsView: React.FC<ReportsViewProps> = ({ currentUser }) => {
   const [reportType, setReportType] = useState<'EXECUTIVE' | 'AML_RISK' | 'CUSTOMER_WEALTH'>(
     'EXECUTIVE'
   );
   const [loading, setLoading] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [queryLatencyMs, setQueryLatencyMs] = useState<number | null>(null);
   const [aggregates, setAggregates] = useState<TransactionAggregates | null>(null);
   const [fraudAggregates, setFraudAggregates] = useState<FraudAggregates | null>(null);
   const [profiles, setProfiles] = useState<UserAccount[]>([]);
   const [transactions, setTransactions] = useState<CustomerTransaction[]>([]);
 
-  const loadReportData = async () => {
+  const tenantId =
+    currentUser?.role === 'SUPER_ADMIN'
+      ? 'ALL'
+      : currentUser?.tenantId || 'tenant_apex_bank';
+  const fraudAuthorized = canRoleAccessFraudTelemetry(currentUser?.role);
+  const profilesAuthorized =
+    currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN';
+
+  const loadReportData = React.useCallback(async () => {
     setLoading(true);
+    setDbError(null);
+    const t0 = performance.now();
     try {
+      const txOptions =
+        currentUser?.role === 'CUSTOMER' && currentUser?.id
+          ? { userId: currentUser.id }
+          : undefined;
+
       const [aggRes, fraudRes, profRes, txnRes] = await Promise.all([
-        fetchTransactionAggregatesResultFromDb('tenant_apex_bank'),
-        fetchFraudAggregatesResultFromDb('tenant_apex_bank'),
-        fetchProfilesResultFromDb(),
-        fetchTransactionsResultFromDb('tenant_apex_bank'),
+        fetchTransactionAggregatesResultFromDb(tenantId, txOptions),
+        fraudAuthorized
+          ? fetchFraudAggregatesResultFromDb(tenantId)
+          : Promise.resolve(null),
+        profilesAuthorized
+          ? fetchProfilesResultFromDb(tenantId === 'ALL' ? undefined : tenantId)
+          : Promise.resolve(null),
+        fetchTransactionsResultFromDb(tenantId, txOptions),
       ]);
+      setQueryLatencyMs(Math.round(performance.now() - t0));
       setAggregates(aggRes);
       setFraudAggregates(fraudRes);
-      setProfiles(profRes.data || []);
+      setProfiles(profRes?.data || (currentUser ? [currentUser] : []));
       setTransactions(txnRes.data || []);
-    } catch (e) {
+      const errs = [aggRes.error, fraudRes?.error, profRes?.error, txnRes.error].filter(
+        (msg): msg is string => Boolean(msg)
+      );
+      if (errs.length > 0) {
+        setDbError(Array.from(new Set(errs)).join(' | '));
+      }
+    } catch (e: any) {
       console.warn('Error loading report telemetry:', e);
+      setDbError(e?.message || 'Error loading report telemetry');
+      setQueryLatencyMs(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser, tenantId, fraudAuthorized, profilesAuthorized]);
 
   useEffect(() => {
     loadReportData();
-  }, []);
+  }, [loadReportData]);
 
   const handlePrint = () => {
     window.print();
@@ -137,6 +172,21 @@ const ReportsView: React.FC = () => {
         </div>
       </div>
 
+      {dbError && (
+        <div className="rounded-xl p-3.5 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={15} className="text-red-400 shrink-0" />
+            <span>Report Telemetry Warning: {dbError}</span>
+          </div>
+          <button
+            onClick={loadReportData}
+            className="px-3 py-1 rounded-lg bg-[#111111] border border-red-400/50 text-red-200 text-[10px] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Printable Institutional Report Document */}
       <div className="rounded-2xl bg-[#1E1E1E] border border-[#F5C542]/40 p-6 sm:p-10 shadow-[0_20px_60px_rgba(0,0,0,0.8)] space-y-8">
         {/* Official Header with Golden Logo */}
@@ -184,9 +234,11 @@ const ReportsView: React.FC = () => {
                 <span className="text-[#C08A00] text-[10px]">Verified Records</span>
               </div>
               <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
-                <span className="text-[#6B7280]">SYSTEM LATENCY</span>
-                <p className="font-cinzel text-lg font-bold text-[#F5C542] mt-1">22ms</p>
-                <span className="text-[#C08A00] text-[10px]">Supabase Cloud</span>
+                <span className="text-[#6B7280]">QUERY LATENCY</span>
+                <p className="font-cinzel text-lg font-bold text-[#F5C542] mt-1">
+                  {queryLatencyMs !== null ? `${queryLatencyMs}ms` : 'Unavailable'}
+                </p>
+                <span className="text-[#C08A00] text-[10px]">Measured Round-Trip</span>
               </div>
               <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
                 <span className="text-[#6B7280]">VERIFIED USERS</span>
@@ -216,55 +268,68 @@ const ReportsView: React.FC = () => {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 font-mono text-xs">
-              <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
-                <span className="text-[#6B7280]">MONITORED VOLUME</span>
-                <p className="font-cinzel text-lg font-bold text-[#F5C542] mt-1">
-                  ${(fraudAggregates?.monitoredVolumeUsd ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {!fraudAuthorized || fraudAggregates?.state === 'restricted' ? (
+              <div className="p-6 rounded-xl bg-[#141414] border border-blue-500/40 text-center space-y-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-950/90 border border-blue-500/50 text-blue-300 uppercase">
+                  RESTRICTED CLEARANCE
+                </span>
+                <p className="text-xs text-[#9CA3AF]">
+                  Forensic AML & Fraud report telemetry is restricted to Finance Analysts, Tenant Admins, and Platform Super Admin.
                 </p>
               </div>
-              <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
-                <span className="text-[#6B7280]">PREVENTED LOSS</span>
-                <p className="font-cinzel text-lg font-bold text-[#FFF8E7] mt-1">
-                  ${preventedLossUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </p>
-              </div>
-              <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
-                <span className="text-[#6B7280]">ACTIVE CASES</span>
-                <p className="font-cinzel text-lg font-bold text-[#C08A00] mt-1">
-                  {fraudAggregates?.totalCases ?? 0}
-                </p>
-              </div>
-              <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
-                <span className="text-[#6B7280]">CRITICAL CASES</span>
-                <p className="font-cinzel text-lg font-bold text-[#D97706] mt-1">
-                  {amlBreachesCount} Flagged
-                </p>
-              </div>
-            </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 font-mono text-xs">
+                  <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
+                    <span className="text-[#6B7280]">MONITORED VOLUME</span>
+                    <p className="font-cinzel text-lg font-bold text-[#F5C542] mt-1">
+                      ${(fraudAggregates?.monitoredVolumeUsd ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
+                    <span className="text-[#6B7280]">PREVENTED LOSS</span>
+                    <p className="font-cinzel text-lg font-bold text-[#FFF8E7] mt-1">
+                      ${preventedLossUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
+                    <span className="text-[#6B7280]">ACTIVE CASES</span>
+                    <p className="font-cinzel text-lg font-bold text-[#C08A00] mt-1">
+                      {fraudAggregates?.totalCases ?? 0}
+                    </p>
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
+                    <span className="text-[#6B7280]">CRITICAL CASES</span>
+                    <p className="font-cinzel text-lg font-bold text-[#D97706] mt-1">
+                      {amlBreachesCount} Flagged
+                    </p>
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <ThreeDDonutChart
-                title="3D Risk Tier Breakdown"
-                subtitle="Distribution calculated from verified cases"
-                segments={[
-                  { label: 'Critical Risk', value: fraudAggregates?.frozenCount ?? 0 },
-                  { label: 'Moderate Risk', value: Math.max(0, (fraudAggregates?.totalCases ?? 0) - (fraudAggregates?.frozenCount ?? 0)) },
-                ]}
-                centerLabel="Total Cases"
-                centerValue={String(fraudAggregates?.totalCases ?? 0)}
-              />
-              <ThreeDColumnChart
-                title="3D High-Risk Interceptions"
-                subtitle="Threat Prevention Breakdown ($ USD)"
-                data={[
-                  { label: 'Prevented', value: Math.round(preventedLossUsd / 1000) },
-                  { label: 'Monitored', value: Math.round((fraudAggregates?.monitoredVolumeUsd ?? 0) / 1000), highlight: true },
-                ]}
-                valuePrefix="$"
-                valueSuffix="k"
-              />
-            </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <ThreeDDonutChart
+                    title="3D Risk Tier Breakdown"
+                    subtitle="Distribution calculated from verified cases"
+                    segments={[
+                      { label: 'Critical Risk', value: fraudAggregates?.frozenCount ?? 0 },
+                      { label: 'Moderate Risk', value: Math.max(0, (fraudAggregates?.totalCases ?? 0) - (fraudAggregates?.frozenCount ?? 0)) },
+                    ]}
+                    centerLabel="Total Cases"
+                    centerValue={String(fraudAggregates?.totalCases ?? 0)}
+                  />
+                  <ThreeDColumnChart
+                    title="3D High-Risk Interceptions"
+                    subtitle="Threat Prevention Breakdown ($ USD)"
+                    data={[
+                      { label: 'Prevented', value: Math.round(preventedLossUsd / 1000) },
+                      { label: 'Monitored', value: Math.round((fraudAggregates?.monitoredVolumeUsd ?? 0) / 1000), highlight: true },
+                    ]}
+                    valuePrefix="$"
+                    valueSuffix="k"
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -304,7 +369,7 @@ const ReportsView: React.FC = () => {
               <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
                 <span className="text-[#6B7280]">KYC ATTESTATION</span>
                 <p className="font-cinzel text-base font-bold text-[#C08A00] mt-1">
-                  {profiles.length > 0 ? `${profiles[0].tier}` : 'Tier 3 Verified'}
+                  {profiles.length > 0 ? profiles[0].tier : 'Unavailable'}
                 </p>
               </div>
             </div>

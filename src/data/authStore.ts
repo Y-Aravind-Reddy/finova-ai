@@ -11,12 +11,14 @@ export interface AuthSession {
   isDemoMode?: boolean;
 }
 
-export interface StoredUser extends UserAccount {
+export type StoredUser = UserAccount;
+
+export interface SeededCredential extends UserAccount {
   passwordHash: string;
 }
 
-// Initial credentials seeded into multi-tenant secure storage
-export const SEEDED_CREDENTIALS: StoredUser[] = [
+// Initial credentials for offline-only unconfigured demo fallback (never persisted to localStorage)
+export const SEEDED_CREDENTIALS: SeededCredential[] = [
   // 1. PLATFORM SUPER ADMIN (SaaS Operator)
   {
     id: 'USR-1001',
@@ -260,7 +262,11 @@ export function getStoredUsers(): StoredUser[] {
     if (!Array.isArray(parsed)) {
       return [];
     }
-    return parsed;
+    // Strip any legacy plaintext passwordHash field upon read
+    return parsed.map((u: Record<string, unknown>) => {
+      const { passwordHash: _omit, ...rest } = u;
+      return rest as unknown as StoredUser;
+    });
   } catch {
     return [];
   }
@@ -268,7 +274,15 @@ export function getStoredUsers(): StoredUser[] {
 
 export function saveStoredUsers(users: StoredUser[]): void {
   try {
-    localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(users));
+    // Strictly scrub any passwordHash / password fields before persisting to localStorage
+    const sanitized = users.map((u) => {
+      const { passwordHash: _omitHash, password: _omitPwd, ...rest } = u as StoredUser & {
+        passwordHash?: unknown;
+        password?: unknown;
+      };
+      return rest;
+    });
+    localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(sanitized));
   } catch (err) {
     console.error('Failed to persist users', err);
   }
@@ -350,29 +364,41 @@ function generateMockJWT(user: UserAccount): string {
   return `${header}.${payload}.${signature}`;
 }
 
-export function authenticateUser(email: string, password: string): { success: boolean; session?: AuthSession; error?: string } {
-  const users = getStoredUsers();
-  const normalizedEmail = email.trim().toLowerCase();
-  const user = users.find((u) => u.email.toLowerCase() === normalizedEmail);
+// In-memory-only credentials for offline-only registrations when Supabase is unconfigured
+const offlineMemoryVerifiers = new Map<string, string>();
 
-  if (!user) {
+export function authenticateUser(email: string, password: string): { success: boolean; session?: AuthSession; error?: string } {
+  if (isSupabaseConfigured()) {
+    return {
+      success: false,
+      error: 'Supabase Auth is active. Local credential authentication is disabled.',
+    };
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const seededMatch = SEEDED_CREDENTIALS.find((u) => u.email.toLowerCase() === normalizedEmail);
+  const storedUsers = getStoredUsers();
+  const storedMatch = storedUsers.find((u) => u.email.toLowerCase() === normalizedEmail);
+
+  const userRecord: UserAccount | undefined = storedMatch || seededMatch;
+
+  if (!userRecord) {
     return { success: false, error: 'Unrecognized institutional credentials. Please verify your email.' };
   }
 
-  // Strictly check matching password hash
-  const isValid = password === user.passwordHash;
+  const expectedOfflineSecret =
+    offlineMemoryVerifiers.get(normalizedEmail) ?? seededMatch?.passwordHash;
 
-  if (!isValid) {
+  if (!expectedOfflineSecret || password !== expectedOfflineSecret) {
     return { success: false, error: 'Cryptographic hash mismatch. Incorrect password.' };
   }
 
   // Resolve tenant info if not populated
-  if (!user.tenantId && user.role !== 'SUPER_ADMIN') {
-    user.tenantId = 'tenant_apex_bank';
-    user.tenantName = 'Apex Global Bank';
+  const cleanUser: UserAccount = { ...userRecord };
+  if (!cleanUser.tenantId && cleanUser.role !== 'SUPER_ADMIN') {
+    cleanUser.tenantId = 'tenant_apex_bank';
+    cleanUser.tenantName = 'Apex Global Bank';
   }
-
-  const { passwordHash, ...cleanUser } = user;
   cleanUser.authSource = 'local';
 
   // Strict Single Super Admin Enforcement
@@ -401,6 +427,7 @@ export function registerCustomer(params: {
   phone: string;
   password: string;
   tenantId?: string;
+  tenantName?: string;
 }): { success: boolean; session?: AuthSession; error?: string } {
   const users = getStoredUsers();
   const normalizedEmail = params.email.trim().toLowerCase();
@@ -414,13 +441,12 @@ export function registerCustomer(params: {
     selectedTenantId = 'tenant_apex_bank';
   }
   const tenantMeta = getTenantById(selectedTenantId);
-  const tenantName = tenantMeta?.name || 'Apex Global Bank';
+  const tenantName = params.tenantName?.trim() || tenantMeta?.name || 'Apex Global Bank';
 
-  const newUser: StoredUser = {
+  const cleanUser: StoredUser = {
     id: `USR-${Math.floor(2000 + Math.random() * 8000)}`,
     name: params.fullName.trim(),
     email: normalizedEmail,
-    passwordHash: params.password,
     role: 'CUSTOMER',
     status: 'Active',
     tier: 'Private Wealth Tier 3',
@@ -435,10 +461,11 @@ export function registerCustomer(params: {
     authSource: 'local',
   };
 
-  const updatedUsers = [newUser, ...users];
+  // Never store plaintext password in localStorage; keep only in-memory for offline session lifetime
+  offlineMemoryVerifiers.set(normalizedEmail, params.password);
+  const updatedUsers = [cleanUser, ...users];
   saveStoredUsers(updatedUsers);
 
-  const { passwordHash, ...cleanUser } = newUser;
   const token = generateMockJWT(cleanUser);
   const session: AuthSession = {
     token,
@@ -865,6 +892,7 @@ export async function registerCustomerAsync(params: {
   phone: string;
   password: string;
   tenantId?: string;
+  tenantName?: string;
 }): Promise<{
   success: boolean;
   session?: AuthSession;
@@ -879,7 +907,7 @@ export async function registerCustomerAsync(params: {
     selectedTenantId = 'tenant_apex_bank';
   }
   const tenantMeta = getTenantById(selectedTenantId);
-  const tenantName = tenantMeta?.name || 'Apex Global Bank';
+  const tenantName = params.tenantName?.trim() || tenantMeta?.name || 'Apex Global Bank';
 
   // 1. If Supabase is configured with active keys, register in Supabase Auth
   if (isSupabaseConfigured()) {
@@ -900,20 +928,6 @@ export async function registerCustomerAsync(params: {
 
       if (error) {
         console.warn('Supabase signUp error:', error.message);
-        // If rate limited or domain blocked, fall back gracefully to local registration
-        if (error.message.toLowerCase().includes('rate limit')) {
-          const fallbackRes = registerCustomer({
-            ...params,
-            tenantId: selectedTenantId,
-          });
-          if (fallbackRes.success && fallbackRes.session?.user && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('finova:user_registered', { detail: fallbackRes.session.user }));
-          }
-          return {
-            ...fallbackRes,
-            error: `Supabase Auth Rate Limit: ${error.message}. Registered in local hybrid store.`,
-          };
-        }
         return { success: false, error: error.message };
       }
 
@@ -921,7 +935,6 @@ export async function registerCustomerAsync(params: {
         const userId = data.user.id;
 
         // Try to insert directly into profiles table to ensure immediate readiness
-        // Using the refined saveProfileToDb to handle RLS and existence checks safely
         await saveProfileToDb({
           id: userId,
           email: normalizedEmail,
@@ -953,14 +966,10 @@ export async function registerCustomerAsync(params: {
           authSource: 'supabase',
         };
 
-        // Also sync to local user cache to ensure immediate UI visibility across roles
+        // Sync metadata-only profile cache (never store passwords in localStorage)
         const existingStored = getStoredUsers();
-        const updatedStored = [
-          {
-            ...cleanUser,
-            passwordHash: params.password,
-            authSource: 'supabase' as const,
-          },
+        const updatedStored: StoredUser[] = [
+          cleanUser,
           ...existingStored.filter((u) => u.email.toLowerCase() !== normalizedEmail),
         ];
         saveStoredUsers(updatedStored);
@@ -992,7 +1001,9 @@ export async function registerCustomerAsync(params: {
       }
     } catch (err: any) {
       console.error('Supabase signUp error:', err);
+      return { success: false, error: err?.message || 'Supabase Auth registration error.' };
     }
+    return { success: false, error: 'Registration failed in Supabase Auth.' };
   }
 
   // Fallback to local registration

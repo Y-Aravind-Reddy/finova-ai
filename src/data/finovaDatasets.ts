@@ -83,7 +83,7 @@ export interface CustomerDocument {
   fileSize: string;
   uploadedAt: string;
   verifiedBy: string;
-  status: 'Verified' | 'Under Review' | 'Archived';
+  status: 'Verified' | 'Under Review' | 'Pending' | 'Archived';
   tenantId?: string;
   tenantName?: string;
 }

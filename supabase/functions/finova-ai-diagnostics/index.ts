@@ -65,33 +65,46 @@ serve(async (req) => {
       table_profiles_exists: !dbError,
     };
 
-    // 3. RPC Availability Test (match_ai_chunks)
-    // We attempt to find the function signature without executing it with real vectors
-    const { data: rpcCheck, error: rpcError } = await supabaseAdmin
-      .rpc("match_ai_chunks", {
+    // 3. RPC Availability Tests (match_ai_chunks & check_ai_rate_limit_v218)
+    const [{ error: rpcError }, { error: rateLimitRpcErr }] = await Promise.all([
+      supabaseAdmin.rpc("match_ai_chunks", {
         query_embedding: new Array(768).fill(0),
         match_threshold: 1.0,
         match_count: 1
-      });
+      }),
+      supabaseAdmin.rpc("check_ai_rate_limit_v218"),
+    ]);
 
     results.rpc = {
-      match_ai_chunks_available: rpcError?.code !== "P0001" && rpcError?.code !== "42883",
-      error: rpcError && rpcError.code !== "P0001" ? { code: rpcError.code, message: rpcError.message } : null,
-      notes: "Executed with dummy zero-vector. Code P0001 (Raise Exception) usually means auth check passed but no session was present, which is expected for service-role diagnostic check."
+      match_ai_chunks_available: rpcError?.code !== "42883" && rpcError?.code !== "PGRST202",
+      match_ai_chunks_error: rpcError && rpcError.code !== "P0001" ? { code: rpcError.code, message: rpcError.message } : null,
+      check_ai_rate_limit_v218_available: rateLimitRpcErr?.code !== "42883" && rateLimitRpcErr?.code !== "PGRST202",
+      check_ai_rate_limit_v218_error: rateLimitRpcErr && rateLimitRpcErr.code !== "P0001" ? { code: rateLimitRpcErr.code, message: rateLimitRpcErr.message } : null,
+      notes: "Service-role diagnostic probe without user session. P0001 means auth.uid() guard executed cleanly."
     };
 
-    // 4. Gemini API Connectivity (Network Handshake)
+    // 4. Gemini API Connectivity (Header-based Key Handshake)
     if (geminiApiKey) {
       const geminiStart = Date.now();
       try {
-        const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`);
+        const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/models", {
+          headers: { "x-goog-api-key": geminiApiKey },
+        });
         const geminiData = await resp.json();
-        
+        const modelNames = Array.isArray(geminiData.models)
+          ? geminiData.models.map((m: { name?: string }) => String(m.name || "").replace(/^models\//, ""))
+          : [];
+
         results.gemini = {
           connected: resp.ok,
           status: resp.status,
           latencyMs: Date.now() - geminiStart,
-          has_models: !!geminiData.models,
+          has_models: modelNames.length > 0,
+          target_models: {
+            "gemini-3.6-flash": modelNames.includes("gemini-3.6-flash"),
+            "gemini-3.5-flash": modelNames.includes("gemini-3.5-flash"),
+            "gemini-embedding-2": modelNames.includes("gemini-embedding-2"),
+          },
           error: resp.ok ? null : geminiData.error?.message || "Unknown API error"
         };
       } catch (e: any) {

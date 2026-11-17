@@ -6,7 +6,7 @@ import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
-import { KpiSkeleton, ModuleSkeleton } from '../dashboards/DashboardSkeletons';
+import { ModuleSkeleton } from '../dashboards/DashboardSkeletons';
 import { 
   DollarSign, 
   CheckCircle2, 
@@ -31,7 +31,7 @@ const TransferOverview: React.FC = () => {
     tenantId: 'ALL'
   });
 
-  const { data: aggregates, isLoading, refetch } = useQuery({
+  const { data: aggregates, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['transfer-overview', filters],
     queryFn: () => transferIntelligenceService.fetchOverviewAggregates(filters.tenantId, filters),
   });
@@ -45,60 +45,63 @@ const TransferOverview: React.FC = () => {
     );
   }
 
+  const totalTx = aggregates?.totalTransfers || 0;
+  const pct = (count: number) => (totalTx > 0 ? `${((count / totalTx) * 100).toFixed(1)}%` : '0.0%');
+
   const kpis = [
     { 
       title: 'Total Transfers', 
-      value: aggregates?.totalTransfers.toLocaleString() || '0', 
+      value: totalTx.toLocaleString(), 
       sub: 'Historical volume', 
       icon: <CreditCard size={20} />, 
       trend: 'up', 
-      change: '+12.4%', 
+      change: aggregates?.source === 'supabase' ? 'Live DB' : 'Unavailable', 
       tag: 'Volume' 
     },
     { 
       title: 'Transfer Volume', 
-      value: `$${((aggregates?.totalVolume || 0) / 1000000).toFixed(1)}M`, 
+      value: `$${((aggregates?.totalVolume || 0) / 1000000).toFixed(2)}M`, 
       sub: 'Consolidated value', 
       icon: <DollarSign size={20} />, 
       trend: 'up', 
-      change: '+8.2%', 
+      change: 'Audited', 
       tag: 'Liquidity',
       variant: 'gold-accent' as const
     },
     { 
       title: 'Settled Transfers', 
-      value: aggregates?.successCount.toLocaleString() || '0', 
+      value: (aggregates?.successCount || 0).toLocaleString(), 
       sub: 'Confirmed throughput', 
       icon: <CheckCircle2 size={20} />, 
       trend: 'up', 
-      change: '92.4%', 
+      change: pct(aggregates?.successCount || 0), 
       tag: 'SLA' 
     },
     { 
       title: 'Pending Clearing', 
-      value: aggregates?.pendingCount.toLocaleString() || '0', 
+      value: (aggregates?.pendingCount || 0).toLocaleString(), 
       sub: 'Active in rail', 
       icon: <Clock size={20} />, 
       trend: 'down', 
-      change: '-4.1%', 
+      change: pct(aggregates?.pendingCount || 0), 
       tag: 'Active' 
     },
     { 
       title: 'Failed / Rejected', 
-      value: aggregates?.failedCount.toLocaleString() || '0', 
+      value: (aggregates?.failedCount || 0).toLocaleString(), 
       sub: 'Exception rate', 
       icon: <AlertCircle size={20} />, 
       trend: 'down', 
-      change: '2.4%', 
+      change: pct(aggregates?.failedCount || 0), 
       tag: 'Risk' 
     },
     { 
       title: 'Reversed Funds', 
-      value: aggregates?.reversedCount.toLocaleString() || '0', 
+      value: (aggregates?.reversedCount || 0).toLocaleString(), 
       sub: 'Refunds & Returns', 
       icon: <RotateCw size={20} />, 
       trend: 'up', 
-      change: '0.8%', 
+      change: pct(aggregates?.reversedCount || 0), 
       tag: 'Returns' 
     },
     { 
@@ -107,19 +110,29 @@ const TransferOverview: React.FC = () => {
       sub: 'Ticket size', 
       icon: <ArrowUpRight size={20} />, 
       trend: 'up', 
-      change: 'Stable', 
+      change: 'Mean', 
       tag: 'Ticket' 
     },
     { 
       title: 'Fraud Flags', 
-      value: aggregates?.fraudFlaggedCount.toLocaleString() || '0', 
+      value: (aggregates?.fraudFlaggedCount || 0).toLocaleString(), 
       sub: 'Surveillance hits', 
       icon: <ShieldAlert size={20} />, 
       trend: 'down', 
-      change: '-12%', 
+      change: pct(aggregates?.fraudFlaggedCount || 0), 
       tag: 'Security' 
     },
   ];
+
+  const peakWindow =
+    aggregates?.hourlyVelocity && aggregates.hourlyVelocity.length > 0
+      ? aggregates.hourlyVelocity.reduce((best, cur) => (cur.volume > best.volume ? cur : best)).hour + ' UTC'
+      : 'Unavailable';
+
+  const topChannel =
+    aggregates?.channelPerformance && aggregates.channelPerformance.length > 0
+      ? aggregates.channelPerformance.reduce((best, cur) => (cur.value > best.value ? cur : best)).label
+      : 'Unavailable';
 
   const currencySegments = Object.entries(aggregates?.currencyExposure || {}).map(([label, value]) => ({
     label,
@@ -158,6 +171,21 @@ const TransferOverview: React.FC = () => {
         onRefresh={() => refetch()} 
         isLoading={isLoading} 
       />
+
+      {isError && (
+        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} className="text-red-400 shrink-0" />
+            <span>Transfer Telemetry Error: {(error as Error)?.message || 'Unable to query transfer overview aggregates.'}</span>
+          </div>
+          <button
+            onClick={() => refetch()}
+            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* KPI Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -244,10 +272,10 @@ const TransferOverview: React.FC = () => {
       {/* Insights Panel */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { label: 'Peak Settlement Window', value: '14:00 - 16:00 UTC', color: 'text-[#D4A017]' },
-          { label: 'Highest Volume Channel', value: 'SWIFT GPI', color: 'text-emerald-400' },
-          { label: 'Pending Liquidity', value: `$${((aggregates?.pendingCount || 0) * 4.2).toFixed(1)}M`, color: 'text-amber-400' },
-          { label: 'High-Risk Alerts', value: aggregates?.fraudFlaggedCount.toString() || '0', color: 'text-red-400' },
+          { label: 'Peak Settlement Hour', value: peakWindow, color: 'text-[#D4A017]' },
+          { label: 'Highest Volume Channel', value: topChannel, color: 'text-emerald-400' },
+          { label: 'Pending Clearing Count', value: `${(aggregates?.pendingCount || 0).toLocaleString()} txns`, color: 'text-amber-400' },
+          { label: 'High-Risk Alerts', value: (aggregates?.fraudFlaggedCount || 0).toLocaleString(), color: 'text-red-400' },
         ].map((insight, idx) => (
           <div key={idx} className="rounded-xl bg-[#121212] border border-[#3A3A3A] p-4 flex flex-col gap-1 shadow-inner">
             <span className="text-[9px] font-black text-[#9CA3AF] uppercase tracking-widest">{insight.label}</span>

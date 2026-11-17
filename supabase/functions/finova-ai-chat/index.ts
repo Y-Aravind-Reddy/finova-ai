@@ -12,7 +12,8 @@ const APPROVED_ORIGINS = [
   "https://ais-pre-dvm7cp37tu7ipktvhb6bmt-971598154639.asia-southeast1.run.app"
 ];
 
-const GENERATION_MODEL_ID = "gemini-3.8-flash";
+const GENERATION_MODEL_ID = "gemini-3.6-flash";
+const FALLBACK_GENERATION_MODELS = ["gemini-3.5-flash"];
 const EMBEDDING_MODEL_ID = "gemini-embedding-2";
 
 serve(async (req) => {
@@ -93,13 +94,48 @@ serve(async (req) => {
       });
     }
 
-    // 3. Atomic Rate Limiting (v2.1.8 Sliding Window)
-    const { data: isAllowed, error: rateError } = await supabaseUser.rpc("check_ai_rate_limit_v218");
-    
-    if (rateError) {
+    // 3. Atomic Rate Limiting (v2.1.8 Sliding Window — Fail-Closed)
+    let isAllowed = false;
+    const { data: allowed218, error: rateError } = await supabaseUser.rpc("check_ai_rate_limit_v218");
+
+    if (!rateError) {
+      isAllowed = Boolean(allowed218);
+    } else if (
+      rateError.code === "42883" ||
+      rateError.code === "PGRST202" ||
+      String(rateError.message || "").includes("Could not find the function")
+    ) {
+      const { data: allowed217, error: rateErr217 } = await supabaseUser.rpc("check_ai_rate_limit_v217");
+      if (rateErr217) {
+        console.error("[Audit] Rate Limit Engine Failure (v217 fallback):", rateErr217);
+        return new Response(JSON.stringify({
+          error: "Service Unavailable",
+          details: "Rate limiting subsystem unavailable; request rejected by safety policy.",
+          version: "2.1.8",
+        }), {
+          status: 503,
+          headers: corsHeaders,
+        });
+      }
+      isAllowed = Boolean(allowed217);
+    } else {
       console.error("[Audit] Rate Limit Engine Failure:", rateError);
-    } else if (!isAllowed) {
-      return new Response(JSON.stringify({ error: "Rate Limit Exceeded", details: "Institutional safety policy: 10 queries per rolling minute." }), {
+      return new Response(JSON.stringify({
+        error: "Service Unavailable",
+        details: "Rate limiting subsystem unavailable; request rejected by safety policy.",
+        version: "2.1.8",
+      }), {
+        status: 503,
+        headers: corsHeaders,
+      });
+    }
+
+    if (!isAllowed) {
+      return new Response(JSON.stringify({
+        error: "Rate Limit Exceeded",
+        details: "Institutional safety policy: 10 queries per rolling minute.",
+        version: "2.1.8",
+      }), {
         status: 429,
         headers: corsHeaders,
       });
@@ -153,54 +189,70 @@ serve(async (req) => {
       httpOptions: {
         headers: {
           'User-Agent': 'aistudio-build',
-        }
+        },
+        timeout: 10000,
       }
     });
 
-    // 7. RAG: Embedding Generation (768-dim)
-    let queryEmbedding: number[] = [];
+    const isTransientGeminiError = (err: any): boolean => {
+      const status = Number(err?.status || err?.code || 0);
+      const msg = String(err?.message || "").toLowerCase();
+      return (
+        status === 429 ||
+        status === 500 ||
+        status === 502 ||
+        status === 503 ||
+        status === 504 ||
+        msg.includes("high demand") ||
+        msg.includes("unavailable") ||
+        msg.includes("deadline") ||
+        msg.includes("timeout") ||
+        msg.includes("resource_exhausted") ||
+        msg.includes("fetch failed")
+      );
+    };
+
+    // 7. RAG: Embedding Generation (768-dim) with transient resilience
+    let queryEmbedding: number[] | null = null;
     try {
       const embedResult = await genAI.models.embedContent({
         model: EMBEDDING_MODEL_ID,
-        contents: [ message ],
+        contents: [message],
         config: { outputDimensionality: 768 }
       });
-      
-      queryEmbedding = embedResult.embeddings?.[0]?.values || [];
-      
-      if (!queryEmbedding || queryEmbedding.length !== 768) {
-        throw new Error(`Dimensionality Mismatch: Expected 768, detected ${queryEmbedding?.length || 0}.`);
+
+      const candidateVec = embedResult.embeddings?.[0]?.values || [];
+      if (candidateVec.length !== 768) {
+        throw new Error(`Dimensionality Mismatch: Expected 768, detected ${candidateVec.length}.`);
       }
+      queryEmbedding = candidateVec;
     } catch (err: any) {
-      console.error("[Gemini] Embedding Subsystem Error:", err);
-      return new Response(JSON.stringify({ 
-        error: "Bad Gateway", 
-        details: `Upstream Intelligence: Vector generation failed. ${err.message}`,
-        version: "2.1.8"
-      }), {
-        status: 502,
-        headers: corsHeaders,
-      });
+      console.error("[Gemini] Embedding Subsystem Error (continuing without RAG vectors):", err);
+      // Do not fail user chat response if embedding service experiences transient issues
     }
 
     // 8. RAG: Authenticated Multi-Tenant Retrieval
-    const { data: chunks, error: searchError } = await supabaseUser.rpc("match_ai_chunks", {
-      query_embedding: queryEmbedding,
-      match_threshold: 0.45,
-      match_count: 5,
-    });
+    let chunks: any[] = [];
+    if (queryEmbedding) {
+      const { data: chunkRows, error: searchError } = await supabaseUser.rpc("match_ai_chunks", {
+        query_embedding: queryEmbedding,
+        match_threshold: 0.45,
+        match_count: 5,
+      });
 
-    if (searchError) {
-       console.error("[RAG] Retrieval Subsystem Error:", searchError);
-       // Continue without context but log the exception
+      if (searchError) {
+        console.error("[RAG] Retrieval Subsystem Error:", searchError);
+      } else if (Array.isArray(chunkRows)) {
+        chunks = chunkRows;
+      }
     }
 
-    const context = chunks?.map((c: any) => c.content).join("\n\n") || "";
-    const citations = chunks?.map((c: any) => ({
+    const context = chunks.map((c: any) => c.content).join("\n\n") || "";
+    const citations = chunks.map((c: any) => ({
       chunk_id: c.id,
       metadata: c.metadata,
       similarity: c.similarity
-    })) || [];
+    }));
 
     // 9. Persist User Message (Schema Aligned: id, thread_id, tenant_id, role, content)
     const { error: userLogErr } = await supabaseAdmin.from("ai_chat_messages").insert({
@@ -235,30 +287,62 @@ serve(async (req) => {
       }
     }
 
-    // 11. Intelligence Generation (gemini-3.8-flash)
+    // 11. Intelligence Generation (gemini-3.6-flash primary + transient failover)
+    const systemInstruction = `You are Finova AI, a luxury financial intelligence engine. Role: ${profile.role}. Tenant: ${profile.tenant_id}. Only provide information based on provided context if available. Precision, compliance, and professional tone are mandatory.`;
+    const candidateModels = [GENERATION_MODEL_ID, ...FALLBACK_GENERATION_MODELS];
+
     let answer = "";
     let usage: any = {};
-    try {
-      const genResult = await genAI.models.generateContent({
-        model: GENERATION_MODEL_ID,
-        contents: historyMessages,
-        config: { 
-          systemInstruction: `You are Finova AI, a luxury financial intelligence engine. Role: ${profile.role}. Tenant: ${profile.tenant_id}. Only provide information based on provided context if available. Precision, compliance, and professional tone are mandatory.`
+    let usedModel = GENERATION_MODEL_ID;
+    let lastGenErr: any = null;
+
+    for (let i = 0; i < candidateModels.length; i++) {
+      const modelId = candidateModels[i];
+      const maxAttempts = i === 0 ? 2 : 1;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const genResult = await genAI.models.generateContent({
+            model: modelId,
+            contents: historyMessages,
+            config: { systemInstruction }
+          });
+
+          const text = genResult.text || "";
+          if (!text) {
+            const finishReason = genResult.candidates?.[0]?.finishReason || "UNKNOWN_BLOCK";
+            throw new Error(`Intelligence Synthesis Blocked. Reason: ${finishReason}`);
+          }
+
+          answer = text;
+          usage = genResult.usageMetadata || {};
+          usedModel = modelId;
+          break;
+        } catch (err: any) {
+          lastGenErr = err;
+          const errStatus = Number(err?.status || err?.code || 0);
+          const errMsg = String(err?.message || err);
+          console.error(`[Gemini] Generation error on ${modelId} (attempt ${attempt}/${maxAttempts}):`, errMsg);
+          if (!isTransientGeminiError(err)) {
+            break;
+          }
+          if (errStatus === 504 || errMsg.toLowerCase().includes("deadline")) {
+            break;
+          }
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 350 * attempt));
+          }
         }
-      });
-
-      answer = genResult.text || "";
-      usage = genResult.usageMetadata;
-
-      if (!answer) {
-        const finishReason = genResult.candidates?.[0]?.finishReason || "UNKNOWN_BLOCK";
-        throw new Error(`Intelligence Synthesis Blocked. Reason: ${finishReason}`);
       }
-    } catch (err: any) {
-      console.error("[Gemini] Generation Subsystem Error:", err);
+
+      if (answer) break;
+      if (lastGenErr && !isTransientGeminiError(lastGenErr)) break;
+    }
+
+    if (!answer) {
       return new Response(JSON.stringify({ 
         error: "Bad Gateway", 
-        details: `Upstream Intelligence: Model synthesis failed. ${err.message}`,
+        details: `Upstream Intelligence: Model synthesis failed. ${lastGenErr?.message || "No response generated."}`,
         version: "2.1.8"
       }), {
         status: 502,
@@ -276,24 +360,29 @@ serve(async (req) => {
       content: answer,
       citations: citations,
       telemetry: {
-        model: GENERATION_MODEL_ID,
+        model: usedModel,
         latencyMs: latency,
         usage: usage,
-        rag: { chunk_count: chunks?.length || 0 }
+        rag: { chunk_count: chunks.length }
       }
     });
     if (aiLogErr) throw new Error(`Database Integrity: Failed to log AI response (${aiLogErr.message}).`);
 
-    // Update session heartbeat
-    await supabaseAdmin
+    // Update session heartbeat & verify persistence
+    const { error: threadUpdateErr } = await supabaseAdmin
       .from("ai_chat_threads")
       .update({ updated_at: new Date().toISOString() })
-      .eq("id", threadId);
+      .eq("id", threadId)
+      .eq("user_id", user.id)
+      .eq("tenant_id", profile.tenant_id);
+    if (threadUpdateErr) {
+      throw new Error(`Database Integrity: Failed to update thread timestamp (${threadUpdateErr.message}).`);
+    }
 
     return new Response(JSON.stringify({ 
       answer, 
       thread_id: threadId,
-      model: GENERATION_MODEL_ID,
+      model: usedModel,
       citations: citations,
       latencyMs: latency,
       usage: usage,

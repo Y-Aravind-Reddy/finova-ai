@@ -72,7 +72,7 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
       setTotalCount(res.totalCount ?? res.count);
       setTotalPages(res.totalPages || Math.max(1, Math.ceil((res.totalCount ?? res.count) / pageSize)));
 
-      if (res.error && res.state === 'query_error') {
+      if (res.error && (res.state === 'query_error' || res.state === 'restricted' || res.state === 'demo_session_rls')) {
         setErrorMsg(res.error);
       }
     } catch (err: any) {
@@ -88,13 +88,14 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
 
   // Handle case status update
   const handleUpdateStatus = async (caseId: string, newStatus: string) => {
+    setErrorMsg(null);
     const res = await updateFraudCaseStatusInDb(caseId, newStatus);
     if (res.success) {
       setCases((prev) => prev.map((c) => (c.id === caseId ? { ...c, status: newStatus as any } : c)));
       setActionSuccess(`Case ${caseId} updated to ${newStatus}.`);
       setTimeout(() => setActionSuccess(null), 3500);
     } else {
-      alert(`Status update failed: ${res.error}`);
+      setErrorMsg(`Status update failed: ${res.error || 'Database update rejected.'}`);
     }
   };
 
@@ -151,14 +152,18 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
               {companyName}
             </span>
             <span className="text-xs text-[#D4A017]">Forensic AML Surveillance</span>
-            {dbSource === 'supabase' && queryState === 'live_records' ? (
+            {dbSource === 'supabase' && (queryState === 'live_records' || queryState === 'zero_records') ? (
               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 Live DB ({totalCount.toLocaleString()} Cases)
               </span>
+            ) : queryState === 'restricted' || queryState === 'demo_session_rls' ? (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-950/90 border border-blue-500/60 text-blue-300">
+                RESTRICTED
+              </span>
             ) : (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
-                Workspace Scoped
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/90 border border-amber-500/60 text-amber-300">
+                {queryState === 'unconfigured' ? 'UNAVAILABLE' : 'DEGRADED'}
               </span>
             )}
           </div>
@@ -323,11 +328,19 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
             <p className="text-xs">Querying public.fraud_cases from Supabase...</p>
           </div>
         ) : errorMsg ? (
-          <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/40 text-red-200 flex items-center gap-3">
-            <ShieldAlert size={18} className="text-red-400 shrink-0" />
+          <div className={`p-4 rounded-xl border flex items-center gap-3 ${
+            queryState === 'restricted' || queryState === 'demo_session_rls'
+              ? 'bg-blue-950/40 border-blue-500/40 text-blue-200'
+              : 'bg-red-950/40 border-red-500/40 text-red-200'
+          }`}>
+            <ShieldAlert size={18} className={queryState === 'restricted' || queryState === 'demo_session_rls' ? 'text-blue-400 shrink-0' : 'text-red-400 shrink-0'} />
             <div>
-              <p className="font-bold text-xs">Query Error</p>
-              <p className="text-[11px] text-red-300">{errorMsg}</p>
+              <p className="font-bold text-xs">
+                {queryState === 'restricted' || queryState === 'demo_session_rls' ? 'RESTRICTED CLEARANCE' : 'Query Error'}
+              </p>
+              <p className={`text-[11px] ${queryState === 'restricted' || queryState === 'demo_session_rls' ? 'text-blue-300' : 'text-red-300'}`}>
+                {errorMsg}
+              </p>
             </div>
           </div>
         ) : cases.length === 0 ? (

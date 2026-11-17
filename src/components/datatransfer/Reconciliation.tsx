@@ -4,15 +4,10 @@ import { transferIntelligenceService } from '../../services/transferIntelligence
 import { DataTransferFilterBar, DataTransferFilters } from './DataTransferFilterBar';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
-import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { 
-  Sparkles, 
   CheckCircle2, 
-  XCircle, 
   Clock, 
-  RotateCw, 
   DollarSign, 
-  Search,
   Activity,
   ShieldCheck,
   AlertTriangle
@@ -30,12 +25,12 @@ const Reconciliation: React.FC = () => {
     tenantId: 'ALL'
   });
 
-  const { data: metrics, isLoading, refetch } = useQuery({
+  const { data: metrics, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['reconciliation-metrics', filters],
     queryFn: () => transferIntelligenceService.fetchReconciliationMetrics(filters.tenantId, filters),
   });
 
-  const { data: txData } = useQuery({
+  const { data: txData, isError: txIsError, error: txErrObj, refetch: refetchTx } = useQuery({
     queryKey: ['reconciliation-records', filters],
     queryFn: () => transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, pageSize: 10 }),
   });
@@ -46,6 +41,12 @@ const Reconciliation: React.FC = () => {
     { title: 'Unmatched Delta', value: metrics?.unmatchedRecords.toLocaleString() || '0', sub: 'Awaiting verification', icon: <Clock size={20} /> },
     { title: 'Recon. Difference', value: `$${((metrics?.totalDifference || 0) / 1000).toFixed(1)}K`, sub: 'Aggregate variance', icon: <DollarSign size={20} /> },
   ];
+
+  const combinedErr = isError
+    ? (error as Error)?.message
+    : txIsError
+    ? (txErrObj as Error)?.message
+    : null;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
@@ -61,13 +62,28 @@ const Reconciliation: React.FC = () => {
       <DataTransferFilterBar 
         filters={filters} 
         onFilterChange={setFilters} 
-        onRefresh={() => refetch()} 
+        onRefresh={() => { refetch(); refetchTx(); }} 
         isLoading={isLoading} 
       />
 
+      {combinedErr && (
+        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-red-400 shrink-0" />
+            <span>Reconciliation Telemetry Error: {combinedErr}</span>
+          </div>
+          <button
+            onClick={() => { refetch(); refetchTx(); }}
+            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi, idx) => (
-          <ThreeDKpiCard key={idx} {...kpi} trend="up" change="Live" tag="Audit" />
+          <ThreeDKpiCard key={idx} {...kpi} trend="up" change={metrics?.source === 'supabase' ? 'Live' : 'Unavailable'} tag="Audit" />
         ))}
       </div>
 
@@ -95,16 +111,21 @@ const Reconciliation: React.FC = () => {
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 rounded-xl bg-[#121212] border border-amber-500/20">
               <span className="text-[9px] font-black text-[#9CA3AF] uppercase">Unmatched Amount</span>
-              <p className="text-xl font-black text-amber-400 font-mono">$412,400.00</p>
+              <p className="text-xl font-black text-amber-400 font-mono">
+                ${(metrics?.totalDifference ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
             </div>
             <div className="p-4 rounded-xl bg-[#121212] border border-amber-500/20">
               <span className="text-[9px] font-black text-[#9CA3AF] uppercase">Awaiting Action</span>
-              <p className="text-xl font-black text-[#FAF7F0] font-mono">{metrics?.pendingCount} Cases</p>
+              <p className="text-xl font-black text-[#FAF7F0] font-mono">{metrics?.pendingCount ?? 0} Cases</p>
             </div>
           </div>
 
-          <button className="w-full py-3 rounded-xl bg-amber-500 text-[#111111] font-bold text-xs hover:brightness-110 transition-all uppercase tracking-widest shadow-[0_10px_20px_rgba(217,169,40,0.2)]">
-            Open Investigation Workspace
+          <button
+            onClick={() => setFilters((prev) => ({ ...prev, status: 'Pending' }))}
+            className="w-full py-3 rounded-xl bg-amber-500 text-[#111111] font-bold text-xs hover:brightness-110 transition-all uppercase tracking-widest shadow-[0_10px_20px_rgba(217,169,40,0.2)]"
+          >
+            Filter Pending Unmatched Cases
           </button>
         </div>
       </div>
@@ -116,9 +137,9 @@ const Reconciliation: React.FC = () => {
             <ShieldCheck size={18} className="text-[#D4A017]" />
             <h3 className="font-cinzel text-base font-bold text-[#FFF8E7]">Reconciliation Ledger</h3>
           </div>
-          <button className="text-[10px] font-bold text-[#D4A017] hover:underline uppercase tracking-widest">
-            Download Audit Export
-          </button>
+          <span className="text-[10px] font-mono text-[#9CA3AF]">
+            {txData?.data?.length || 0} Rows Displayed
+          </span>
         </div>
 
         <div className="overflow-x-auto">
@@ -134,12 +155,17 @@ const Reconciliation: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#262626] text-[#FAF7F0]">
-              {txData?.data.map((tx: any) => {
-                // Realistic mismatch simulation: 
-                // If status is not 'Settled', 'Success', or 'Completed', 
-                // it hasn't cleared the ledger yet, creating a 'difference' in the reconciliation view.
-                const isCleared = ['settled', 'success', 'completed'].includes(tx.status?.toLowerCase());
-                const diff = isCleared ? 0 : tx.amount * 0.1; // 10% delta for pending/failed items
+              {(txData?.data || []).length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center text-[#9CA3AF]">
+                    No reconciliation ledger records matched the active filters.
+                  </td>
+                </tr>
+              ) : txData!.data.map((tx: any) => {
+                const isCleared = ['settled', 'escrow secured', 'success', 'completed'].includes(String(tx.status || '').toLowerCase());
+                const amt = Number(tx.amount) || 0;
+                const ledgerAmt = isCleared ? amt : 0;
+                const diff = isCleared ? 0 : amt;
                 
                 return (
                   <tr key={tx.id} className="hover:bg-[#D4A017]/5 transition-colors group">
@@ -147,13 +173,13 @@ const Reconciliation: React.FC = () => {
                       <span className="font-bold text-[#FFF8E7]">{tx.id}</span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-[#9CA3AF]">
-                      {tx.date.split('T')[0]}
+                      {String(tx.date || '').split('T')[0]}
                     </td>
                     <td className="px-6 py-4 font-bold">
-                      {tx.currency} {tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {tx.currency} {amt.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 font-bold text-[#E6C78B]">
-                      {tx.currency} {(tx.amount - diff).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {tx.currency} {ledgerAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                     <td className={`px-6 py-4 font-bold ${diff > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
                       {diff > 0 ? `-${diff.toFixed(2)}` : '0.00'}
@@ -164,7 +190,7 @@ const Reconciliation: React.FC = () => {
                         ? 'bg-red-950/20 border-red-500/40 text-red-400' 
                         : 'bg-emerald-950/20 border-emerald-500/40 text-emerald-400'
                       }`}>
-                        {diff > 0 ? 'Mismatch' : 'Verified'}
+                        {diff > 0 ? String(tx.status || 'Unsettled') : 'Verified'}
                       </span>
                     </td>
                   </tr>

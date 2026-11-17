@@ -3,14 +3,14 @@ import {
   SupportTicket,
   UserAccount,
   UserRole,
-  FinanceFraudTransaction,
 } from '../../data/finovaDatasets';
 import {
   fetchSupportTicketsResultFromDb,
   fetchSupportAggregatesResultFromDb,
   updateSupportTicketStatusInDb,
   SupportAggregates,
-  fetchFraudCasesResultFromDb,
+  mapResultStateToTelemetryStatus,
+  TelemetryNodeStatus,
 } from '../../services/finovaDatabase';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
@@ -58,29 +58,37 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
 
   // State for live support tickets and aggregates
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [fraudCases, setFraudCases] = useState<FinanceFraudTransaction[]>([]);
   const [supportAggregates, setSupportAggregates] = useState<SupportAggregates | null>(null);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
+  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryNodeStatus>('OPERATIONAL');
   const [dbError, setDbError] = useState<string | null>(null);
   const [activeTableTab, setActiveTableTab] = useState<'requests' | 'followups' | 'complaints' | 'fraud'>('requests');
   const [loading, setLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadDashboardData = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [tResult, fResult, sAgg] = await Promise.all([
+      const [tResult, sAgg] = await Promise.all([
         fetchSupportTicketsResultFromDb(tenantId),
-        fetchFraudCasesResultFromDb(tenantId),
         fetchSupportAggregatesResultFromDb(tenantId),
       ]);
 
-      setDbSource(tResult.source);
-      setDbError(tResult.error);
+      const errs = [tResult.error, sAgg.error].filter(
+        (msg): msg is string => Boolean(msg)
+      );
+      setDbSource(tResult.source === 'supabase' && sAgg.source === 'supabase' ? 'supabase' : 'fallback');
+      setTelemetryStatus(
+        tResult.state === 'restricted' || sAgg.state === 'restricted'
+          ? 'RESTRICTED'
+          : mapResultStateToTelemetryStatus(tResult.state, tResult.source)
+      );
+      setDbError(errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null);
       setTickets(tResult.data);
-      setFraudCases(fResult.data);
       setSupportAggregates(sAgg);
     } catch (err: any) {
       console.warn('Support executive load notice:', err);
+      setTelemetryStatus('DEGRADED');
       setDbError(err?.message || 'Error loading dashboard data');
     } finally {
       setLoading(false);
@@ -110,13 +118,7 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
         subtext: `${cat.percentage}% of Desk Queue`,
       }));
     }
-    return [
-      { label: 'High-Value Wire', value: 18200, subtext: '35% of Desk Queue' },
-      { label: 'KYC Resubmission', value: 11440, subtext: '22% of Desk Queue' },
-      { label: 'Escrow Clearance', value: 9360, subtext: '18% of Desk Queue' },
-      { label: 'SWIFT Trace', value: 7800, subtext: '15% of Desk Queue' },
-      { label: 'FX Spot', value: 5200, subtext: '10% of Desk Queue' },
-    ];
+    return [];
   }, [supportAggregates]);
 
   // Dynamic 3D Column Chart: Executive Assigned Workload
@@ -128,12 +130,7 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
         secondaryValue: e.resolvedTickets,
       }));
     }
-    return [
-      { label: 'Claire', value: 3840, secondaryValue: 8420 },
-      { label: 'David', value: 4120, secondaryValue: 7910 },
-      { label: 'Amara', value: 3410, secondaryValue: 8200 },
-      { label: 'Sophia', value: 3450, secondaryValue: 8120 },
-    ];
+    return [];
   }, [supportAggregates]);
 
   // Follow-ups queue for this tenant derived from active tickets
@@ -166,21 +163,28 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
   }, [tickets]);
 
   const handleResolveTicket = async (ticketId: string) => {
+    setActionError(null);
     try {
-      updateSupportTicketStatusInDb(ticketId, 'Resolved');
-    } catch (e) {
-      console.warn('Ticket resolve error:', e);
+      const res = await updateSupportTicketStatusInDb(ticketId, 'Resolved');
+      if (!res.success) {
+        setActionError(`Failed to resolve ticket ${ticketId}: ${res.error || 'Database update rejected.'}`);
+        return;
+      }
+      setTickets((prev) =>
+        prev.map((t) => (t.ticketId === ticketId ? { ...t, status: 'Resolved', csatRating: 5.0 } : t))
+      );
+    } catch (e: any) {
+      setActionError(`Failed to resolve ticket ${ticketId}: ${e?.message || 'Unexpected database error.'}`);
     }
-    setTickets((prev) =>
-      prev.map((t) => (t.ticketId === ticketId ? { ...t, status: 'Resolved', csatRating: 5.0 } : t))
-    );
   };
 
-  const totalTickets = supportAggregates?.totalTickets ?? 52000;
-  const openCount = supportAggregates?.openCount ?? 14820;
-  const urgentCount = supportAggregates?.priorityDistribution.find((p) => p.priority === 'Urgent')?.count ?? 3640;
-  const csatRating = supportAggregates?.averageCsat ?? 4.86;
-  const slaCompliance = supportAggregates?.slaCompliancePct ?? 94.2;
+  const totalTickets = supportAggregates?.totalTickets ?? 0;
+  const openCount = supportAggregates?.openCount ?? 0;
+  const urgentCount = supportAggregates?.priorityDistribution.find((p) => p.priority === 'Urgent')?.count ?? 0;
+  const csatRating = supportAggregates?.averageCsat ?? 0;
+  const slaCompliance = supportAggregates?.slaCompliancePct ?? 0;
+  const resolvedRatio = totalTickets > 0 ? Math.round(((supportAggregates?.closedCount ?? 0) / totalTickets) * 1000) / 10 : 0;
+  const activeRatio = totalTickets > 0 ? Math.round((openCount / totalTickets) * 1000) / 10 : 0;
 
   return (
     <div className="space-y-6 font-mono text-xs">
@@ -193,18 +197,26 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
               {companyName} Desk
             </span>
             <span className="text-xs text-[#E6C78B]">Clearance: Support Executive</span>
-            {dbSource === 'supabase' ? (
+            {dbSource === 'supabase' && telemetryStatus === 'OPERATIONAL' ? (
               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 Live Supabase Database ({tickets.length} Tickets)
               </span>
+            ) : telemetryStatus === 'RESTRICTED' ? (
+              <span
+                className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-950/80 border border-blue-500/50 text-blue-300 flex items-center gap-1"
+                title={dbError || 'Clearance restricted by Supabase RLS'}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                RESTRICTED (Auth / Clearance Required)
+              </span>
             ) : (
               <span
                 className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/80 border border-amber-500/50 text-amber-300 flex items-center gap-1"
-                title={dbError || 'Support tickets table pending or requires authentication'}
+                title={dbError || 'Support telemetry degraded'}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                Institutional Dataset Baseline (RLS Active)
+                {telemetryStatus}
               </span>
             )}
           </div>
@@ -212,7 +224,7 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
             {companyName} Client Concierge & Support
           </h1>
           <p className="text-xs text-[#9CA3AF] max-w-2xl mt-1">
-            Managing client tickets, high-value wire authorizations, and SLA follow-ups strictly scoped to {companyName}. Complete dataset of 52,000 support tickets.
+            Managing client tickets, high-value wire authorizations, and SLA follow-ups strictly scoped to {companyName}. {totalTickets > 0 ? `${totalTickets.toLocaleString()} support tickets audited.` : 'Live Supabase ticket telemetry.'}
           </p>
         </div>
 
@@ -236,6 +248,36 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
         </div>
       </div>
 
+      {actionError && (
+        <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-500/60 text-red-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-red-400 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button
+            onClick={() => setActionError(null)}
+            className="text-[10px] underline text-red-300 hover:text-white"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {dbError && (
+        <div className="p-3.5 rounded-xl bg-amber-950/50 border border-amber-500/50 text-amber-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} className="text-amber-400 shrink-0" />
+            <span>Support Telemetry Notice: {dbError}</span>
+          </div>
+          <button
+            onClick={() => loadDashboardData()}
+            className="px-3 py-1 rounded-lg bg-[#121212] border border-amber-400/50 text-amber-200 text-[10px] hover:bg-[#262626] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* 4 3D KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <ThreeDKpiCard
@@ -250,7 +292,7 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
         />
         <ThreeDKpiCard
           title="Avg Resolution Time"
-          value="Open Duration Only"
+          value={supportAggregates?.resolutionTimeDisplay || 'Open Duration Only'}
           subValue="Schema tracks hours_open (elapsed duration)"
           change="Completed time not in schema"
           trend="up"
@@ -295,10 +337,10 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ThreeDDonutChart
           title="3D Ticket Classification Distribution"
-          subtitle={`52,000 Support Inquiries Categorized for ${companyName}`}
+          subtitle={`${totalTickets.toLocaleString()} Support Inquiries Categorized for ${companyName}`}
           segments={categoryDonutData}
           centerLabel="Total Tickets"
-          centerValue={`${(totalTickets / 1000).toFixed(0)}k`}
+          centerValue={totalTickets >= 1000 ? `${(totalTickets / 1000).toFixed(1)}k` : String(totalTickets)}
           height={320}
         />
         <ThreeDColumnChart
@@ -326,19 +368,19 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
                 label: 'Overall SLA Met',
                 value: slaCompliance,
                 displayValue: `${slaCompliance}%`,
-                subtext: '52,000 tickets audited',
+                subtext: `${totalTickets.toLocaleString()} tickets audited`,
               },
               {
-                label: 'Urgent Wire Clearance',
-                value: 96.8,
-                displayValue: '96.8%',
-                subtext: '< 2.0h target',
+                label: 'Resolution Rate',
+                value: resolvedRatio,
+                displayValue: `${resolvedRatio}%`,
+                subtext: `${(supportAggregates?.closedCount ?? 0).toLocaleString()} closed tickets`,
               },
               {
-                label: 'Escrow & Custody Trace',
-                value: 92.4,
-                displayValue: '92.4%',
-                subtext: '< 6.0h target',
+                label: 'Active Queue Share',
+                value: activeRatio,
+                displayValue: `${activeRatio}%`,
+                subtext: `${openCount.toLocaleString()} open / in-progress`,
               },
             ]}
           />
@@ -370,7 +412,7 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
                     : 'bg-[#121212] text-[#9CA3AF] hover:text-[#FAF7F0] border border-[#3A3A3A]'
                 }`}
               >
-                Active Concierge Queue ({tickets.length || 52000})
+                Active Concierge Queue ({tickets.length})
               </button>
               <button
                 onClick={() => setActiveTableTab('followups')}
@@ -401,7 +443,7 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
                 }`}
               >
                 <ShieldAlert size={12} />
-                Fraud Alerts ({fraudCases.length})
+                Fraud Surveillance (Restricted)
               </button>
             </div>
             <span className="text-[10px] text-[#9CA3AF] hidden sm:inline">
@@ -534,76 +576,21 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
             </div>
           )}
 
-          {/* Fraud Tab */}
+          {/* Fraud Tab — Explicitly Restricted for SUPPORT_EXECUTIVE */}
           {activeTableTab === 'fraud' && (
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full text-left font-mono text-xs">
-                <thead>
-                  <tr className="border-b border-[#3A3A3A] text-[#E6C78B] text-[11px]">
-                    <th className="pb-2">Case ID</th>
-                    <th className="pb-2">Client / Account</th>
-                    <th className="pb-2">Trigger / Score</th>
-                    <th className="pb-2">Amount</th>
-                    <th className="pb-2 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                  {fraudCases.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-8 text-center text-[#9CA3AF]">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <ShieldCheck size={28} className="text-[#D4A017]" />
-                          <p className="text-sm font-bold text-[#FAF7F0]">No Active Fraud Alerts</p>
-                          <p className="text-xs text-[#9CA3AF]">Surveillance clean for {companyName}.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    fraudCases.slice(0, 10).map((f) => (
-                      <tr key={f.id} className="hover:bg-[#121212]/50">
-                        <td className="py-2.5 font-bold text-[#E6C78B]">{f.id}</td>
-                        <td className="py-2.5">
-                          <p className="font-semibold text-[#FAF7F0]">{f.customerName}</p>
-                          <p className="text-[10px] text-[#9CA3AF]">{f.customerId}</p>
-                        </td>
-                        <td className="py-2.5">
-                          <p className="text-[#9CA3AF]">{f.ruleTriggered}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <div className="w-16 h-1 bg-[#121212] rounded-full overflow-hidden border border-[#3A3A3A]">
-                              <div
-                                className={`h-full rounded-full ${
-                                  f.riskScore >= 80 ? 'bg-rose-500' : f.riskScore >= 50 ? 'bg-amber-500' : 'bg-emerald-500'
-                                }`}
-                                style={{ width: `${f.riskScore}%` }}
-                              ></div>
-                            </div>
-                            <span className="text-[9px] font-bold text-[#D4A017]">{f.riskScore}</span>
-                          </div>
-                        </td>
-                        <td className="py-2.5">
-                          <p className="font-bold text-[#FAF7F0]">
-                            {f.currency} {f.amount.toLocaleString()}
-                          </p>
-                          <p className="text-[9px] text-[#9CA3AF]">
-                            ≈ ₹{((f.amountInr || 0) / 1000000).toFixed(2)}M
-                          </p>
-                        </td>
-                        <td className="py-2.5 text-right">
-                          <button
-                            className="px-2 py-1 rounded bg-[#121212] border border-[#D4A017]/50 text-[#D4A017] text-[10px] font-bold hover:bg-[#D4A017] hover:text-[#1A1A1A] transition-all"
-                          >
-                            Investigate
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <div className="mt-4 p-3 rounded-xl bg-[#1C1810] border border-[#D4A017]/30 flex items-start gap-2.5">
-                <AlertTriangle size={14} className="text-[#D4A017] shrink-0 mt-0.5" />
-                <p className="text-[10px] text-[#E6C78B]/90 leading-relaxed">
-                  <strong>Policy Update:</strong> Support Executives now hold read-only clearance for institutional fraud alerts strictly scoped to their tenant workspace.
+            <div className="mt-4 p-6 rounded-xl bg-[#141414] border border-blue-500/40 text-center space-y-3">
+              <div className="w-12 h-12 rounded-full bg-blue-950/80 border border-blue-500/50 text-blue-300 flex items-center justify-center mx-auto">
+                <ShieldAlert size={22} />
+              </div>
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-950/90 border border-blue-500/50 text-blue-300 uppercase tracking-wider">
+                  RESTRICTED CLEARANCE
+                </span>
+                <h4 className="font-cinzel text-base font-bold text-[#FAF7F0] mt-2">
+                  Fraud & AML Surveillance Restricted
+                </h4>
+                <p className="text-[11px] text-[#9CA3AF] max-w-lg mx-auto mt-1 leading-relaxed">
+                  Per institutional PostgreSQL RBAC and RLS policy, <code>public.fraud_cases</code> and <code>get_fraud_aggregates</code> are restricted to Finance Analysts, Tenant Admins, and Platform Super Admin. Support Executives handle concierge tickets, SLA escalations, and read-only KYC review only.
                 </p>
               </div>
             </div>

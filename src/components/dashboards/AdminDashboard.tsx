@@ -1,5 +1,5 @@
 import React, { useState, useMemo, Suspense, lazy } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   UserAccount,
   UserRole,
@@ -12,6 +12,9 @@ import {
   fetchFraudAggregatesResultFromDb,
   fetchKycAggregatesResultFromDb,
   fetchPlatformExecutiveKpis,
+  canRoleAccessFraudTelemetry,
+  canRoleAccessSupportTelemetry,
+  mapResultStateToTelemetryStatus,
 } from '../../services/finovaDatabase';
 
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
@@ -89,10 +92,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   activeSection = 'dashboard',
   currentUser,
 }) => {
+  const queryClient = useQueryClient();
   const [activeModule, setActiveModule] = useState<IntelligenceModule>('overview');
   const [modalOpen, setModalOpen] = useState(false);
   const [changeRoleUser, setChangeRoleUser] = useState<UserAccount | null>(null);
   const [changeRoleOpen, setChangeRoleOpen] = useState(false);
+  const [adminNotice, setAdminNotice] = useState<{ type: 'error' | 'info'; message: string } | null>(null);
 
   const [filters, setFilters] = useState<DashboardFilters>({
     startDate: '',
@@ -105,45 +110,86 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const tenant = useMemo(() => getTenantById(tenantId), [tenantId]);
   const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
 
+  const fraudAuthorized = canRoleAccessFraudTelemetry(currentRole);
+  const supportAuthorized = canRoleAccessSupportTelemetry(currentRole);
+
   // --- REACT QUERY DATA FETCHING ---
 
   const { data: kpis, isLoading: kpisLoading } = useQuery({
-    queryKey: ['platform-kpis', currentRole],
-    queryFn: () => currentRole === 'SUPER_ADMIN' ? fetchPlatformExecutiveKpis() : Promise.resolve(null),
-    enabled: !!currentRole,
+    queryKey: ['platform-kpis', currentUser?.id, currentRole],
+    queryFn: () => fetchPlatformExecutiveKpis(),
+    enabled: currentRole === 'SUPER_ADMIN',
   });
 
   const { data: txAgg, isLoading: txLoading } = useQuery({
-    queryKey: ['tx-aggregates', tenantId, filters],
+    queryKey: ['tx-aggregates', currentUser?.id, currentRole, tenantId, filters],
     queryFn: () => fetchTransactionAggregatesResultFromDb(tenantId, { ...filters }),
   });
 
   const { data: sAgg, isLoading: sLoading } = useQuery({
-    queryKey: ['support-aggregates', tenantId],
+    queryKey: ['support-aggregates', currentUser?.id, currentRole, tenantId],
     queryFn: () => fetchSupportAggregatesResultFromDb(tenantId),
+    enabled: supportAuthorized,
   });
 
   const { data: fAgg, isLoading: fLoading } = useQuery({
-    queryKey: ['fraud-aggregates', tenantId, filters.currency],
+    queryKey: ['fraud-aggregates', currentUser?.id, currentRole, tenantId, filters.currency],
     queryFn: () => fetchFraudAggregatesResultFromDb(tenantId, { currency: filters.currency }),
+    enabled: fraudAuthorized,
   });
 
   const { data: kAgg, isLoading: kLoading } = useQuery({
-    queryKey: ['kyc-aggregates', tenantId],
+    queryKey: ['kyc-aggregates', currentUser?.id, currentRole, tenantId],
     queryFn: () => fetchKycAggregatesResultFromDb(tenantId),
   });
 
   const nodeStatuses = useMemo(() => ({
-    kpis: currentRole !== 'SUPER_ADMIN' ? 'restricted' : (kpisLoading ? 'loading' : 'operational'),
-    transactions: txLoading ? 'loading' : (txAgg?.source === 'supabase' ? 'operational' : 'degraded'),
-    support: sLoading ? 'loading' : (sAgg?.source === 'supabase' ? 'operational' : 'degraded'),
-    fraud: fLoading ? 'loading' : (fAgg?.source === 'supabase' ? 'operational' : 'degraded'),
-    kyc: kLoading ? 'loading' : (kAgg?.source === 'supabase' ? 'operational' : 'degraded'),
-  }), [currentRole, kpisLoading, txLoading, txAgg, sLoading, sAgg, fLoading, fAgg, kLoading, kAgg]);
+    kpis:
+      currentRole !== 'SUPER_ADMIN'
+        ? 'restricted'
+        : kpisLoading
+        ? 'loading'
+        : mapResultStateToTelemetryStatus(kpis?.state, kpis?.source, kpisLoading).toLowerCase(),
+    transactions: txLoading
+      ? 'loading'
+      : mapResultStateToTelemetryStatus(txAgg?.state, txAgg?.source, txLoading).toLowerCase(),
+    support: !supportAuthorized
+      ? 'restricted'
+      : sLoading
+      ? 'loading'
+      : mapResultStateToTelemetryStatus(sAgg?.state, sAgg?.source, sLoading).toLowerCase(),
+    fraud: !fraudAuthorized
+      ? 'restricted'
+      : fLoading
+      ? 'loading'
+      : mapResultStateToTelemetryStatus(fAgg?.state, fAgg?.source, fLoading).toLowerCase(),
+    kyc: kLoading
+      ? 'loading'
+      : mapResultStateToTelemetryStatus(kAgg?.state, kAgg?.source, kLoading).toLowerCase(),
+  }), [currentRole, fraudAuthorized, supportAuthorized, kpisLoading, kpis, txLoading, txAgg, sLoading, sAgg, fLoading, fAgg, kLoading, kAgg]);
+
+  const combinedDbError = useMemo(() => {
+    const entries = [
+      { state: kpis?.state, error: kpis?.error },
+      { state: txAgg?.state, error: txAgg?.error },
+      { state: sAgg?.state, error: sAgg?.error },
+      { state: fAgg?.state, error: fAgg?.error },
+      { state: kAgg?.state, error: kAgg?.error },
+    ];
+    const errs = entries
+      .filter((item) => item.error && item.state !== 'restricted')
+      .map((item) => item.error as string);
+    return errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null;
+  }, [kpis, txAgg, sAgg, fAgg, kAgg]);
 
   const handleSaveUser = async (userData: Partial<UserAccount>) => {
+    setAdminNotice(null);
     if (userData.role === 'SUPER_ADMIN' || userData.role === 'ADMIN') {
-      alert('Governance Violation: Company Admins cannot provision Admin or Super Admin accounts.');
+      setAdminNotice({
+        type: 'error',
+        message: 'Governance Violation: Company Admins cannot provision Admin or Super Admin accounts.',
+      });
+      setModalOpen(false);
       return;
     }
     const newId = `USR-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -169,8 +215,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (res.success) {
       onUpdateUsers([newUser, ...users]);
       if (onRefreshUsers) onRefreshUsers();
+      setAdminNotice({ type: 'info', message: `User profile ${newUser.name} synchronized to database.` });
     } else {
-      alert(`User provisioning failed: ${res.error}`);
+      setAdminNotice({ type: 'error', message: `User provisioning failed: ${res.error || 'Unknown error'}` });
     }
     setModalOpen(false);
   };
@@ -258,8 +305,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <h4 className="text-sm font-bold text-[#FAF7F0]">KYC Onboarding Queue</h4>
                     </div>
                     <div className="mt-4">
-                      <span className="text-3xl font-black text-[#E6C78B]">{kAgg?.totalCount || 0}</span>
-                      <span className="text-[10px] text-[#9CA3AF] ml-2">Pending Review</span>
+                      <span className="text-3xl font-black text-[#E6C78B]">{kAgg?.pendingCount ?? 0}</span>
+                      <span className="text-[10px] text-[#9CA3AF] ml-2">Pending Review ({kAgg?.totalCount ?? 0} Total)</span>
                     </div>
                   </div>
 
@@ -273,7 +320,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <h4 className="text-sm font-bold text-[#FAF7F0]">Concierge Desk Health</h4>
                     </div>
                     <div className="mt-4">
-                      <span className="text-3xl font-black text-[#E6C78B]">{sAgg?.slaCompliancePct || 0}%</span>
+                      <span className="text-3xl font-black text-[#E6C78B]">{sAgg?.slaCompliancePct ?? 0}%</span>
                       <span className="text-[10px] text-[#9CA3AF] ml-2">SLA Compliance</span>
                     </div>
                   </div>
@@ -316,58 +363,107 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {kpisLoading ? (
                 [...Array(8)].map((_, i) => <KpiSkeleton key={i} />)
-              ) : (
-                <>
-                  <ThreeDKpiCard 
-                    title="Settled Volume (YTD)" 
-                    value={`₹${((kpis?.settledVolumeYtd || 5240000000) / 10000000).toFixed(1)}B`} 
-                    subValue="Cross-tenant aggregate" 
-                    change="+14.2%" trend="up" tag="Global" icon={<TrendingUp size={18} />} variant="gold-accent"
-                  />
-                  <ThreeDKpiCard 
-                    title="Institutional MRR" 
-                    value={`$${((kpis?.institutionalMrr || 285000) / 1000).toFixed(1)}K`} 
-                    subValue="Live active subscriptions" 
-                    change="+8.4%" trend="up" tag="Live" icon={<Building2 size={18} />}
-                  />
-                  <ThreeDKpiCard 
-                    title="Fraud Prevention" 
-                    value={`₹${((kpis?.preventedFraudVolume || 138420000) / 1000000).toFixed(1)}M`} 
-                    subValue="Capital secured in escrow" 
-                    change="Verified" trend="up" tag="Risk" icon={<ShieldCheck size={18} />}
-                  />
-                  <ThreeDKpiCard 
-                    title="SLA Compliance" 
-                    value={`${kpis?.slaCompliancePct || 98.4}%`} 
-                    subValue="Operational throughput" 
-                    change="Target Met" trend="up" tag="Ops" icon={<RotateCw size={18} />}
-                  />
-                  <ThreeDKpiCard 
-                    title="Compliance Score" 
-                    value={`${kpis?.complianceScore || 99.4}%`} 
-                    subValue="Global platform audit" 
-                    change="Stable" trend="up" tag="Audit" icon={<AlertCircle size={18} />}
-                  />
-                  <ThreeDKpiCard 
-                    title="Active Users" 
-                    value={`${(kpis?.activeUsers || 215000).toLocaleString()}`} 
-                    subValue="Unique verified identities" 
-                    change="+12K" trend="up" tag="Users" icon={<Users size={18} />}
-                  />
-                  <ThreeDKpiCard 
-                    title="Net Liquid Balance" 
-                    value={`$${((kpis?.netLiquidBalance || 842500000) / 1000000).toFixed(1)}M`} 
-                    subValue="Consolidated USD Base" 
-                    change="Optimized" trend="up" tag="Treasury" icon={<LayoutDashboard size={18} />}
-                  />
-                  <ThreeDKpiCard 
-                    title="Risk Exposure" 
-                    value={`${kpis?.riskExposureScore || 12}`} 
-                    subValue="Composite platform index" 
-                    change="Low" trend="down" tag="Safety" icon={<ShieldAlert size={18} />}
-                  />
-                </>
-              )}
+              ) : (() => {
+                const isSuperAdminLive = currentRole === 'SUPER_ADMIN' && kpis?.source === 'supabase';
+                const settledInr = isSuperAdminLive ? kpis!.settledVolumeYtd : (txAgg?.settledVolumeInr ?? 0);
+                const preventedInr = isSuperAdminLive ? kpis!.preventedFraudVolume : (fAgg?.preventedVolumeInr ?? 0);
+                const slaPct = isSuperAdminLive ? kpis!.slaCompliancePct : (sAgg?.slaCompliancePct ?? 0);
+                const kycCompliancePct = isSuperAdminLive
+                  ? kpis!.complianceScore
+                  : kAgg && kAgg.totalCount > 0
+                  ? Math.round((kAgg.verifiedCount / kAgg.totalCount) * 1000) / 10
+                  : 0;
+                const activeUsersVal = isSuperAdminLive ? kpis!.activeUsers : users.length;
+                const netLiquidUsd = isSuperAdminLive ? kpis!.netLiquidBalance : (txAgg?.netLiquidBalanceUsd ?? 0);
+                const riskScoreVal = isSuperAdminLive
+                  ? kpis!.riskExposureScore
+                  : fAgg && (txAgg?.totalCount ?? 0) > 0
+                  ? Math.min(100, Math.round((fAgg.totalCases / Math.max(1, txAgg?.totalCount ?? 1)) * 100))
+                  : 0;
+                const mrrDisplay = isSuperAdminLive
+                  ? `$${(kpis!.institutionalMrr / 1000).toFixed(1)}K`
+                  : currentRole === 'SUPER_ADMIN'
+                  ? 'Unavailable'
+                  : 'Platform Scope';
+
+                return (
+                  <>
+                    <ThreeDKpiCard
+                      title="Settled Volume (YTD)"
+                      value={`₹${(settledInr / 10000000).toFixed(2)} Cr`}
+                      subValue={isSuperAdminLive ? 'Cross-tenant aggregate' : `${companyName} verified ledger`}
+                      change={txAgg?.source === 'supabase' || isSuperAdminLive ? 'Live DB' : 'Unavailable'}
+                      trend="up"
+                      tag={isSuperAdminLive ? 'Global' : 'Tenant'}
+                      icon={<TrendingUp size={18} />}
+                      variant="gold-accent"
+                    />
+                    <ThreeDKpiCard
+                      title="Institutional MRR"
+                      value={mrrDisplay}
+                      subValue={isSuperAdminLive ? 'Live active subscriptions' : 'Restricted to Super Admin'}
+                      change={isSuperAdminLive ? 'Live' : 'Scoped'}
+                      trend="up"
+                      tag="SaaS"
+                      icon={<Building2 size={18} />}
+                    />
+                    <ThreeDKpiCard
+                      title="Fraud Prevention"
+                      value={`₹${(preventedInr / 1000000).toFixed(2)}M`}
+                      subValue="Capital secured in escrow"
+                      change={fAgg?.source === 'supabase' || isSuperAdminLive ? 'Verified' : 'Unavailable'}
+                      trend="up"
+                      tag="Risk"
+                      icon={<ShieldCheck size={18} />}
+                    />
+                    <ThreeDKpiCard
+                      title="SLA Compliance"
+                      value={`${slaPct.toFixed(1)}%`}
+                      subValue="Operational throughput"
+                      change={slaPct >= 90 ? 'Target Met' : 'Auditing'}
+                      trend="up"
+                      tag="Ops"
+                      icon={<RotateCw size={18} />}
+                    />
+                    <ThreeDKpiCard
+                      title="Compliance Score"
+                      value={`${kycCompliancePct.toFixed(1)}%`}
+                      subValue={isSuperAdminLive ? 'Global KYC audit' : `${kAgg?.verifiedCount ?? 0} verified KYC`}
+                      change={kAgg?.source === 'supabase' || isSuperAdminLive ? 'Audited' : 'Pending'}
+                      trend="up"
+                      tag="Audit"
+                      icon={<AlertCircle size={18} />}
+                    />
+                    <ThreeDKpiCard
+                      title="Active Users"
+                      value={activeUsersVal.toLocaleString()}
+                      subValue="Registered tenant profiles"
+                      change={activeUsersVal > 0 ? 'Live' : '0 Records'}
+                      trend="up"
+                      tag="Users"
+                      icon={<Users size={18} />}
+                    />
+                    <ThreeDKpiCard
+                      title="Net Liquid Balance"
+                      value={`$${(netLiquidUsd / 1000000).toFixed(2)}M`}
+                      subValue="Consolidated USD Base"
+                      change={txAgg?.source === 'supabase' || isSuperAdminLive ? 'Verified' : 'Unavailable'}
+                      trend="up"
+                      tag="Treasury"
+                      icon={<LayoutDashboard size={18} />}
+                    />
+                    <ThreeDKpiCard
+                      title="Risk Exposure"
+                      value={`${riskScoreVal}`}
+                      subValue="Composite anomaly index"
+                      change={riskScoreVal <= 20 ? 'Low' : 'Elevated'}
+                      trend="down"
+                      tag="Safety"
+                      icon={<ShieldAlert size={18} />}
+                    />
+                  </>
+                );
+              })()}
             </div>
 
             {/* Global Filters */}
@@ -427,7 +523,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         <div className="flex items-center gap-3 shrink-0">
           <button
-            onClick={() => {}} // React Query handles refetching via keys automatically
+            onClick={() => {
+              queryClient.invalidateQueries();
+              if (onRefreshUsers) onRefreshUsers();
+            }}
+            title="Refresh live telemetry"
             className="p-3 rounded-xl bg-[#121212] border border-[#3A3A3A] hover:border-[#D4A017] text-[#D4A017] transition-all hover:scale-105 active:scale-95 group"
           >
             <RotateCw size={16} className={`${txLoading || fLoading || kLoading || sLoading ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
@@ -447,7 +547,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <div className="flex flex-wrap gap-2 px-2">
         <div className="flex items-center gap-4 px-4 py-2 rounded-xl bg-[#121212]/80 border border-[#3A3A3A] backdrop-blur-md shadow-inner">
           <div className="flex items-center gap-2 border-r border-[#3A3A3A] pr-4">
-            <div className={`w-2 h-2 rounded-full ${Object.values(nodeStatuses).every(s => s === 'operational') ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]'}`} />
+            <div className={`w-2 h-2 rounded-full ${Object.values(nodeStatuses).every(s => s === 'operational' || s === 'restricted') ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]'}`} />
             <span className="text-[10px] font-black uppercase tracking-widest text-[#E6C78B]">System Health</span>
           </div>
           <div className="flex items-center gap-3">
@@ -458,18 +558,53 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 title={`${key}: ${status.toUpperCase()}`}
               >
                 <div className={`w-1.5 h-1.5 rounded-full ${
-                  status === 'operational' ? 'bg-emerald-500/40' :
+                  status === 'operational' ? 'bg-emerald-500/80' :
                   status === 'degraded' ? 'bg-amber-500 animate-pulse' :
-                  status === 'restricted' ? 'bg-blue-500' :
+                  status === 'restricted' ? 'bg-blue-400' :
                   status === 'loading' ? 'bg-[#9CA3AF] animate-spin h-1.5 w-1.5 border-b border-[#D4A017] rounded-full' :
                   'bg-red-500 animate-bounce'
                 }`} />
-                <span className={`text-[9px] font-bold font-mono uppercase ${status === 'operational' ? 'text-[#9CA3AF]' : 'text-[#FAF7F0]'}`}>{key}</span>
+                <span className={`text-[9px] font-bold font-mono uppercase ${
+                  status === 'operational' ? 'text-[#9CA3AF]' :
+                  status === 'restricted' ? 'text-blue-300' :
+                  status === 'unavailable' ? 'text-red-300' :
+                  'text-[#FAF7F0]'
+                }`}>{key}{status === 'restricted' ? ' (Restricted)' : status === 'unavailable' ? ' (Unavailable)' : ''}</span>
               </div>
             ))}
           </div>
         </div>
       </div>
+
+      {adminNotice && (
+        <div
+          className={`rounded-xl px-4 py-3 border flex items-center justify-between gap-3 ${
+            adminNotice.type === 'error'
+              ? 'bg-red-950/60 border-red-500/50 text-red-200'
+              : 'bg-emerald-950/50 border-emerald-500/40 text-emerald-200'
+          }`}
+        >
+          <span>{adminNotice.message}</span>
+          <button onClick={() => setAdminNotice(null)} className="text-[10px] underline shrink-0">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {combinedDbError && (
+        <div className="rounded-xl px-4 py-3 bg-amber-950/50 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={15} className="text-amber-400 shrink-0" />
+            <span>Database Telemetry Notice: {combinedDbError}</span>
+          </div>
+          <button
+            onClick={() => queryClient.invalidateQueries()}
+            className="px-2.5 py-1 rounded bg-[#121212] border border-amber-500/50 text-amber-300 text-[10px] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="min-h-[600px]">
         {renderContent()}

@@ -82,6 +82,9 @@ const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
         dualKeySignoffEnabled: res.config.dualKeySignoffEnabled,
         realTimeAuditLogging: res.config.realTimeAuditLogging,
       });
+      if (res.error) {
+        setAiSaveError(res.error);
+      }
     } catch (err: any) {
       setAiSaveError(err?.message || 'Failed to reload AI configuration from Supabase storage.');
     } finally {
@@ -451,7 +454,7 @@ const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
           {aiSaveError && (
             <div className="mt-4 p-3 rounded-xl bg-[#2D0A0A] border border-[#EF4444]/60 text-xs font-mono text-[#FCA5A5] flex items-center gap-2">
               <AlertTriangle size={15} className="text-[#EF4444] shrink-0" />
-              <span>Configuration save failed: {aiSaveError}</span>
+              <span>AI Configuration Notice: {aiSaveError}</span>
             </div>
           )}
 

@@ -124,15 +124,21 @@ const ProfileView: React.FC<ProfileViewProps> = ({
       notes,
     };
 
-    // 1. If Supabase is configured, update in Supabase PostgreSQL profiles table
+    // 1. If Supabase is configured, update in Supabase PostgreSQL profiles table first
     if (isSupabaseConfigured() && user.id) {
       const res = await saveProfileToDb(updatedUser);
       if (!res.success) {
-        console.warn('Supabase profile sync note:', res.error);
+        setSaving(false);
+        setStatusMsg({
+          text: `Profile synchronization failed: ${res.error || 'Database rejected update.'}`,
+          type: 'error',
+        });
+        return;
       }
     }
 
-    // 2. Update local session & user cache
+    // 2. Update local user, session & user cache ONLY after backend confirmation
+    setUser(updatedUser);
     if (session) {
       session.user = updatedUser;
       saveSession(session);

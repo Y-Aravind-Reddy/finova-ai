@@ -6,15 +6,16 @@ import {
 } from '../../data/finovaDatasets';
 import {
   fetchFraudCasesResultFromDb,
-  fetchTransactionsResultFromDb,
   fetchKycRecordsResultFromDb,
   updateFraudCaseStatusInDb,
   fetchFraudAggregatesResultFromDb,
   fetchTransactionAggregatesResultFromDb,
   TransactionAggregates,
   FraudAggregates,
+  mapResultStateToTelemetryStatus,
+  TelemetryNodeStatus,
 } from '../../services/finovaDatabase';
-import { convertToInr, formatCurrencyWithInrDisclosure } from '../../services/currencyService';
+import { convertToInr } from '../../services/currencyService';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDTransactionHeatmap } from '../charts3d/ThreeDTransactionHeatmap';
@@ -25,19 +26,13 @@ import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
 import { UserManagementModal } from '../UserManagementModal';
 import {
   ShieldAlert,
-  Search,
   AlertTriangle,
-  Lock,
   CheckCircle2,
   DollarSign,
   UserPlus,
-  Eye,
   FileText,
-  Users,
   Building2,
   RotateCw,
-  TrendingUp,
-  BarChart3,
   Activity
 } from 'lucide-react';
 
@@ -69,6 +64,7 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
   const [kycQueueCount, setKycQueueCount] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
+  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryNodeStatus>('OPERATIONAL');
   const [dbError, setDbError] = useState<string | null>(null);
   const [activeTableTab, setActiveTableTab] = useState<'suspicious' | 'high_risk' | 'merchants' | 'reports'>('suspicious');
 
@@ -83,14 +79,28 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
         fetchKycRecordsResultFromDb(tenantId),
       ]);
 
-      setDbSource(fResult.source);
-      setDbError(fResult.error);
+      const errs = [fResult.error, fAgg.error, tAgg.error, kResult.error].filter(
+        (msg): msg is string => Boolean(msg)
+      );
+      setDbSource(fResult.source === 'supabase' && tAgg.source === 'supabase' ? 'supabase' : 'fallback');
+      const states = [fResult.state, fAgg.state, tAgg.state, kResult.state];
+      if (states.some((s) => s === 'unconfigured')) {
+        setTelemetryStatus('UNAVAILABLE');
+      } else if (states.some((s) => s === 'query_error')) {
+        setTelemetryStatus('DEGRADED');
+      } else if (states.some((s) => s === 'restricted' || s === 'demo_session_rls')) {
+        setTelemetryStatus('RESTRICTED');
+      } else {
+        setTelemetryStatus(mapResultStateToTelemetryStatus(fResult.state, fResult.source));
+      }
+      setDbError(errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null);
       setFraudCases(fResult.data);
       setFraudAggregates(fAgg);
       setTransactionAggregates(tAgg);
       setKycQueueCount(kResult.totalCount ?? kResult.count ?? 0);
     } catch (err: any) {
       console.warn('Finance Analyst data load notice:', err);
+      setTelemetryStatus('DEGRADED');
       setDbError(err?.message || 'Error loading live finance telemetry');
     } finally {
       setLoading(false);
@@ -116,8 +126,8 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
     const totalCases = fraudAggregates?.totalCases ?? fraudCases.length;
     const avgScore =
       fraudCases.length > 0
-        ? (fraudCases.reduce((acc, t) => acc + (Number(t.riskScore) || 50), 0) / fraudCases.length).toFixed(1)
-        : '68.4';
+        ? (fraudCases.reduce((acc, t) => acc + (Number(t.riskScore) || 0), 0) / fraudCases.length).toFixed(1)
+        : '0.0';
 
     return {
       totalCases,
@@ -133,27 +143,12 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
         value: Math.round((d.volumeInr / 1000000) * 10) / 10,
       }));
     }
-    return [
-      { label: 'Oct 14', value: 38.5 },
-      { label: 'Oct 15', value: 42.1 },
-      { label: 'Oct 16', value: 39.8 },
-      { label: 'Oct 17', value: 48.2 },
-      { label: 'Oct 18', value: 52.4 },
-      { label: 'Oct 19', value: 24.1 },
-      { label: 'Oct 20', value: 22.0 },
-      { label: 'Oct 21', value: 46.8 },
-      { label: 'Oct 22', value: 49.3 },
-      { label: 'Oct 23', value: 54.0 },
-      { label: 'Oct 24', value: 56.2 },
-      { label: 'Oct 25', value: 58.7 },
-      { label: 'Oct 26', value: 18.5 },
-      { label: 'Oct 27', value: 16.2 },
-    ];
+    return [];
   }, [transactionAggregates]);
 
   // 3D Donut Chart: Transaction Categories Distribution in INR
   const categoryDonutData = React.useMemo(() => {
-    if (transactionAggregates?.categoryBreakdown) {
+    if (transactionAggregates?.categoryBreakdown && Object.keys(transactionAggregates.categoryBreakdown).length > 0) {
       const totalVol = Object.values(transactionAggregates.categoryBreakdown).reduce((a, b) => a + b.volumeInr, 0) || 1;
       return Object.entries(transactionAggregates.categoryBreakdown).map(([cat, d]) => ({
         label: cat,
@@ -161,13 +156,7 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
         subtext: `₹${(d.volumeInr / 1000000).toFixed(1)}M (${Math.round((d.volumeInr / totalVol) * 100)}%)`,
       }));
     }
-    return [
-      { label: 'Securities & Equities', value: 19760, subtext: '₹123.4M (38%)' },
-      { label: 'Private Equity', value: 13520, subtext: '₹84.5M (26%)' },
-      { label: 'Prime Real Estate', value: 9360, subtext: '₹58.5M (18%)' },
-      { label: 'Treasury & Yield', value: 6240, subtext: '₹39.0M (12%)' },
-      { label: 'Structured Trade Finance', value: 3120, subtext: '₹19.5M (6%)' },
-    ];
+    return [];
   }, [transactionAggregates]);
 
   // 3D Pie Chart: Risk Tier Distribution
@@ -179,11 +168,7 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
         subtext: `₹${(r.volumeInr / 1000000).toFixed(1)}M INR`,
       }));
     }
-    return [
-      { label: 'Critical Tier', value: 14200, subtext: '₹88.5M INR' },
-      { label: 'High Alert', value: 8210, subtext: '₹49.9M INR' },
-      { label: 'Nominal Tier', value: 3548, subtext: '₹10.2M INR' },
-    ];
+    return [];
   }, [fraudAggregates]);
 
   // 3D Column Chart: Payment Rails & Channels
@@ -195,12 +180,7 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
         secondaryValue: Math.round(c.volumeInr / 1000000),
       }));
     }
-    return [
-      { label: 'SWIFT', value: 11400, secondaryValue: 68 },
-      { label: 'Fedwire', value: 7850, secondaryValue: 45 },
-      { label: 'SEPA', value: 4120, secondaryValue: 24 },
-      { label: 'RTGS', value: 2588, secondaryValue: 12 },
-    ];
+    return [];
   }, [fraudAggregates]);
 
   // High Risk Counterparties derived directly from active fraud cases
@@ -226,14 +206,7 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
     if (transactionAggregates?.topMerchants && transactionAggregates.topMerchants.length > 0) {
       return transactionAggregates.topMerchants;
     }
-    return [
-      { merchant: 'Goldman Sachs Prime Brokerage', count: 12480, volumeInr: 78200000 },
-      { merchant: 'Blackstone Capital Operations', count: 10400, volumeInr: 64900000 },
-      { merchant: "Sotheby's Institutional Escrow", count: 8320, volumeInr: 52000000 },
-      { merchant: 'US Treasury Direct Clearing', count: 7280, volumeInr: 45500000 },
-      { merchant: 'JP Morgan Chase Institutional', count: 6760, volumeInr: 42200000 },
-      { merchant: 'UBS Securities Zurich', count: 6760, volumeInr: 42050000 },
-    ];
+    return [];
   }, [transactionAggregates]);
 
   // Risk Reports for this tenant derived from confirmed flagged anomalies
@@ -250,28 +223,31 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
       }));
   }, [fraudCases, tenantId, currentUser]);
 
-  const handleEscalateOrFreeze = (txnId: string, action: 'Freeze' | 'Clear') => {
+  const handleEscalateOrFreeze = async (txnId: string, action: 'Freeze' | 'Clear') => {
+    const newStatus = action === 'Freeze' ? 'Frozen Escrow' : 'Cleared';
+    const res = await updateFraudCaseStatusInDb(txnId, newStatus);
+    if (!res.success) {
+      setDbError(`Failed to update fraud case ${txnId}: ${res.error || 'Database update rejected.'}`);
+      return;
+    }
     setFraudCases((prev) =>
-      prev.map((t) => {
-        if (t.id === txnId) {
-          const newStatus = action === 'Freeze' ? 'Frozen Escrow' : 'Cleared';
-          updateFraudCaseStatusInDb(txnId, newStatus);
-          return {
-            ...t,
-            status: newStatus as any,
-            riskScore: action === 'Clear' ? 12 : t.riskScore,
-          };
-        }
-        return t;
-      })
+      prev.map((t) =>
+        t.id === txnId
+          ? {
+              ...t,
+              status: newStatus as any,
+              riskScore: action === 'Clear' ? 12 : t.riskScore,
+            }
+          : t
+      )
     );
   };
 
-  const totalSettledInr = transactionAggregates?.settledVolumeInr ?? 324850000;
-  const totalMonitoredTxns = transactionAggregates?.totalCount ?? 52000;
-  const preventedInr = fraudAggregates?.preventedVolumeInr ?? 138420000;
-  const frozenCount = fraudAggregates?.frozenCount ?? 22410;
-  const flaggedCount = fraudAggregates?.flaggedCount ?? 2728;
+  const totalSettledInr = transactionAggregates?.settledVolumeInr ?? 0;
+  const totalMonitoredTxns = transactionAggregates?.totalCount ?? 0;
+  const preventedInr = fraudAggregates?.preventedVolumeInr ?? 0;
+  const frozenCount = fraudAggregates?.frozenCount ?? 0;
+  const flaggedCount = fraudAggregates?.flaggedCount ?? 0;
 
   return (
     <div className="space-y-6 font-mono text-xs">
@@ -287,18 +263,26 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
             <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/80 border border-amber-500/50 text-amber-300">
               Base: INR (₹)
             </span>
-            {dbSource === 'supabase' ? (
+            {dbSource === 'supabase' && telemetryStatus === 'OPERATIONAL' ? (
               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 Live Supabase Database ({fraudCases.length} Cases)
               </span>
+            ) : telemetryStatus === 'RESTRICTED' ? (
+              <span
+                className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-950/80 border border-blue-500/50 text-blue-300 flex items-center gap-1"
+                title={dbError || 'Access restricted by PostgreSQL RLS'}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                RESTRICTED (RLS / Clearance)
+              </span>
             ) : (
               <span
                 className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/80 border border-amber-500/50 text-amber-300 flex items-center gap-1"
-                title={dbError || 'Fraud cases table pending or requires authentication'}
+                title={dbError || 'Finance telemetry degraded'}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                Institutional Dataset Baseline (RLS Active)
+                {telemetryStatus}
               </span>
             )}
             {transactionAggregates?.isPartial && (
@@ -312,7 +296,7 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
             {companyName} Forensic AML & Financial Intelligence
           </h1>
           <p className="text-xs text-[#9CA3AF] max-w-2xl mt-1">
-            Real-time multi-rail financial surveillance strictly scoped to {companyName}. Full portfolio monitoring of 52,000 transactions and 25,958 fraud cases in INR base currency.
+            Real-time multi-rail financial surveillance strictly scoped to {companyName}. Live portfolio monitoring across {totalMonitoredTxns.toLocaleString()} transactions and {metrics.totalCases.toLocaleString()} fraud cases in INR base currency.
           </p>
         </div>
 
@@ -335,6 +319,21 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
           </button>
         </div>
       </div>
+
+      {dbError && (
+        <div className="rounded-xl p-3.5 bg-red-950/60 border border-red-500/50 text-red-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-red-400 shrink-0" />
+            <span>Finance Telemetry Error: {dbError}</span>
+          </div>
+          <button
+            onClick={() => loadAllData()}
+            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* 5 KPI Cards: Monitored Transactions, Fraud Prevented, AML Alerts, Risk Score, KYC Queue */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -422,7 +421,7 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <ThreeDPieChart
             title="3D Fraud Case Risk Tier Distribution"
-            subtitle="Surveillance Classification for 25,958 Monitored Cases"
+            subtitle={`Surveillance Classification for ${metrics.totalCases.toLocaleString()} Monitored Cases`}
             segments={riskPieData}
             height={300}
           />
@@ -445,7 +444,7 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-[#3A3A3A] gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {[
-              { id: 'suspicious', label: `Suspicious Transactions (${fraudCases.length || 25958})` },
+              { id: 'suspicious', label: `Suspicious Transactions (${fraudCases.length})` },
               { id: 'high_risk', label: 'High-Risk Counterparties' },
               { id: 'merchants', label: 'Top Settlement Counterparties' },
               { id: 'reports', label: 'Forensic Reports' },
@@ -651,22 +650,30 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#3A3A3A] text-[#FAF7F0]">
-                {topMerchantsList.map((m, idx) => (
-                  <tr key={m.merchant} className="hover:bg-[#121212]/50">
-                    <td className="py-2.5 font-bold text-[#E6C78B]">
-                      <span className="text-[#9CA3AF] mr-2">#{idx + 1}</span>
-                      {m.merchant}
-                    </td>
-                    <td className="py-2.5 font-semibold text-[#FAF7F0]">{m.count.toLocaleString()} txns</td>
-                    <td className="py-2.5 font-bold text-[#E6C78B]">₹{(m.volumeInr / 1000000).toFixed(2)}M</td>
-                    <td className="py-2.5 text-[#D4A017]">
-                      {Math.round((m.volumeInr / totalSettledInr) * 100)}% of total
-                    </td>
-                    <td className="py-2.5 text-right font-bold text-emerald-400">
-                      Primary Rail
+                {topMerchantsList.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-[#9CA3AF]">
+                      No settlement counterparty aggregates available for {companyName}.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  topMerchantsList.map((m, idx) => (
+                    <tr key={m.merchant} className="hover:bg-[#121212]/50">
+                      <td className="py-2.5 font-bold text-[#E6C78B]">
+                        <span className="text-[#9CA3AF] mr-2">#{idx + 1}</span>
+                        {m.merchant}
+                      </td>
+                      <td className="py-2.5 font-semibold text-[#FAF7F0]">{m.count.toLocaleString()} txns</td>
+                      <td className="py-2.5 font-bold text-[#E6C78B]">₹{(m.volumeInr / 1000000).toFixed(2)}M</td>
+                      <td className="py-2.5 text-[#D4A017]">
+                        {totalSettledInr > 0 ? Math.round((m.volumeInr / totalSettledInr) * 100) : 0}% of total
+                      </td>
+                      <td className="py-2.5 text-right font-bold text-emerald-400">
+                        Primary Rail
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

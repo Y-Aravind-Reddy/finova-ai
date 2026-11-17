@@ -171,10 +171,27 @@ export const CURRENCY_SYMBOLS: Record<string, string> = {
   JPY: '¥',
 };
 
+export interface ExchangeRateFetchStatus {
+  isLive: boolean;
+  error: string | null;
+  source: string;
+  lastFetchedAt: string | null;
+}
+
 // In-memory rate cache
 let activeRatesCache: Record<string, ExchangeRateRecord> = { ...STATIC_BENCHMARK_FALLBACK_RATES };
 let lastFetchedTimestamp: number = 0;
+let lastRateFetchStatus: ExchangeRateFetchStatus = {
+  isLive: false,
+  error: null,
+  source: 'Static Benchmark Registry (Not yet synchronized)',
+  lastFetchedAt: null,
+};
 const CACHE_TTL_MS = 60 * 1000; // 1 minute cache TTL
+
+export function getExchangeRateStatus(): ExchangeRateFetchStatus {
+  return { ...lastRateFetchStatus };
+}
 
 /**
  * Check whether an exchange rate effective date is stale
@@ -189,11 +206,11 @@ export function checkIsRateStale(effectiveDate?: string, maxAgeDays = MAX_RATE_A
 
 /**
  * Fetch official INR-base exchange rates from Supabase public.exchange_rates
- * Falls back to reference benchmark registry with explicit source disclosure if table is not yet synchronized.
+ * Falls back to reference benchmark registry with explicit source & error disclosure if unavailable.
  */
 export async function getExchangeRatesAsync(): Promise<Record<string, ExchangeRateRecord>> {
   const now = Date.now();
-  if (now - lastFetchedTimestamp < CACHE_TTL_MS && Object.keys(activeRatesCache).length > 0) {
+  if (now - lastFetchedTimestamp < CACHE_TTL_MS && Object.keys(activeRatesCache).length > 0 && lastRateFetchStatus.isLive) {
     return activeRatesCache;
   }
 
@@ -205,7 +222,14 @@ export async function getExchangeRatesAsync(): Promise<Record<string, ExchangeRa
         .eq('base_currency', 'INR')
         .order('effective_date', { ascending: false });
 
-      if (!error && data && data.length > 0) {
+      if (error) {
+        lastRateFetchStatus = {
+          isLive: false,
+          error: error.message || 'Failed to read public.exchange_rates',
+          source: 'Static Benchmark Fallback (Database Query Error)',
+          lastFetchedAt: new Date(now).toISOString(),
+        };
+      } else if (data && data.length > 0) {
         const loaded: Record<string, ExchangeRateRecord> = {};
         for (const row of data) {
           const target = (row.target_currency || '').toUpperCase() as SupportedCurrency;
@@ -235,11 +259,36 @@ export async function getExchangeRatesAsync(): Promise<Record<string, ExchangeRa
 
         activeRatesCache = loaded;
         lastFetchedTimestamp = now;
+        lastRateFetchStatus = {
+          isLive: true,
+          error: null,
+          source: 'Supabase public.exchange_rates',
+          lastFetchedAt: new Date(now).toISOString(),
+        };
         return activeRatesCache;
+      } else {
+        lastRateFetchStatus = {
+          isLive: false,
+          error: 'No INR-base rows returned from public.exchange_rates.',
+          source: 'Static Benchmark Fallback (Empty Table)',
+          lastFetchedAt: new Date(now).toISOString(),
+        };
       }
-    } catch (err) {
-      console.warn('Notice: public.exchange_rates pending database migration. Using static reference baseline fallback:', err);
+    } catch (err: any) {
+      lastRateFetchStatus = {
+        isLive: false,
+        error: err?.message || 'Unexpected error querying public.exchange_rates',
+        source: 'Static Benchmark Fallback (Network Error)',
+        lastFetchedAt: new Date(now).toISOString(),
+      };
     }
+  } else {
+    lastRateFetchStatus = {
+      isLive: false,
+      error: 'Supabase client is not configured.',
+      source: 'Static Benchmark Fallback (Offline)',
+      lastFetchedAt: new Date(now).toISOString(),
+    };
   }
 
   activeRatesCache = { ...STATIC_BENCHMARK_FALLBACK_RATES };

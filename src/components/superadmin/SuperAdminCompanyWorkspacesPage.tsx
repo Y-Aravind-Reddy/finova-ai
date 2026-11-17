@@ -49,6 +49,7 @@ const SuperAdminCompanyWorkspacesPage: React.FC<SuperAdminCompanyWorkspacesPageP
   const [editingTenant, setEditingTenant] = useState<TenantWorkspace | null>(null);
   const [inspectedTenant, setInspectedTenant] = useState<TenantWorkspace | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
 
   // Load real workspaces from Supabase tenant_workspaces table on mount
@@ -90,34 +91,46 @@ const SuperAdminCompanyWorkspacesPage: React.FC<SuperAdminCompanyWorkspacesPageP
     const target = tenants.find((t) => t.id === tenantId);
     if (!target) return;
     const nextStatus = target.status === 'Active' ? 'Suspended' : 'Active';
-    const updated = updateTenant(tenantId, { status: nextStatus });
-    if (updated) {
-      setTenants(getStoredTenants());
-      setFeedbackMsg(`Tenant "${updated.name}" status updated to ${updated.status}.`);
-      setTimeout(() => setFeedbackMsg(''), 3000);
+    setErrorMsg('');
+    setFeedbackMsg('');
+
+    const statusRes = await updateTenantWorkspaceStatusInDb(tenantId, nextStatus);
+    if (!statusRes.success) {
+      setErrorMsg(`Failed to update workspace "${target.name}" status: ${statusRes.error || 'Database error.'}`);
+      return;
     }
 
-    // Persist to Supabase
-    await updateTenantWorkspaceStatusInDb(tenantId, nextStatus);
+    setFeedbackMsg(`Tenant "${target.name}" status updated to ${nextStatus}.`);
+    setTimeout(() => setFeedbackMsg(''), 3000);
+
     const refreshed = await fetchTenantWorkspacesResultFromDb();
     if (refreshed.data && refreshed.data.length > 0) {
       setTenants(refreshed.data);
+    } else {
+      setTenants(getStoredTenants());
     }
   };
 
   const handleSaveOnboard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name) return;
+    setErrorMsg('');
+    setFeedbackMsg('');
 
-    if (editingTenant) {
-      updateTenant(editingTenant.id, formData);
-      setFeedbackMsg(`Workspace "${editingTenant.name}" successfully updated.`);
-      await saveTenantWorkspaceToDb({ ...editingTenant, ...formData });
-    } else {
-      const created = createTenant(formData);
-      setFeedbackMsg(`Workspace "${created.name}" successfully provisioned.`);
-      await saveTenantWorkspaceToDb(created);
+    const saveRes = editingTenant
+      ? await saveTenantWorkspaceToDb({ ...editingTenant, ...formData })
+      : await saveTenantWorkspaceToDb(formData);
+
+    if (!saveRes.success) {
+      setErrorMsg(`Failed to persist workspace: ${saveRes.error || 'Database error.'}`);
+      return;
     }
+
+    setFeedbackMsg(
+      editingTenant
+        ? `Workspace "${saveRes.data?.name || editingTenant.name}" successfully updated.`
+        : `Workspace "${saveRes.data?.name || formData.name}" successfully provisioned.`
+    );
 
     const refreshed = await fetchTenantWorkspacesResultFromDb();
     if (refreshed.data && refreshed.data.length > 0) {
@@ -201,6 +214,18 @@ const SuperAdminCompanyWorkspacesPage: React.FC<SuperAdminCompanyWorkspacesPageP
           </button>
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-500/60 text-red-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-red-400 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          <button onClick={() => setErrorMsg('')} className="text-[10px] underline text-red-300 hover:text-white">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {feedbackMsg && (
         <div className="p-3.5 rounded-xl bg-[#262626] border border-[#D4A017] text-[#E6C78B] flex items-center gap-2 animate-in fade-in">

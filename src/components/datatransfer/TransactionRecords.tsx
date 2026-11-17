@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { transferIntelligenceService } from '../../services/transferIntelligenceService';
 import { DataTransferFilterBar, DataTransferFilters } from './DataTransferFilterBar';
 import { 
-  Search, 
   Download, 
   FileText, 
   ChevronLeft, 
@@ -19,7 +18,8 @@ import {
   CreditCard,
   User,
   Building2,
-  Info
+  Info,
+  AlertTriangle
 } from 'lucide-react';
 
 const TransactionRecords: React.FC = () => {
@@ -37,14 +37,36 @@ const TransactionRecords: React.FC = () => {
   const [page, setPage] = useState(1);
   const pageSize = 15;
   const [selectedTx, setSelectedTx] = useState<any | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
 
-  const { data: txData, isLoading, refetch } = useQuery({
+  const { data: txData, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['transaction-records', filters, page],
     queryFn: () => transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, page, pageSize }),
   });
 
   const handleExport = () => {
-    alert('Exporting filtered records to Excel... Node synchronized.');
+    const rows = txData?.data || [];
+    if (rows.length === 0) {
+      setExportNotice('No transaction records on the current page to export.');
+      return;
+    }
+    const headers = ['id', 'date', 'customer_id', 'account_id', 'merchant', 'category', 'type', 'amount', 'currency', 'channel', 'status', 'risk_score'];
+    const csvLines = [
+      headers.join(','),
+      ...rows.map((r: any) =>
+        headers.map((h) => `"${String(r[h] ?? '').replace(/"/g, '""')}"`).join(',')
+      ),
+    ];
+    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `finova-transactions-page-${page}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setExportNotice(`Exported ${rows.length} verified records to CSV.`);
   };
 
   return (
@@ -63,7 +85,7 @@ const TransactionRecords: React.FC = () => {
           className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#D4A017] to-[#B87333] text-[#111111] font-bold text-xs hover:brightness-110 shadow-lg transition-all"
         >
           <Download size={16} />
-          EXPORT LEDGER (XLSX)
+          EXPORT LEDGER (CSV)
         </button>
       </div>
 
@@ -73,6 +95,28 @@ const TransactionRecords: React.FC = () => {
         onRefresh={() => refetch()} 
         isLoading={isLoading} 
       />
+
+      {exportNotice && (
+        <div className="rounded-xl p-3 bg-[#1A1A1A] border border-[#D4A017]/40 text-[#E6C78B] font-mono text-xs flex items-center justify-between">
+          <span>{exportNotice}</span>
+          <button onClick={() => setExportNotice(null)} className="text-[10px] underline">Dismiss</button>
+        </div>
+      )}
+
+      {isError && (
+        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-red-400 shrink-0" />
+            <span>Ledger Query Error: {(error as Error)?.message || 'Unable to load transaction records.'}</span>
+          </div>
+          <button
+            onClick={() => refetch()}
+            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="rounded-2xl bg-[#1A1A1A]/95 border border-[#D4A017]/30 shadow-2xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -95,7 +139,13 @@ const TransactionRecords: React.FC = () => {
                     <td colSpan={7} className="px-6 py-4 h-16 bg-[#1A1A1A]/30" />
                   </tr>
                 ))
-              ) : txData?.data.map((tx: any) => (
+              ) : (txData?.data || []).length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-10 text-center text-[#9CA3AF]">
+                    No transaction records found matching the active query filters.
+                  </td>
+                </tr>
+              ) : txData!.data.map((tx: any) => (
                 <tr key={tx.id} className="hover:bg-[#D4A017]/5 transition-colors group">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-col">
@@ -153,7 +203,7 @@ const TransactionRecords: React.FC = () => {
 
         <div className="p-4 bg-[#121212]/50 border-t border-[#3A3A3A] flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="text-[10px] text-[#9CA3AF]">
-            Records <span className="text-[#D4A017] font-bold">{(page-1)*pageSize + 1} - {Math.min(page*pageSize, txData?.totalCount || 0)}</span> of <span className="text-[#FAF7F0] font-bold">{txData?.totalCount.toLocaleString() || 0}</span>
+            Records <span className="text-[#D4A017] font-bold">{(txData?.totalCount || 0) > 0 ? (page - 1) * pageSize + 1 : 0} - {Math.min(page * pageSize, txData?.totalCount || 0)}</span> of <span className="text-[#FAF7F0] font-bold">{txData?.totalCount.toLocaleString() || 0}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <button 

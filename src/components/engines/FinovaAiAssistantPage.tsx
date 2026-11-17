@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { UserRole } from '../../data/finovaDatasets';
 import { supabase } from '../../lib/supabase';
+import { invokeFinovaAiChat } from '../../services/finovaAiClient';
 
 interface FinovaAiAssistantPageProps {
   currentRole: UserRole;
@@ -156,29 +157,10 @@ const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
       }
 
       const startTime = Date.now();
-      const { data, error } = await supabase.functions.invoke('finova-ai-chat', {
-        body: {
-          message: query,
-          thread_id: threadId,
-        },
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
+      const data = await invokeFinovaAiChat(session.access_token, {
+        message: query,
+        thread_id: threadId,
       });
-
-      if (error) {
-        let details = error.message;
-        try {
-          const errorContext = (error as any).context;
-          if (errorContext && typeof errorContext.json === 'function') {
-            const body = await errorContext.json();
-            details = body.details || body.error || details;
-          }
-        } catch (e) {
-          console.warn('Could not extract granular error metadata', e);
-        }
-        throw new Error(details);
-      }
 
       if (data.thread_id) {
         setThreadId(data.thread_id);
@@ -194,7 +176,7 @@ const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
           latencyMs: data.latencyMs || (Date.now() - startTime),
           tokensPrompt: data.usage?.promptTokenCount || 0,
           tokensCompletion: data.usage?.candidatesTokenCount || 0,
-          groundingConfidence: data.citations?.length > 0 ? 99.8 : 85.0,
+          groundingConfidence: (data.citations?.length ?? 0) > 0 ? 99.8 : 85.0,
         },
       };
 
@@ -257,7 +239,10 @@ const FinovaAiAssistantPage: React.FC<FinovaAiAssistantPageProps> = ({
               <span className="font-bold">Active Neural Session • 4096-bit Secure Enclave</span>
             </div>
             <button
-              onClick={() => setMessages(initialMessages)}
+              onClick={() => {
+                setMessages(initialMessages);
+                setThreadId(null);
+              }}
               className="text-[#6B7280] hover:text-[#FFF8E7] flex items-center gap-1 transition-colors"
             >
               <RefreshCw size={12} /> Clear Session
