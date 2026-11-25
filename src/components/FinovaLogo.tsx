@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 interface FinovaLogoProps {
   variant?: 'full' | 'compact' | 'icon';
@@ -8,6 +8,20 @@ interface FinovaLogoProps {
   showTagline?: boolean;
 }
 
+// Brand mark: gold shield with orbit, silver "F" and rising growth bars.
+// Wordmark: geometric FINOVA with an AI spark in the "O", gold "AI".
+// Standalone files live in public/brand/ (full logo, icon) and public/favicon.svg.
+
+const ICON_HEIGHT = { sm: 'h-8', md: 'h-11', lg: 'h-16', xl: 'h-20', hero: 'h-28' };
+const WORDMARK_HEIGHT = { sm: 'h-3.5', md: 'h-5', lg: 'h-7', xl: 'h-9', hero: 'h-10 md:h-14' };
+const TAGLINE_SIZE = {
+  sm: 'text-[8px] tracking-wide',
+  md: 'text-[10px] tracking-wide',
+  lg: 'text-xs tracking-wider',
+  xl: 'text-sm tracking-wider',
+  hero: 'text-sm md:text-base tracking-wider',
+};
+
 export const FinovaLogo: React.FC<FinovaLogoProps> = ({
   variant = 'full',
   size = 'md',
@@ -15,196 +29,86 @@ export const FinovaLogo: React.FC<FinovaLogoProps> = ({
   className = '',
   showTagline = true,
 }) => {
-  // Sizing dimensions
-  const iconSizes = {
-    sm: 'w-7 h-7',
-    md: 'w-10 h-10',
-    lg: 'w-14 h-14',
-    xl: 'w-20 h-20',
-    hero: 'w-28 h-28',
-  };
-
-  const titleSizes = {
-    sm: 'text-sm font-bold tracking-wider',
-    md: 'text-lg font-bold tracking-widest',
-    lg: 'text-2xl font-extrabold tracking-widest',
-    xl: 'text-3xl font-extrabold tracking-widest',
-    hero: 'text-4xl md:text-5xl font-black tracking-widest',
-  };
-
-  const taglineSizes = {
-    sm: 'text-[9px] tracking-widest',
-    md: 'text-[11px] tracking-[0.2em]',
-    lg: 'text-xs tracking-[0.25em]',
-    xl: 'text-sm tracking-[0.3em]',
-    hero: 'text-base tracking-[0.35em]',
-  };
+  // Unique gradient ids so several logos on one page don't clash
+  const uid = useId().replace(/:/g, '');
+  const gold = `fl-gold-${uid}`;
+  const silver = `fl-silver-${uid}`;
+  const white = `fl-white-${uid}`;
+  const glow = `fl-glow-${uid}`;
+  const onLight = theme === 'cream';
 
   return (
-    <div className={`inline-flex items-center gap-3.5 select-none ${className}`}>
-      {/* 3D Golden Premium Logo Emblem */}
-      <div className={`relative ${iconSizes[size]} flex-shrink-0 group`}>
-        {/* Ambient Gold Halo Glow */}
-        <div className="absolute -inset-1.5 bg-gradient-to-tr from-[#6B3E00] via-[#D4A017] to-[#F5C542] rounded-2xl opacity-60 blur-md group-hover:opacity-100 transition-opacity duration-500" />
-        
-        {/* Main Emblem SVG */}
-        <svg
-          viewBox="0 0 100 100"
-          className="relative w-full h-full drop-shadow-[0_8px_16px_rgba(107,62,0,0.6)]"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <defs>
-            {/* Luxury Gold Gradients */}
-            <linearGradient id="goldShieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#FFF8E7" />
-              <stop offset="25%" stopColor="#F5C542" />
-              <stop offset="60%" stopColor="#D4A017" />
-              <stop offset="85%" stopColor="#6B3E00" />
-              <stop offset="100%" stopColor="#4A2C0A" />
-            </linearGradient>
+    <div className={`inline-flex items-center gap-3 select-none ${className}`}>
+      <svg
+        viewBox="0 0 120 132"
+        className={`${ICON_HEIGHT[size]} w-auto flex-shrink-0 drop-shadow-[0_4px_14px_rgba(212,160,23,0.35)]`}
+        role="img"
+        aria-label="Finova AI"
+      >
+        <defs>
+          <linearGradient id={gold} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#FFE08A" />
+            <stop offset="0.45" stopColor="#F5C542" />
+            <stop offset="0.8" stopColor="#D4A017" />
+            <stop offset="1" stopColor="#A86A12" />
+          </linearGradient>
+          <linearGradient id={silver} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#FFFFFF" />
+            <stop offset="0.6" stopColor="#E9E9EC" />
+            <stop offset="1" stopColor="#B9BAC0" />
+          </linearGradient>
+        </defs>
+        <path d="M11.1 93.8 A60 15 -32 0 1 112.9 30.2" fill="none" stroke={`url(#${gold})`} strokeWidth="3" strokeLinecap="round" />
+        <path
+          d="M60 6 L106 23 V60 C106 93 86 113 60 126 C34 113 14 93 14 60 V23 Z"
+          fill="#121212"
+          stroke={`url(#${gold})`}
+          strokeWidth="6"
+          strokeLinejoin="round"
+        />
+        <path d="M35 33 H88 L80 47 H49 V100 L35 108 Z" fill={`url(#${silver})`} />
+        <path d="M49 57 H74 L67 70 H49 Z" fill={`url(#${silver})`} />
+        <rect x="56" y="88" width="7" height="17" rx="1.5" fill={`url(#${gold})`} />
+        <rect x="66" y="80" width="7" height="22" rx="1.5" fill={`url(#${gold})`} />
+        <rect x="76" y="71" width="7" height="27" rx="1.5" fill={`url(#${gold})`} />
+        <path d="M11.1 93.8 A60 15 -32 0 0 112.9 30.2" fill="none" stroke={`url(#${gold})`} strokeWidth="3.5" strokeLinecap="round" />
+      </svg>
 
-            <linearGradient id="goldBevelGrad" x1="100%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#F5C542" />
-              <stop offset="45%" stopColor="#D4A017" />
-              <stop offset="80%" stopColor="#4A2C0A" />
-              <stop offset="100%" stopColor="#111111" />
-            </linearGradient>
-
-            <linearGradient id="innerCrownGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#FFF8E7" />
-              <stop offset="50%" stopColor="#F5C542" />
-              <stop offset="100%" stopColor="#6B3E00" />
-            </linearGradient>
-
-            <linearGradient id="goldCoreGlow" x1="50%" y1="0%" x2="50%" y2="100%">
-              <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.9" />
-              <stop offset="40%" stopColor="#F5C542" stopOpacity="0.8" />
-              <stop offset="100%" stopColor="#D4A017" stopOpacity="0.2" />
-            </linearGradient>
-
-            <radialGradient id="centerGemLight" cx="50%" cy="40%" r="50%">
-              <stop offset="0%" stopColor="#FFF8E7" />
-              <stop offset="50%" stopColor="#F5C542" />
-              <stop offset="85%" stopColor="#D4A017" />
-              <stop offset="100%" stopColor="#4A2C0A" />
-            </radialGradient>
-
-            <filter id="goldEmboss" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="1" dy="2" stdDeviation="1.5" floodColor="#111111" floodOpacity="0.8" />
-              <feDropShadow dx="-1" dy="-1" stdDeviation="1" floodColor="#FFF8E7" floodOpacity="0.4" />
-            </filter>
-          </defs>
-
-          {/* Outer Octagonal / Shield Beveled Plate */}
-          <polygon
-            points="50,4 88,20 96,62 72,92 50,98 28,92 4,62 12,20"
-            fill="#161616"
-            stroke="url(#goldShieldGrad)"
-            strokeWidth="3.5"
-            strokeLinejoin="round"
-          />
-
-          {/* Secondary Inset Facet */}
-          <polygon
-            points="50,11 81,25 88,59 68,85 50,90 32,85 12,59 19,25"
-            fill="#1E1E1E"
-            stroke="url(#goldBevelGrad)"
-            strokeWidth="1.8"
-            strokeLinejoin="round"
-            opacity="0.9"
-          />
-
-          {/* Radial Sheen in Backing */}
-          <circle cx="50" cy="50" r="32" fill="url(#centerGemLight)" opacity="0.12" />
-
-          {/* 3D Interlocking "F" & Diamond Apex Finova Geometry */}
-          {/* Top Diamond Crown / Apex */}
-          <polygon
-            points="50,16 66,28 50,38 34,28"
-            fill="url(#innerCrownGrad)"
-            stroke="#FFF8E7"
-            strokeWidth="0.8"
-            filter="url(#goldEmboss)"
-          />
-
-          {/* Central Monogram Finova "F" Primary Pillar */}
-          <path
-            d="M36,28 L46,28 L46,74 L36,74 Z"
-            fill="url(#goldShieldGrad)"
-            stroke="#F5C542"
-            strokeWidth="0.8"
-          />
-
-          {/* Upper Wing of "F" */}
-          <polygon
-            points="46,31 74,31 66,41 46,41"
-            fill="url(#goldShieldGrad)"
-            stroke="#FFF8E7"
-            strokeWidth="0.6"
-          />
-
-          {/* Middle Neural Bridge of "F" */}
-          <polygon
-            points="46,47 66,47 60,56 46,56"
-            fill="url(#innerCrownGrad)"
-            stroke="#F5C542"
-            strokeWidth="0.6"
-          />
-
-          {/* Dynamic 3D Chevron Accents (Intelligence Rays) */}
-          <polygon
-            points="50,60 62,69 50,78 44,73 53,69 44,65"
-            fill="url(#goldShieldGrad)"
-            stroke="#D4A017"
-            strokeWidth="0.5"
-          />
-
-          {/* Bottom Precision Diamond Pivot */}
-          <polygon
-            points="50,81 56,86 50,91 44,86"
-            fill="#FFF8E7"
-            stroke="#D4A017"
-            strokeWidth="0.5"
-          />
-
-          {/* Specular Light Flare */}
-          <circle cx="50" cy="22" r="2.2" fill="#FFFFFF" />
-          <circle cx="48" cy="33" r="1.5" fill="#FFFFFF" opacity="0.8" />
-        </svg>
-      </div>
-
-      {/* Brand Typography */}
       {variant !== 'icon' && (
-        <div className="flex flex-col justify-center">
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`font-cinzel ${titleSizes[size]} ${
-                theme === 'cream'
-                  ? 'text-[#4A2C0A]'
-                  : 'text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]'
-              }`}
-            >
-              FINOVA
-            </span>
-            <span
-              className={`font-mono text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded border ${
-                theme === 'cream'
-                  ? 'bg-[#6B3E00] text-[#FFF8E7] border-[#4A2C0A]'
-                  : 'bg-[#D4A017]/15 text-[#F5C542] border-[#D4A017]/40 shadow-[0_0_10px_rgba(212,160,23,0.3)]'
-              }`}
-            >
-              AI
-            </span>
-          </div>
+        <div className="flex flex-col items-start justify-center gap-1">
+          <svg viewBox="0 0 415 60" className={`${WORDMARK_HEIGHT[size]} w-auto self-start`} role="img" aria-label="FINOVA AI">
+            <defs>
+              <linearGradient id={white} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stopColor={onLight ? '#2A2A2A' : '#FFFFFF'} />
+                <stop offset="1" stopColor={onLight ? '#121212' : '#DADBE0'} />
+              </linearGradient>
+              <radialGradient id={glow}>
+                <stop offset="0" stopColor="#F5C542" stopOpacity="0.75" />
+                <stop offset="1" stopColor="#F5C542" stopOpacity="0" />
+              </radialGradient>
+            </defs>
+            <g fill={`url(#${white})`}>
+              <path d="M0 0 H42 V13 H14 V24 H36 V37 H14 V60 H0 Z" />
+              <rect x="52" y="0" width="14" height="60" />
+              <path d="M76 0 H90 L114 38 V0 H128 V60 H114 L90 22 V60 H76 Z" />
+              <path fillRule="evenodd" d="M168 0 A30 30 0 1 1 167.99 0 Z M168 14 A16 16 0 1 0 168.01 14 Z" />
+              <path d="M206 0 H221 L234 41 L247 0 H262 L241 60 H227 Z" />
+              <path fillRule="evenodd" d="M284 0 H298 L319 60 H305 L300.5 47 H281.5 L277 60 H263 Z M291 20 L296.6 36 H285.4 Z" />
+            </g>
+            <circle cx="168" cy="30" r="15" fill={`url(#${glow})`} />
+            <path
+              d="M168 19 Q169.5 28.5 179 30 Q169.5 31.5 168 41 Q166.5 31.5 157 30 Q166.5 28.5 168 19 Z"
+              fill={onLight ? '#B8860B' : '#F5C542'}
+            />
+            <g fill={onLight ? '#B8860B' : '#F5C542'}>
+              <path fillRule="evenodd" d="M358 0 H372 L393 60 H379 L374.5 47 H355.5 L351 60 H337 Z M365 20 L370.6 36 H359.4 Z" />
+              <rect x="401" y="0" width="14" height="60" />
+            </g>
+          </svg>
 
           {showTagline && variant === 'full' && (
-            <p
-              className={`font-mono uppercase ${taglineSizes[size]} mt-0.5 ${
-                theme === 'cream' ? 'text-[#6B3E00]/80' : 'text-[#D4A017]/80'
-              }`}
-            >
-              Data. Intelligence. Better Decisions.
+            <p className={`font-medium ${TAGLINE_SIZE[size]} ${onLight ? 'text-[#4A2C0A]/80' : 'text-[#E6E6EA]/80'}`}>
+              Smarter Finance. Faster Operations. Better Decisions.
             </p>
           )}
         </div>
@@ -212,3 +116,5 @@ export const FinovaLogo: React.FC<FinovaLogoProps> = ({
     </div>
   );
 };
+
+export default FinovaLogo;
