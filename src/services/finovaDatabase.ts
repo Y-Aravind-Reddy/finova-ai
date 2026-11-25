@@ -23,10 +23,13 @@ export type QueryResultState =
   | 'zero_records'
   | 'demo_session_rls'
   | 'restricted'
+  | 'timeout'
   | 'query_error'
   | 'unconfigured';
 
-export type TelemetryNodeStatus = 'OPERATIONAL' | 'DEGRADED' | 'RESTRICTED' | 'UNAVAILABLE';
+export type TelemetryNodeStatus = 'OPERATIONAL' | 'DEGRADED' | 'TIMEOUT' | 'RESTRICTED' | 'UNAVAILABLE';
+
+export type DateRangePreset = '30D' | '90D' | 'YTD' | 'ALL';
 
 export interface QueryFilterOptions {
   page?: number;
@@ -42,11 +45,33 @@ export interface QueryFilterOptions {
   rolesOnly?: UserRole[];
   userId?: string;
   channel?: string;
+  countMode?: 'exact' | 'planned' | 'estimated';
+  signal?: AbortSignal;
   // New Dimensions
   branchCity?: string;
   cardFamily?: string;
   accountType?: string;
   customerSegment?: string;
+}
+
+export function getDefaultBoundedDateRange(preset: DateRangePreset = 'YTD'): { startDate: string; endDate: string } {
+  if (preset === 'ALL') {
+    return { startDate: '', endDate: '' };
+  }
+  const now = new Date();
+  const endDate = now.toISOString().split('T')[0];
+  if (preset === 'YTD') {
+    return {
+      startDate: `${now.getUTCFullYear()}-01-01`,
+      endDate,
+    };
+  }
+  const days = preset === '30D' ? 30 : 90;
+  const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return {
+    startDate: start.toISOString().split('T')[0],
+    endDate,
+  };
 }
 
 export interface KycAggregates {
@@ -97,7 +122,40 @@ export function isPermissionDeniedError(err: unknown): boolean {
   );
 }
 
+export function isStatementTimeoutError(err: unknown): boolean {
+  if (!err) return false;
+  const anyErr = err as Record<string, any>;
+  const code = String(anyErr?.code || '').toUpperCase();
+  const msg = String(anyErr?.message || (typeof err === 'string' ? err : '')).toLowerCase();
+  return (
+    code === '57014' ||
+    code === 'ETIMEDOUT' ||
+    msg.includes('statement timeout') ||
+    msg.includes('canceling statement due to statement timeout') ||
+    msg.includes('query_canceled') ||
+    msg.includes('query canceled') ||
+    msg.includes('request timed out')
+  );
+}
+
+export function isNetworkTelemetryError(err: unknown): boolean {
+  if (!err) return false;
+  const anyErr = err as Record<string, any>;
+  const msg = String(anyErr?.message || (typeof err === 'string' ? err : '')).toLowerCase();
+  return (
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('network error') ||
+    msg.includes('load failed') ||
+    msg.includes('connection refused') ||
+    msg.includes('fetch failed')
+  );
+}
+
 export function classifyErrorState(err: unknown, hasAuthSession: boolean): QueryResultState {
+  if (isStatementTimeoutError(err)) {
+    return 'timeout';
+  }
   if (isPermissionDeniedError(err)) {
     return hasAuthSession ? 'restricted' : 'demo_session_rls';
   }
@@ -121,6 +179,7 @@ export function mapResultStateToTelemetryStatus(
   source?: 'supabase' | 'fallback' | 'error' | 'unconfigured',
   isLoading?: boolean
 ): TelemetryNodeStatus {
+  if (state === 'timeout') return 'TIMEOUT';
   if (state === 'restricted' || state === 'demo_session_rls') return 'RESTRICTED';
   if (state === 'unconfigured' || source === 'unconfigured') return 'UNAVAILABLE';
   if (state === 'query_error' || source === 'error') return 'DEGRADED';
@@ -129,8 +188,10 @@ export function mapResultStateToTelemetryStatus(
   return 'DEGRADED';
 }
 
-function getActiveSessionRole(clientOverride?: any): UserRole | null {
-  if (clientOverride !== undefined) return null;
+export function getActiveSessionRole(clientOverride?: any): UserRole | null {
+  if (clientOverride !== undefined) {
+    return (clientOverride?.mockRole as UserRole) || null;
+  }
   try {
     const sess = getStoredSession();
     return sess?.user?.role || null;
@@ -147,15 +208,189 @@ async function shouldSkipUnauthenticatedQuery(client: any, clientOverride?: any)
   return !hasSession;
 }
 
-function isMissingRpcError(err: any): boolean {
+export function isMissingRpcError(err: any): boolean {
   if (!err) return false;
-  const code = String(err.code || '');
+  const code = String(err.code || '').toUpperCase();
   const msg = String(err.message || '').toLowerCase();
   return (
     code === '42883' ||
     code === 'PGRST202' ||
     msg.includes('could not find the function') ||
     (msg.includes('function') && msg.includes('does not exist'))
+  );
+}
+
+export function isNonRetryableTelemetryError(err: unknown): boolean {
+  return isPermissionDeniedError(err) || isStatementTimeoutError(err) || isMissingRpcError(err);
+}
+
+const inFlightRequests = new Map<string, Promise<any>>();
+const clientIdentityMap = new WeakMap<object, number>();
+let clientIdentityCounter = 1;
+
+function getClientScopeKey(client: any): string {
+  if (!client || typeof client !== 'object') return 'none';
+  let id = clientIdentityMap.get(client);
+  if (!id) {
+    id = clientIdentityCounter++;
+    clientIdentityMap.set(client, id);
+  }
+  return `c${id}`;
+}
+
+export function dedupeInFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const existing = inFlightRequests.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  const promise = Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      if (inFlightRequests.get(key) === promise) {
+        inFlightRequests.delete(key);
+      }
+    });
+  inFlightRequests.set(key, promise);
+  return promise;
+}
+
+function applyAbortSignal<T>(query: T, signal?: AbortSignal): T {
+  if (signal && query && typeof (query as any).abortSignal === 'function') {
+    return (query as any).abortSignal(signal);
+  }
+  return query;
+}
+
+export interface TelemetryDiagnosticMetadata {
+  correlationId: string;
+  widgetName: string;
+  rpcName: string;
+  sqlstate: string;
+  durationMs: number;
+  dateRangeDays: number | 'ALL';
+  role: string;
+  tenantScope: string;
+  outcome: 'SUCCESS' | 'TIMEOUT' | 'RESTRICTED' | 'ERROR' | 'ABORTED';
+  timestamp: string;
+}
+
+const telemetryDiagnosticHistory: TelemetryDiagnosticMetadata[] = [];
+const MAX_DIAGNOSTIC_HISTORY = 50;
+
+export function getRecentTelemetryDiagnostics(): TelemetryDiagnosticMetadata[] {
+  return [...telemetryDiagnosticHistory];
+}
+
+export function clearTelemetryDiagnosticsForTest(): void {
+  telemetryDiagnosticHistory.length = 0;
+}
+
+export function createTelemetryCorrelationId(): string {
+  return `tel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export function computeDateRangeDays(startDate?: string, endDate?: string): number | 'ALL' {
+  if (!startDate && !endDate) return 'ALL';
+  if (startDate && endDate) {
+    const startMs = Date.parse(`${startDate}T00:00:00Z`);
+    const endMs = Date.parse(`${endDate}T00:00:00Z`);
+    if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+      return Math.max(1, Math.round((endMs - startMs) / (1000 * 60 * 60 * 24)) + 1);
+    }
+  }
+  return 'ALL';
+}
+
+export function extractSafeSqlstate(err: unknown): string {
+  if (!err) return 'NONE';
+  const anyErr = err as Record<string, any>;
+  const rawCode = String(anyErr?.code || '').trim().toUpperCase();
+  if (rawCode && /^[A-Z0-9_]{2,16}$/.test(rawCode)) return rawCode;
+  if (isStatementTimeoutError(err)) return '57014';
+  if (isPermissionDeniedError(err)) return '42501';
+  if (isMissingRpcError(err)) return '42883';
+  const status = Number(anyErr?.status || 0);
+  if (status >= 400 && status <= 599) return `HTTP_${status}`;
+  return 'UNKNOWN';
+}
+
+function sanitizeTenantScopeLabel(tenantId?: string | null): string {
+  const raw = String(tenantId || '').trim();
+  if (!raw || raw === 'ALL' || raw === 'platform_root') return 'ALL';
+  if (raw.includes('@') || raw.toLowerCase().includes('bearer ') || raw.startsWith('eyJ')) {
+    return 'REDACTED_SCOPE';
+  }
+  return raw.slice(0, 64);
+}
+
+function redactSensitiveTelemetryTokens(input?: string | null): string {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  return raw
+    .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.?[A-Za-z0-9_-]*\b/g, '[JWT_REDACTED]')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[EMAIL_REDACTED]');
+}
+
+export function isAbortError(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (!err) return false;
+  const anyErr = err as Record<string, any>;
+  const name = String(anyErr?.name || '');
+  const msg = String(anyErr?.message || (typeof err === 'string' ? err : '')).toLowerCase();
+  return name === 'AbortError' || msg.includes('aborted') || msg.includes('signal is aborted');
+}
+
+export function recordTelemetryDiagnostic(params: {
+  correlationId?: string;
+  widgetName: string;
+  rpcName: string;
+  sqlstate: string;
+  durationMs: number;
+  dateRangeDays: number | 'ALL';
+  role?: string | null;
+  tenantScope?: string | null;
+  outcome: TelemetryDiagnosticMetadata['outcome'];
+}): TelemetryDiagnosticMetadata {
+  const entry: TelemetryDiagnosticMetadata = {
+    correlationId: params.correlationId || createTelemetryCorrelationId(),
+    widgetName: params.widgetName,
+    rpcName: params.rpcName,
+    sqlstate: params.sqlstate || 'NONE',
+    durationMs: Math.max(0, Math.round(params.durationMs)),
+    dateRangeDays: params.dateRangeDays,
+    role: params.role || 'UNAUTHENTICATED',
+    tenantScope: sanitizeTenantScopeLabel(params.tenantScope),
+    outcome: params.outcome,
+    timestamp: new Date().toISOString(),
+  };
+
+  telemetryDiagnosticHistory.unshift(entry);
+  if (telemetryDiagnosticHistory.length > MAX_DIAGNOSTIC_HISTORY) {
+    telemetryDiagnosticHistory.length = MAX_DIAGNOSTIC_HISTORY;
+  }
+
+  if (entry.outcome === 'TIMEOUT' || entry.outcome === 'ERROR') {
+    console.warn('[TELEMETRY_DIAGNOSTIC]', entry);
+  }
+
+  return entry;
+}
+
+export function formatTelemetryDiagnosticError(
+  meta: TelemetryDiagnosticMetadata,
+  baseMessage?: string | null
+): string {
+  const rangeLabel = meta.dateRangeDays === 'ALL' ? 'ALL' : `${meta.dateRangeDays}d`;
+  const cleanMsg = redactSensitiveTelemetryTokens(baseMessage || 'Telemetry query did not complete.');
+  return `[${meta.rpcName} | SQLSTATE ${meta.sqlstate} | ${meta.durationMs}ms | scope=${meta.tenantScope} | range=${rangeLabel} | ref=${meta.correlationId}] ${cleanMsg}`;
+}
+
+function isSupabaseClientLike(candidate: any): boolean {
+  return Boolean(
+    candidate &&
+      typeof candidate === 'object' &&
+      (typeof candidate.rpc === 'function' ||
+        typeof candidate.from === 'function' ||
+        Boolean(candidate.auth))
   );
 }
 
@@ -199,38 +434,45 @@ export const databaseStatusStore: {
 
 /**
  * Checks whether the client currently holds an authenticated Supabase user session
+ * Deduplicates concurrent in-flight auth session checks on the same client.
  */
 export async function checkHasSupabaseAuthSession(client: any = supabase): Promise<boolean> {
-  try {
-    if (!client?.auth?.getSession) return false;
-    const { data, error } = await client.auth.getSession();
-    if (error || !data?.session) return false;
-    return Boolean(data.session.user);
-  } catch {
-    return false;
-  }
+  if (!client?.auth?.getSession) return false;
+  return dedupeInFlight(`auth:session:${getClientScopeKey(client)}`, async () => {
+    try {
+      const { data, error } = await client.auth.getSession();
+      if (error || !data?.session) return false;
+      return Boolean(data.session.user);
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**
  * Safely executes a paginated query with automatic page offset clamping and PGRST103 recovery.
- * Distinguishes genuinely empty datasets from out-of-range pages and RLS/auth errors.
+ * Uses 'estimated' count mode by default to prevent full-table COUNT(*) scans on large ledgers.
  */
 async function executeSafelyWithPagination(
   client: any,
   tableName: string,
   buildQuery: (q: any) => any,
   page: number,
-  pageSize: number
+  pageSize: number,
+  countMode: 'exact' | 'planned' | 'estimated' = 'estimated',
+  signal?: AbortSignal
 ): Promise<{ data: any[] | null; error: any; count: number | null }> {
   const safePage = Math.max(1, page);
   const from = (safePage - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  let query = buildQuery(client.from(tableName).select('*', { count: 'exact' })).range(from, to);
+  let query = applyAbortSignal(
+    buildQuery(client.from(tableName).select('*', { count: countMode })),
+    signal
+  ).range(from, to);
   let result = await query;
 
   if (result.error) {
-    // DIAGNOSTIC LOGGING: Database Error
     console.log(`[DB_DIAGNOSTIC] executeSafelyWithPagination error on ${tableName} - Code: ${result.error.code}, Message: ${result.error.message}`);
 
     if (result.error.code === 'PGRST103' || result.error.message?.includes('range not satisfiable')) {
@@ -238,7 +480,10 @@ async function executeSafelyWithPagination(
         return result;
       }
 
-      let countQuery = buildQuery(client.from(tableName).select('*', { count: 'exact', head: true }));
+      let countQuery = applyAbortSignal(
+        buildQuery(client.from(tableName).select('*', { count: countMode, head: true })),
+        signal
+      );
       let countRes = await countQuery;
       const totalCount = countRes.count || 0;
 
@@ -246,10 +491,13 @@ async function executeSafelyWithPagination(
         const clampedPage = Math.max(1, Math.ceil(totalCount / pageSize));
         const newFrom = (clampedPage - 1) * pageSize;
         const newTo = newFrom + pageSize - 1;
-        
+
         console.log(`[DB_DIAGNOSTIC] Clamping page for ${tableName} to ${clampedPage} due to out-of-range request.`);
-        
-        let retryQuery = buildQuery(client.from(tableName).select('*', { count: 'exact' })).range(newFrom, newTo);
+
+        let retryQuery = applyAbortSignal(
+          buildQuery(client.from(tableName).select('*', { count: countMode })),
+          signal
+        ).range(newFrom, newTo);
         return await retryQuery;
       }
     }
@@ -318,44 +566,47 @@ export async function fetchTransactionsResultFromDb(
     };
   }
 
-  try {
-    const buildQuery = (q: any) => {
-      let filtered = q.order('date', { ascending: false });
-      if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
-        filtered = filtered.eq('tenant_id', tenantId);
-      }
-      if (options?.userId) {
-        filtered = filtered.eq('user_id', options.userId);
-      }
-      if (options?.search) {
-        const s = options.search.trim();
-        filtered = filtered.or(`merchant.ilike.%${s}%,reference_no.ilike.%${s}%,category.ilike.%${s}%`);
-      }
-      if (options?.category && options.category !== 'ALL') {
-        filtered = filtered.eq('category', options.category);
-      }
-      if (options?.type && options.type !== 'ALL') {
-        filtered = filtered.eq('type', options.type);
-      }
-      if (options?.status && options.status !== 'ALL') {
-        filtered = filtered.eq('status', options.status);
-      }
-      if (options?.startDate) {
-        filtered = filtered.gte('date', options.startDate);
-      }
-      if (options?.endDate) {
-        filtered = filtered.lte('date', options.endDate);
-      }
-      return filtered;
-    };
+  const runQuery = async (): Promise<DatabaseQueryResult<CustomerTransaction[]>> => {
+    try {
+      const buildQuery = (q: any) => {
+        let filtered = q.order('date', { ascending: false });
+        if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
+          filtered = filtered.eq('tenant_id', tenantId);
+        }
+        if (options?.userId) {
+          filtered = filtered.eq('user_id', options.userId);
+        }
+        if (options?.search) {
+          const s = options.search.trim();
+          filtered = filtered.or(`merchant.ilike.%${s}%,reference_no.ilike.%${s}%,category.ilike.%${s}%`);
+        }
+        if (options?.category && options.category !== 'ALL') {
+          filtered = filtered.eq('category', options.category);
+        }
+        if (options?.type && options.type !== 'ALL') {
+          filtered = filtered.eq('type', options.type);
+        }
+        if (options?.status && options.status !== 'ALL') {
+          filtered = filtered.eq('status', options.status);
+        }
+        if (options?.startDate) {
+          filtered = filtered.gte('date', options.startDate);
+        }
+        if (options?.endDate) {
+          filtered = filtered.lte('date', options.endDate);
+        }
+        return filtered;
+      };
 
-    const { data, error, count } = await executeSafelyWithPagination(
-      client,
-      'transactions',
-      buildQuery,
-      page,
-      pageSize
-    );
+      const { data, error, count } = await executeSafelyWithPagination(
+        client,
+        'transactions',
+        buildQuery,
+        page,
+        pageSize,
+        options?.countMode || 'estimated',
+        options?.signal
+      );
 
     // Check for query execution / permission errors
     if (error) {
@@ -477,11 +728,13 @@ export async function fetchTransactionsResultFromDb(
       totalPages: 1,
     };
   } catch (err: any) {
+    const hasSession = await checkHasSupabaseAuthSession(client);
+    const errState = classifyErrorState(err, hasSession);
     const errorMsg = err?.message || 'Network error querying Supabase';
     databaseStatusStore.transactions = {
       source: 'fallback',
       error: errorMsg,
-      state: 'query_error',
+      state: errState,
       details: errorMsg,
     };
     return {
@@ -490,14 +743,21 @@ export async function fetchTransactionsResultFromDb(
       error: errorMsg,
       count: 0,
       totalCount: 0,
-      state: 'query_error',
+      state: errState,
       details: `Unexpected error querying Supabase: ${errorMsg}`,
-      hasAuthSession: false,
+      hasAuthSession: hasSession,
       page,
       pageSize,
       totalPages: 1,
     };
   }
+  };
+
+  if (options?.signal) {
+    return runQuery();
+  }
+  const dedupeKey = `tx_list:${getClientScopeKey(client)}:${tenantId}:${page}:${pageSize}:${options?.userId || ''}:${options?.search || ''}:${options?.category || ''}:${options?.type || ''}:${options?.status || ''}:${options?.startDate || ''}:${options?.endDate || ''}:${options?.countMode || 'estimated'}`;
+  return dedupeInFlight(dedupeKey, runQuery);
 }
 
 /**
@@ -605,6 +865,14 @@ export async function fetchTransactionAggregatesResultFromDb(
     );
   }
 
+  const runAggregate = async (): Promise<TransactionAggregates> => {
+  const correlationId = createTelemetryCorrelationId();
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const dateRangeDays = computeDateRangeDays(options?.startDate, options?.endDate);
+  const callerRole = getActiveSessionRole(clientOverride) || 'AUTHENTICATED';
+  const elapsedMs = () =>
+    (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
+
   // 1. Attempt PostgreSQL server-side RPC aggregate function
   try {
     const rpcParams: Record<string, any> = {
@@ -616,10 +884,24 @@ export async function fetchTransactionAggregatesResultFromDb(
       p_type: options?.type && options.type !== 'ALL' ? options.type : null,
     };
 
-    const { data: rpcData, error: rpcError } = await client.rpc('get_transaction_aggregates', rpcParams);
+    const { data: rpcData, error: rpcError } = await applyAbortSignal(
+      client.rpc('get_transaction_aggregates', rpcParams),
+      options?.signal
+    );
 
     if (!rpcError && rpcData && typeof rpcData === 'object' && 'totalCount' in rpcData) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'Transactions Analytics',
+        rpcName: 'get_transaction_aggregates',
+        sqlstate: '00000',
+        durationMs: elapsedMs(),
+        dateRangeDays,
+        role: callerRole,
+        tenantScope: tenantId,
+        outcome: 'SUCCESS',
+      });
       const usdRate = 84.070000;
 
       const settledVolumeInr = rpcData.settledVolumeInr !== undefined
@@ -683,17 +965,53 @@ export async function fetchTransactionAggregatesResultFromDb(
 
     if (rpcError && !isMissingRpcError(rpcError)) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      const state = classifyErrorState(rpcError, hasAuthSession);
+      const diag = recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'Transactions Analytics',
+        rpcName: 'get_transaction_aggregates',
+        sqlstate: extractSafeSqlstate(rpcError),
+        durationMs: elapsedMs(),
+        dateRangeDays,
+        role: callerRole,
+        tenantScope: tenantId,
+        outcome: isAbortError(rpcError, options?.signal)
+          ? 'ABORTED'
+          : state === 'timeout'
+          ? 'TIMEOUT'
+          : state === 'restricted' || state === 'demo_session_rls'
+          ? 'RESTRICTED'
+          : 'ERROR',
+      });
       return emptyTransactionAggregates(
-        classifyErrorState(rpcError, hasAuthSession),
-        rpcError.message || 'Transaction aggregate RPC failed.',
+        state,
+        formatTelemetryDiagnosticError(diag, rpcError.message || 'Transaction aggregate RPC failed.'),
         hasAuthSession
       );
     }
   } catch (err: any) {
     const hasAuthSession = await checkHasSupabaseAuthSession(client);
+    const state = classifyErrorState(err, hasAuthSession);
+    const diag = recordTelemetryDiagnostic({
+      correlationId,
+      widgetName: 'Transactions Analytics',
+      rpcName: 'get_transaction_aggregates',
+      sqlstate: extractSafeSqlstate(err),
+      durationMs: elapsedMs(),
+      dateRangeDays,
+      role: callerRole,
+      tenantScope: tenantId,
+      outcome: isAbortError(err, options?.signal)
+        ? 'ABORTED'
+        : state === 'timeout'
+        ? 'TIMEOUT'
+        : state === 'restricted' || state === 'demo_session_rls'
+        ? 'RESTRICTED'
+        : 'ERROR',
+    });
     return emptyTransactionAggregates(
-      classifyErrorState(err, hasAuthSession),
-      err?.message || 'Unexpected error invoking get_transaction_aggregates.',
+      state,
+      formatTelemetryDiagnosticError(diag, err?.message || 'Unexpected error invoking get_transaction_aggregates.'),
       hasAuthSession
     );
   }
@@ -895,12 +1213,20 @@ export async function fetchTransactionAggregatesResultFromDb(
       false
     );
   } catch (err: any) {
+    const hasSession = await checkHasSupabaseAuthSession(client);
     return emptyTransactionAggregates(
-      'query_error',
+      classifyErrorState(err, hasSession),
       err?.message || 'Unexpected error querying transaction aggregates.',
-      false
+      hasSession
     );
   }
+  };
+
+  if (options?.signal) {
+    return runAggregate();
+  }
+  const dedupeKey = `tx_agg:${getClientScopeKey(client)}:${tenantId}:${options?.userId || ''}:${options?.startDate || ''}:${options?.endDate || ''}:${options?.status || ''}:${options?.type || ''}`;
+  return dedupeInFlight(dedupeKey, runAggregate);
 }
 
 
@@ -990,10 +1316,12 @@ export async function fetchFraudCasesResultFromDb(
     };
   }
 
+  const runQuery = async (): Promise<DatabaseQueryResult<FinanceFraudTransaction[]>> => {
   try {
+    const countMode = options?.countMode || 'estimated';
     let query = client
       .from('fraud_cases')
-      .select('*', { count: 'exact' })
+      .select('*', { count: countMode })
       .order('timestamp', { ascending: false });
 
     if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
@@ -1015,7 +1343,7 @@ export async function fetchFraudCasesResultFromDb(
 
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
-    query = query.range(from, to);
+    query = applyAbortSignal(query.range(from, to), options?.signal);
 
     const { data, error, count } = await query;
 
@@ -1154,11 +1482,13 @@ export async function fetchFraudCasesResultFromDb(
       totalPages: 1,
     };
   } catch (err: any) {
+    const hasSession = await checkHasSupabaseAuthSession(client);
+    const errState = classifyErrorState(err, hasSession);
     const errorMsg = err?.message || 'Network error querying Supabase';
     databaseStatusStore.fraudCases = {
       source: 'fallback',
       error: errorMsg,
-      state: 'query_error',
+      state: errState,
       details: errorMsg,
     };
     return {
@@ -1167,14 +1497,21 @@ export async function fetchFraudCasesResultFromDb(
       error: errorMsg,
       count: 0,
       totalCount: 0,
-      state: 'query_error',
+      state: errState,
       details: `Unexpected error querying Supabase: ${errorMsg}`,
-      hasAuthSession: false,
+      hasAuthSession: hasSession,
       page,
       pageSize,
       totalPages: 1,
     };
   }
+  };
+
+  if (options?.signal) {
+    return runQuery();
+  }
+  const dedupeKey = `fraud_list:${getClientScopeKey(client)}:${tenantId}:${page}:${pageSize}:${options?.search || ''}:${options?.status || ''}:${options?.currency || ''}:${options?.countMode || 'estimated'}`;
+  return dedupeInFlight(dedupeKey, runQuery);
 }
 
 export async function fetchFraudCasesFromDb(
@@ -1274,6 +1611,14 @@ export async function fetchFraudAggregatesResultFromDb(
 
   const usdRate = 84.070000;
 
+  const runAggregate = async (): Promise<FraudAggregates> => {
+  const correlationId = createTelemetryCorrelationId();
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const dateRangeDays = computeDateRangeDays(options?.startDate, options?.endDate);
+  const callerRole = activeRole || 'AUTHENTICATED';
+  const elapsedMs = () =>
+    (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
+
   // 1. Attempt PostgreSQL server-side RPC aggregate function
   try {
     const rpcParams: Record<string, any> = {
@@ -1284,9 +1629,23 @@ export async function fetchFraudAggregatesResultFromDb(
       p_customer_id: options?.userId || null,
       p_status: options?.status && options.status !== 'ALL' ? options.status : null,
     };
-    const { data: rpcData, error: rpcError } = await client.rpc('get_fraud_aggregates', rpcParams);
+    const { data: rpcData, error: rpcError } = await applyAbortSignal(
+      client.rpc('get_fraud_aggregates', rpcParams),
+      options?.signal
+    );
     if (!rpcError && rpcData && typeof rpcData === 'object' && 'totalCases' in rpcData) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'Fraud & AML Surveillance',
+        rpcName: 'get_fraud_aggregates',
+        sqlstate: '00000',
+        durationMs: elapsedMs(),
+        dateRangeDays,
+        role: callerRole,
+        tenantScope: tenantId,
+        outcome: 'SUCCESS',
+      });
 
       const preventedVolumeInr = rpcData.preventedVolumeInr !== undefined
         ? Number(rpcData.preventedVolumeInr) || 0
@@ -1329,17 +1688,53 @@ export async function fetchFraudAggregatesResultFromDb(
 
     if (rpcError && !isMissingRpcError(rpcError)) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      const state = classifyErrorState(rpcError, hasAuthSession);
+      const diag = recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'Fraud & AML Surveillance',
+        rpcName: 'get_fraud_aggregates',
+        sqlstate: extractSafeSqlstate(rpcError),
+        durationMs: elapsedMs(),
+        dateRangeDays,
+        role: callerRole,
+        tenantScope: tenantId,
+        outcome: isAbortError(rpcError, options?.signal)
+          ? 'ABORTED'
+          : state === 'timeout'
+          ? 'TIMEOUT'
+          : state === 'restricted' || state === 'demo_session_rls'
+          ? 'RESTRICTED'
+          : 'ERROR',
+      });
       return emptyFraudAggregates(
-        classifyErrorState(rpcError, hasAuthSession),
-        rpcError.message || 'Fraud aggregate RPC failed.',
+        state,
+        formatTelemetryDiagnosticError(diag, rpcError.message || 'Fraud aggregate RPC failed.'),
         hasAuthSession
       );
     }
   } catch (err: any) {
     const hasAuthSession = await checkHasSupabaseAuthSession(client);
+    const state = classifyErrorState(err, hasAuthSession);
+    const diag = recordTelemetryDiagnostic({
+      correlationId,
+      widgetName: 'Fraud & AML Surveillance',
+      rpcName: 'get_fraud_aggregates',
+      sqlstate: extractSafeSqlstate(err),
+      durationMs: elapsedMs(),
+      dateRangeDays,
+      role: callerRole,
+      tenantScope: tenantId,
+      outcome: isAbortError(err, options?.signal)
+        ? 'ABORTED'
+        : state === 'timeout'
+        ? 'TIMEOUT'
+        : state === 'restricted' || state === 'demo_session_rls'
+        ? 'RESTRICTED'
+        : 'ERROR',
+    });
     return emptyFraudAggregates(
-      classifyErrorState(err, hasAuthSession),
-      err?.message || 'Unexpected error invoking get_fraud_aggregates.',
+      state,
+      formatTelemetryDiagnosticError(diag, err?.message || 'Unexpected error invoking get_fraud_aggregates.'),
       hasAuthSession
     );
   }
@@ -1506,12 +1901,20 @@ export async function fetchFraudAggregatesResultFromDb(
       reportingBaseCurrency: 'INR',
     };
   } catch (err: any) {
+    const hasSession = await checkHasSupabaseAuthSession(client);
     return emptyFraudAggregates(
-      'query_error',
+      classifyErrorState(err, hasSession),
       err?.message || 'Unexpected error querying fraud aggregates.',
-      false
+      hasSession
     );
   }
+  };
+
+  if (options?.signal) {
+    return runAggregate();
+  }
+  const dedupeKey = `fraud_agg:${getClientScopeKey(client)}:${tenantId}:${options?.currency || ''}:${options?.startDate || ''}:${options?.endDate || ''}:${options?.userId || ''}:${options?.status || ''}`;
+  return dedupeInFlight(dedupeKey, runAggregate);
 }
 
 export interface SupportAggregates {
@@ -1599,14 +2002,58 @@ export async function fetchSupportAggregatesResultFromDb(
     );
   }
 
-  // 1. Attempt PostgreSQL server-side RPC aggregate function (Stage 2)
+  const hasExplicitStart = options?.startDate !== undefined;
+  const hasExplicitEnd = options?.endDate !== undefined;
+  const defaultBoundedRange = !hasExplicitStart && !hasExplicitEnd ? getDefaultBoundedDateRange('90D') : null;
+  const effectiveStartDate = hasExplicitStart ? (options?.startDate || '') : (defaultBoundedRange?.startDate || '');
+  const effectiveEndDate = hasExplicitEnd ? (options?.endDate || '') : (defaultBoundedRange?.endDate || '');
+  const requestedRangeDays = computeDateRangeDays(effectiveStartDate || undefined, effectiveEndDate || undefined);
+
+  const runAggregate = async (): Promise<SupportAggregates> => {
+  const correlationId = createTelemetryCorrelationId();
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const callerRole = activeRole || 'AUTHENTICATED';
+  let executedRangeDays: number | 'ALL' = requestedRangeDays;
+  const elapsedMs = () =>
+    (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
+
+  // 1. Attempt PostgreSQL server-side RPC aggregate function (bounded by default, ALL when explicitly selected)
   try {
-    const { data: rpcData, error: rpcError } = await client.rpc('get_support_aggregates', {
-      p_tenant_id: tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root' ? tenantId : null,
-    });
+    const rpcTenantId = tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root' ? tenantId : null;
+    let { data: rpcData, error: rpcError } = await applyAbortSignal(
+      client.rpc('get_support_aggregates', {
+        p_tenant_id: rpcTenantId,
+        p_start_date: effectiveStartDate || null,
+        p_end_date: effectiveEndDate || null,
+      }),
+      options?.signal
+    );
+
+    if (rpcError && isMissingRpcError(rpcError)) {
+      executedRangeDays = 'ALL';
+      const legacyRes = await applyAbortSignal(
+        client.rpc('get_support_aggregates', {
+          p_tenant_id: rpcTenantId,
+        }),
+        options?.signal
+      );
+      rpcData = legacyRes.data;
+      rpcError = legacyRes.error;
+    }
 
     if (!rpcError && rpcData && typeof rpcData === 'object' && 'totalTickets' in rpcData) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'Support Desk Aggregates',
+        rpcName: 'get_support_aggregates',
+        sqlstate: '00000',
+        durationMs: elapsedMs(),
+        dateRangeDays: executedRangeDays,
+        role: callerRole,
+        tenantScope: tenantId,
+        outcome: 'SUCCESS',
+      });
       const totalTickets = Number(rpcData.totalTickets) || 0;
       return {
         totalTickets,
@@ -1630,17 +2077,53 @@ export async function fetchSupportAggregatesResultFromDb(
 
     if (rpcError && !isMissingRpcError(rpcError)) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      const state = classifyErrorState(rpcError, hasAuthSession);
+      const diag = recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'Support Desk Aggregates',
+        rpcName: 'get_support_aggregates',
+        sqlstate: extractSafeSqlstate(rpcError),
+        durationMs: elapsedMs(),
+        dateRangeDays: executedRangeDays,
+        role: callerRole,
+        tenantScope: tenantId,
+        outcome: isAbortError(rpcError, options?.signal)
+          ? 'ABORTED'
+          : state === 'timeout'
+          ? 'TIMEOUT'
+          : state === 'restricted' || state === 'demo_session_rls'
+          ? 'RESTRICTED'
+          : 'ERROR',
+      });
       return emptySupportAggregates(
-        classifyErrorState(rpcError, hasAuthSession),
-        rpcError.message || 'Support aggregate RPC failed.',
+        state,
+        formatTelemetryDiagnosticError(diag, rpcError.message || 'Support aggregate RPC failed.'),
         hasAuthSession
       );
     }
   } catch (err: any) {
     const hasAuthSession = await checkHasSupabaseAuthSession(client);
+    const state = classifyErrorState(err, hasAuthSession);
+    const diag = recordTelemetryDiagnostic({
+      correlationId,
+      widgetName: 'Support Desk Aggregates',
+      rpcName: 'get_support_aggregates',
+      sqlstate: extractSafeSqlstate(err),
+      durationMs: elapsedMs(),
+      dateRangeDays: executedRangeDays,
+      role: callerRole,
+      tenantScope: tenantId,
+      outcome: isAbortError(err, options?.signal)
+        ? 'ABORTED'
+        : state === 'timeout'
+        ? 'TIMEOUT'
+        : state === 'restricted' || state === 'demo_session_rls'
+        ? 'RESTRICTED'
+        : 'ERROR',
+    });
     return emptySupportAggregates(
-      classifyErrorState(err, hasAuthSession),
-      err?.message || 'Unexpected error invoking get_support_aggregates.',
+      state,
+      formatTelemetryDiagnosticError(diag, err?.message || 'Unexpected error invoking get_support_aggregates.'),
       hasAuthSession
     );
   }
@@ -1662,6 +2145,12 @@ export async function fetchSupportAggregatesResultFromDb(
 
       if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
         query = query.eq('tenant_id', tenantId);
+      }
+      if (effectiveStartDate) {
+        query = query.gte('opened_at', `${effectiveStartDate}T00:00:00.000Z`);
+      }
+      if (effectiveEndDate) {
+        query = query.lte('opened_at', `${effectiveEndDate}T23:59:59.999Z`);
       }
 
       const { data, error } = await query;
@@ -1784,12 +2273,20 @@ export async function fetchSupportAggregatesResultFromDb(
       hasAuthSession,
     };
   } catch (err: any) {
+    const hasSession = await checkHasSupabaseAuthSession(client);
     return emptySupportAggregates(
-      'query_error',
+      classifyErrorState(err, hasSession),
       err?.message || 'Unexpected error querying support aggregates.',
-      false
+      hasSession
     );
   }
+  };
+
+  if (options?.signal) {
+    return runAggregate();
+  }
+  const dedupeKey = `support_agg:${getClientScopeKey(client)}:${tenantId}:${effectiveStartDate}:${effectiveEndDate}`;
+  return dedupeInFlight(dedupeKey, runAggregate);
 }
 
 
@@ -1855,6 +2352,7 @@ export async function fetchSupportTicketsResultFromDb(
     };
   }
 
+  const runQuery = async (): Promise<DatabaseQueryResult<SupportTicket[]>> => {
   try {
     const buildQuery = (q: any) => {
       let filtered = q.order('opened_at', { ascending: false });
@@ -1877,6 +2375,12 @@ export async function fetchSupportTicketsResultFromDb(
       if (options?.category && options.category !== 'ALL') {
         filtered = filtered.eq('category', options.category);
       }
+      if (options?.startDate) {
+        filtered = filtered.gte('opened_at', `${options.startDate}T00:00:00.000Z`);
+      }
+      if (options?.endDate) {
+        filtered = filtered.lte('opened_at', `${options.endDate}T23:59:59.999Z`);
+      }
       return filtered;
     };
 
@@ -1885,7 +2389,9 @@ export async function fetchSupportTicketsResultFromDb(
       'support_tickets',
       buildQuery,
       page,
-      pageSize
+      pageSize,
+      options?.countMode || 'estimated',
+      options?.signal
     );
 
     if (error) {
@@ -2002,11 +2508,13 @@ export async function fetchSupportTicketsResultFromDb(
       totalPages: 1,
     };
   } catch (err: any) {
+    const hasSession = await checkHasSupabaseAuthSession(client);
+    const errState = classifyErrorState(err, hasSession);
     const errorMsg = err?.message || 'Network error querying Supabase';
     databaseStatusStore.supportTickets = {
       source: 'fallback',
       error: errorMsg,
-      state: 'query_error',
+      state: errState,
       details: errorMsg,
     };
     return {
@@ -2015,14 +2523,21 @@ export async function fetchSupportTicketsResultFromDb(
       error: errorMsg,
       count: 0,
       totalCount: 0,
-      state: 'query_error',
+      state: errState,
       details: `Unexpected error querying Supabase: ${errorMsg}`,
-      hasAuthSession: false,
+      hasAuthSession: hasSession,
       page,
       pageSize,
       totalPages: 1,
     };
   }
+  };
+
+  if (options?.signal) {
+    return runQuery();
+  }
+  const dedupeKey = `support_list:${getClientScopeKey(client)}:${tenantId}:${page}:${pageSize}:${options?.userId || ''}:${options?.search || ''}:${options?.priority || ''}:${options?.status || ''}:${options?.category || ''}:${options?.startDate || ''}:${options?.endDate || ''}:${options?.countMode || 'estimated'}`;
+  return dedupeInFlight(dedupeKey, runQuery);
 }
 
 export async function fetchSupportTicketsFromDb(
@@ -2097,22 +2612,28 @@ const DEMO_KYC_DOCUMENTS: CustomerDocument[] = [];
  */
 export async function fetchKycRecordsResultFromDb(
   tenantId: string = 'tenant_apex_bank',
-  options?: QueryFilterOptions
+  options?: QueryFilterOptions,
+  clientOverride?: any
 ): Promise<DatabaseQueryResult<CustomerDocument[]>> {
-  if (!isSupabaseConfigured()) {
+  const client = clientOverride !== undefined ? clientOverride : supabase;
+  const configured = clientOverride !== undefined ? Boolean(clientOverride) : isSupabaseConfigured();
+
+  if (!configured || !client) {
+    const notice = 'Supabase client is not configured (missing URL or anon key).';
     databaseStatusStore.kycRecords = {
       source: 'fallback',
-      error: null,
-      state: 'zero_records',
-      details: 'Supabase credentials not configured in environment. 0 records exist.',
+      error: notice,
+      state: 'unconfigured',
+      details: 'Supabase credentials are not configured in the application environment.',
     };
     return {
       data: [],
       source: 'fallback',
-      error: null,
+      error: notice,
       count: 0,
       totalCount: 0,
-      state: 'zero_records',
+      state: 'unconfigured',
+      details: notice,
       hasAuthSession: false,
       page: 1,
       pageSize: 50,
@@ -2120,9 +2641,9 @@ export async function fetchKycRecordsResultFromDb(
     };
   }
 
+  const runQuery = async (): Promise<DatabaseQueryResult<CustomerDocument[]>> => {
   try {
-    const hasSession = await checkHasSupabaseAuthSession(supabase);
-    if (!hasSession) {
+    if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
       const notice = 'Authentication required: Active Supabase Auth session needed to query kyc_records.';
       databaseStatusStore.kycRecords = {
         source: 'fallback',
@@ -2144,7 +2665,35 @@ export async function fetchKycRecordsResultFromDb(
       };
     }
 
-    let query = supabase.from('kyc_records').select('*', { count: 'exact' });
+    const activeRole = getActiveSessionRole(clientOverride);
+    if (activeRole === 'CUSTOMER' && !options?.userId) {
+      const notice = 'Restricted: CUSTOMER role cannot run tenant-wide institutional KYC scans.';
+      databaseStatusStore.kycRecords = {
+        source: 'fallback',
+        error: notice,
+        state: 'restricted',
+        details: notice,
+      };
+      return {
+        data: [],
+        source: 'fallback',
+        state: 'restricted',
+        error: notice,
+        count: 0,
+        totalCount: 0,
+        hasAuthSession: true,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+      };
+    }
+
+    const hasSession = await checkHasSupabaseAuthSession(client);
+    const page = Math.max(1, options?.page || 1);
+    const pageSize = options?.pageSize || 50;
+    const countMode = options?.countMode || 'estimated';
+
+    let query = client.from('kyc_records').select('*', { count: countMode });
     if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
       query = query.eq('tenant_id', tenantId);
     }
@@ -2161,7 +2710,9 @@ export async function fetchKycRecordsResultFromDb(
       query = query.eq('status', options.status);
     }
 
-    const { data, error, count } = await query;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    const { data, error, count } = await applyAbortSignal(query.range(from, to), options?.signal);
 
     if (error) {
       const errState = classifyErrorState(error, hasSession);
@@ -2180,8 +2731,8 @@ export async function fetchKycRecordsResultFromDb(
         count: 0,
         totalCount: 0,
         hasAuthSession: hasSession,
-        page: 1,
-        pageSize: 50,
+        page,
+        pageSize,
         totalPages: 1,
       };
     }
@@ -2250,7 +2801,7 @@ export async function fetchKycRecordsResultFromDb(
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Network error querying kyc_records';
-    const hasSession = await checkHasSupabaseAuthSession(supabase);
+    const hasSession = await checkHasSupabaseAuthSession(client);
     const errState = classifyErrorState(err, hasSession);
     databaseStatusStore.kycRecords = {
       source: 'fallback',
@@ -2270,6 +2821,13 @@ export async function fetchKycRecordsResultFromDb(
       totalPages: 1,
     };
   }
+  };
+
+  if (options?.signal) {
+    return runQuery();
+  }
+  const dedupeKey = `kyc_list:${getClientScopeKey(client)}:${tenantId}:${options?.page || 1}:${options?.pageSize || 50}:${options?.userId || ''}:${options?.search || ''}:${options?.status || ''}:${options?.countMode || 'estimated'}`;
+  return dedupeInFlight(dedupeKey, runQuery);
 }
 
 export async function fetchKycRecordsFromDb(
@@ -2484,16 +3042,17 @@ export async function fetchCurrentUserProfileResultFromDb(): Promise<ProfileQuer
         details: error.details
       });
       const msg = `Database error querying profiles: ${error.message} (${error.code || status})`;
+      const errState = classifyErrorState(error, true);
       databaseStatusStore.profiles = {
         source: 'fallback',
         error: msg,
-        state: 'query_error',
+        state: errState,
         details: msg,
       };
       return {
         profile: null,
         source: 'fallback',
-        state: 'query_error',
+        state: errState,
         error: msg,
         details: `Supabase query returned status ${status}: ${error.message}`,
         hasAuthSession: true,
@@ -2593,16 +3152,17 @@ export async function fetchCurrentUserProfileResultFromDb(): Promise<ProfileQuer
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Network exception querying Supabase profiles';
+    const errState = classifyErrorState(err, false);
     databaseStatusStore.profiles = {
       source: 'fallback',
       error: errorMsg,
-      state: 'query_error',
+      state: errState,
       details: errorMsg,
     };
     return {
       profile: null,
       source: 'fallback',
-      state: 'query_error',
+      state: errState,
       error: errorMsg,
       details: errorMsg,
       hasAuthSession: false,
@@ -2703,8 +3263,10 @@ export async function fetchProfilesResultFromDb(
     };
   }
 
+  const runQuery = async (): Promise<DatabaseQueryResult<UserAccount[]>> => {
   try {
-    let query = supabase.from('profiles').select('*', { count: 'exact' });
+    const countMode = options?.countMode || 'estimated';
+    let query = supabase.from('profiles').select('*', { count: countMode });
     if (tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root') {
       query = query.eq('tenant_id', tenantId);
     }
@@ -2733,7 +3295,7 @@ export async function fetchProfilesResultFromDb(
     }
 
     const hasSession = await checkHasSupabaseAuthSession(supabase);
-    const { data, error, count } = await query;
+    const { data, error, count } = await applyAbortSignal(query, options?.signal);
 
     if (error) {
       if (error.code === 'PGRST103' || error.message?.includes('range not satisfiable')) {
@@ -2846,11 +3408,13 @@ export async function fetchProfilesResultFromDb(
       totalPages: 1,
     };
   } catch (err: any) {
+    const hasSession = await checkHasSupabaseAuthSession(supabase);
+    const errState = classifyErrorState(err, hasSession);
     const errorMsg = err?.message || 'Error querying profiles';
     databaseStatusStore.profiles = {
       source: 'fallback',
       error: errorMsg,
-      state: 'query_error',
+      state: errState,
       details: errorMsg,
     };
     return {
@@ -2859,13 +3423,20 @@ export async function fetchProfilesResultFromDb(
       error: errorMsg,
       count: 0,
       totalCount: 0,
-      state: 'query_error',
-      hasAuthSession: false,
+      state: errState,
+      hasAuthSession: hasSession,
       page: 1,
       pageSize: 50,
       totalPages: 1,
     };
   }
+  };
+
+  if (options?.signal) {
+    return runQuery();
+  }
+  const dedupeKey = `profiles_list:${tenantId || 'ALL'}:${(rolesOnly || []).join(',')}:${options?.page || ''}:${options?.pageSize || ''}:${options?.search || ''}:${options?.countMode || 'estimated'}`;
+  return dedupeInFlight(dedupeKey, runQuery);
 }
 
 /**
@@ -3210,25 +3781,27 @@ export async function fetchTenantWorkspacesResultFromDb(): Promise<DatabaseQuery
     };
   }
 
-  try {
-    const { data, error } = await supabase.from('tenant_workspaces').select('*');
-    const hasSession = await checkHasSupabaseAuthSession(supabase);
+  return dedupeInFlight('tenant_workspaces:all', async () => {
+    try {
+      const { data, error } = await supabase.from('tenant_workspaces').select('*');
+      const hasSession = await checkHasSupabaseAuthSession(supabase);
 
-    if (error) {
-      databaseStatusStore.tenantWorkspaces = {
-        source: 'fallback',
-        error: error.message,
-        state: 'query_error',
-      };
-      return {
-        data: [],
-        source: 'fallback',
-        error: error.message,
-        count: 0,
-        state: 'query_error',
-        hasAuthSession: hasSession,
-      };
-    }
+      if (error) {
+        const errState = classifyErrorState(error, hasSession);
+        databaseStatusStore.tenantWorkspaces = {
+          source: 'fallback',
+          error: error.message,
+          state: errState,
+        };
+        return {
+          data: [],
+          source: 'fallback',
+          error: error.message,
+          count: 0,
+          state: errState,
+          hasAuthSession: hasSession,
+        };
+      }
 
     if (data && data.length > 0) {
       const mapped: TenantWorkspace[] = data.map((t: any) => ({
@@ -3297,15 +3870,17 @@ export async function fetchTenantWorkspacesResultFromDb(): Promise<DatabaseQuery
       hasAuthSession: hasSession,
     };
   } catch (err: any) {
+    const hasSession = await checkHasSupabaseAuthSession(supabase);
     return {
       data: [],
       source: 'fallback',
       error: err?.message || 'Error querying tenant workspaces',
       count: 0,
-      state: 'query_error',
-      hasAuthSession: false,
+      state: classifyErrorState(err, hasSession),
+      hasAuthSession: hasSession,
     };
   }
+  });
 }
 
 export interface PublicTenantDirectoryEntry {
@@ -3648,9 +4223,19 @@ export async function saveAiConfigurationToDb(
     // Ignore cache parse error
   }
 
+  const clampNum = (val: unknown, fallback: number, min: number, max: number) => {
+    const n = Number(val);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  };
+
   const payload: AiConfiguration = {
     ...existingConfig,
     ...newConfig,
+    temperature: clampNum(newConfig.temperature ?? existingConfig.temperature, DEFAULT_AI_CONFIGURATION.temperature, 0, 1),
+    latencySla: Math.round(clampNum(newConfig.latencySla ?? existingConfig.latencySla, DEFAULT_AI_CONFIGURATION.latencySla, 50, 10000)),
+    sentinelConfidenceThreshold: Math.round(clampNum(newConfig.sentinelConfidenceThreshold ?? existingConfig.sentinelConfidenceThreshold, DEFAULT_AI_CONFIGURATION.sentinelConfidenceThreshold, 50, 99)),
+    autoFreezeThreshold: Math.round(clampNum(newConfig.autoFreezeThreshold ?? existingConfig.autoFreezeThreshold, DEFAULT_AI_CONFIGURATION.autoFreezeThreshold, 50, 99)),
+    maxDailyWireVelocity: Math.round(clampNum(newConfig.maxDailyWireVelocity ?? existingConfig.maxDailyWireVelocity, DEFAULT_AI_CONFIGURATION.maxDailyWireVelocity, 100000, 1000000000)),
     updatedAt: new Date().toISOString(),
     updatedBy: caller.name || caller.email || AUTHORIZED_SUPER_ADMIN_EMAIL,
   };
@@ -4062,10 +4647,24 @@ export async function recordAuditEventInDb(params: {
  */
 export async function fetchKycAggregatesResultFromDb(
   tenantId: string = 'tenant_apex_bank',
+  optionsOrClient?: QueryFilterOptions | any,
   clientOverride?: any
 ): Promise<KycAggregates> {
-  const client = clientOverride !== undefined ? clientOverride : supabase;
-  const configured = clientOverride !== undefined ? Boolean(clientOverride) : isSupabaseConfigured();
+  const options: QueryFilterOptions | undefined =
+    clientOverride !== undefined
+      ? (optionsOrClient as QueryFilterOptions)
+      : isSupabaseClientLike(optionsOrClient)
+      ? undefined
+      : (optionsOrClient as QueryFilterOptions | undefined);
+  const resolvedClientOverride =
+    clientOverride !== undefined
+      ? clientOverride
+      : isSupabaseClientLike(optionsOrClient)
+      ? optionsOrClient
+      : undefined;
+
+  const client = resolvedClientOverride !== undefined ? resolvedClientOverride : supabase;
+  const configured = resolvedClientOverride !== undefined ? Boolean(resolvedClientOverride) : isSupabaseConfigured();
 
   if (!configured || !client) {
     return {
@@ -4084,7 +4683,7 @@ export async function fetchKycAggregatesResultFromDb(
     };
   }
 
-  if (await shouldSkipUnauthenticatedQuery(client, clientOverride)) {
+  if (await shouldSkipUnauthenticatedQuery(client, resolvedClientOverride)) {
     return {
       totalRecords: 0,
       totalCount: 0,
@@ -4101,7 +4700,7 @@ export async function fetchKycAggregatesResultFromDb(
     };
   }
 
-  const activeRole = getActiveSessionRole(clientOverride);
+  const activeRole = getActiveSessionRole(resolvedClientOverride);
   if (activeRole && !canRoleAccessInstitutionalKyc(activeRole)) {
     return {
       totalRecords: 0,
@@ -4119,13 +4718,41 @@ export async function fetchKycAggregatesResultFromDb(
     };
   }
 
+  const runKycAggregate = async (): Promise<KycAggregates> => {
+  const correlationId = createTelemetryCorrelationId();
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const callerRole = activeRole || 'AUTHENTICATED';
+  const elapsedMs = () =>
+    (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
+
   try {
-    const { data: rpcData, error: rpcError } = await client.rpc('get_kyc_aggregates', {
-      p_tenant_id: tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root' ? tenantId : null,
-    });
+    const { data: rpcData, error: rpcError } = await applyAbortSignal(
+      client.rpc('get_kyc_aggregates', {
+        p_tenant_id: tenantId && tenantId !== 'ALL' && tenantId !== 'platform_root' ? tenantId : null,
+      }),
+      options?.signal
+    );
 
     if (rpcError) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      const state = classifyErrorState(rpcError, hasAuthSession);
+      const diag = recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'KYC & Compliance Queue',
+        rpcName: 'get_kyc_aggregates',
+        sqlstate: extractSafeSqlstate(rpcError),
+        durationMs: elapsedMs(),
+        dateRangeDays: 'ALL',
+        role: callerRole,
+        tenantScope: tenantId,
+        outcome: isAbortError(rpcError, options?.signal)
+          ? 'ABORTED'
+          : state === 'timeout'
+          ? 'TIMEOUT'
+          : state === 'restricted' || state === 'demo_session_rls'
+          ? 'RESTRICTED'
+          : 'ERROR',
+      });
       return {
         totalRecords: 0,
         totalCount: 0,
@@ -4135,8 +4762,8 @@ export async function fetchKycAggregatesResultFromDb(
         tierDistribution: [],
         docTypeDistribution: [],
         source: 'fallback',
-        state: classifyErrorState(rpcError, hasAuthSession),
-        error: rpcError.message || 'Failed to load KYC aggregates.',
+        state,
+        error: formatTelemetryDiagnosticError(diag, rpcError.message || 'Failed to load KYC aggregates.'),
         isPartial: false,
         rejectedRecordsCount: 0,
       };
@@ -4144,6 +4771,17 @@ export async function fetchKycAggregatesResultFromDb(
 
     if (rpcData && typeof rpcData === 'object') {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
+      recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'KYC & Compliance Queue',
+        rpcName: 'get_kyc_aggregates',
+        sqlstate: '00000',
+        durationMs: elapsedMs(),
+        dateRangeDays: 'ALL',
+        role: callerRole,
+        tenantScope: tenantId,
+        outcome: 'SUCCESS',
+      });
       const totalRecords = Number(rpcData.totalRecords) || 0;
       return {
         totalRecords,
@@ -4161,6 +4799,17 @@ export async function fetchKycAggregatesResultFromDb(
       };
     }
 
+    const emptyDiag = recordTelemetryDiagnostic({
+      correlationId,
+      widgetName: 'KYC & Compliance Queue',
+      rpcName: 'get_kyc_aggregates',
+      sqlstate: 'EMPTY',
+      durationMs: elapsedMs(),
+      dateRangeDays: 'ALL',
+      role: callerRole,
+      tenantScope: tenantId,
+      outcome: 'ERROR',
+    });
     return {
       totalRecords: 0,
       totalCount: 0,
@@ -4171,12 +4820,30 @@ export async function fetchKycAggregatesResultFromDb(
       docTypeDistribution: [],
       source: 'fallback',
       state: 'query_error',
-      error: 'Empty response from get_kyc_aggregates.',
+      error: formatTelemetryDiagnosticError(emptyDiag, 'Empty response from get_kyc_aggregates.'),
       isPartial: false,
       rejectedRecordsCount: 0,
     };
   } catch (err: any) {
     const hasAuthSession = await checkHasSupabaseAuthSession(client);
+    const state = classifyErrorState(err, hasAuthSession);
+    const diag = recordTelemetryDiagnostic({
+      correlationId,
+      widgetName: 'KYC & Compliance Queue',
+      rpcName: 'get_kyc_aggregates',
+      sqlstate: extractSafeSqlstate(err),
+      durationMs: elapsedMs(),
+      dateRangeDays: 'ALL',
+      role: callerRole,
+      tenantScope: tenantId,
+      outcome: isAbortError(err, options?.signal)
+        ? 'ABORTED'
+        : state === 'timeout'
+        ? 'TIMEOUT'
+        : state === 'restricted' || state === 'demo_session_rls'
+        ? 'RESTRICTED'
+        : 'ERROR',
+    });
     return {
       totalRecords: 0,
       totalCount: 0,
@@ -4186,20 +4853,32 @@ export async function fetchKycAggregatesResultFromDb(
       tierDistribution: [],
       docTypeDistribution: [],
       source: 'fallback',
-      state: classifyErrorState(err, hasAuthSession),
-      error: err?.message || 'Unexpected error querying KYC aggregates.',
+      state,
+      error: formatTelemetryDiagnosticError(diag, err?.message || 'Unexpected error querying KYC aggregates.'),
       isPartial: false,
       rejectedRecordsCount: 0,
     };
   }
+  };
+
+  if (options?.signal) {
+    return runKycAggregate();
+  }
+  return dedupeInFlight(`kyc_agg:${getClientScopeKey(client)}:${tenantId}`, runKycAggregate);
 }
 
 /**
  * Fetch Platform Executive KPIs (SUPER_ADMIN Only)
  */
 export async function fetchPlatformExecutiveKpis(
-  clientOverride?: any
+  clientOrOptions?: any,
+  maybeOptions?: { signal?: AbortSignal }
 ): Promise<PlatformExecutiveKpis> {
+  const clientOverride = isSupabaseClientLike(clientOrOptions) ? clientOrOptions : undefined;
+  const options: { signal?: AbortSignal } | undefined = isSupabaseClientLike(clientOrOptions)
+    ? maybeOptions
+    : (clientOrOptions as { signal?: AbortSignal } | undefined);
+
   const client = clientOverride !== undefined ? clientOverride : supabase;
   const configured = clientOverride !== undefined ? Boolean(clientOverride) : isSupabaseConfigured();
 
@@ -4242,32 +4921,112 @@ export async function fetchPlatformExecutiveKpis(
     );
   }
 
-  try {
-    const { data, error } = await client.rpc('get_platform_executive_kpis');
-    if (error) {
+  const runKpis = async (): Promise<PlatformExecutiveKpis> => {
+    const correlationId = createTelemetryCorrelationId();
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const callerRole = activeRole || 'SUPER_ADMIN';
+    const elapsedMs = () =>
+      (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt;
+
+    try {
+      const { data, error } = await applyAbortSignal(
+        client.rpc('get_platform_executive_kpis'),
+        options?.signal
+      );
+      if (error) {
+        const hasAuthSession = await checkHasSupabaseAuthSession(client);
+        const state = classifyErrorState(error, hasAuthSession);
+        const diag = recordTelemetryDiagnostic({
+          correlationId,
+          widgetName: 'Platform Executive KPIs',
+          rpcName: 'get_platform_executive_kpis',
+          sqlstate: extractSafeSqlstate(error),
+          durationMs: elapsedMs(),
+          dateRangeDays: 'ALL',
+          role: callerRole,
+          tenantScope: 'ALL',
+          outcome: isAbortError(error, options?.signal)
+            ? 'ABORTED'
+            : state === 'timeout'
+            ? 'TIMEOUT'
+            : state === 'restricted' || state === 'demo_session_rls'
+            ? 'RESTRICTED'
+            : 'ERROR',
+        });
+        return emptyKpis(
+          'error',
+          formatTelemetryDiagnosticError(diag, error.message || 'Executive KPIs access failed.'),
+          state
+        );
+      }
+      if (data && typeof data === 'object') {
+        recordTelemetryDiagnostic({
+          correlationId,
+          widgetName: 'Platform Executive KPIs',
+          rpcName: 'get_platform_executive_kpis',
+          sqlstate: '00000',
+          durationMs: elapsedMs(),
+          dateRangeDays: 'ALL',
+          role: callerRole,
+          tenantScope: 'ALL',
+          outcome: 'SUCCESS',
+        });
+        return {
+          settledVolumeYtd: Number(data.settledVolumeYtd) || 0,
+          institutionalMrr: Number(data.institutionalMrr) || 0,
+          preventedFraudVolume: Number(data.preventedFraudVolume) || 0,
+          slaCompliancePct: Number(data.slaCompliancePct) || 0,
+          complianceScore: Number(data.complianceScore) || 0,
+          activeUsers: Number(data.activeUsers) || 0,
+          netLiquidBalance: Number(data.netLiquidBalance) || 0,
+          riskExposureScore: Number(data.riskExposureScore) || 0,
+          source: 'supabase',
+          state: 'live_records',
+          error: null,
+        };
+      }
+      const emptyDiag = recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'Platform Executive KPIs',
+        rpcName: 'get_platform_executive_kpis',
+        sqlstate: 'EMPTY',
+        durationMs: elapsedMs(),
+        dateRangeDays: 'ALL',
+        role: callerRole,
+        tenantScope: 'ALL',
+        outcome: 'ERROR',
+      });
+      return emptyKpis('error', formatTelemetryDiagnosticError(emptyDiag, 'No executive KPI data returned from Supabase.'));
+    } catch (err: any) {
       const hasAuthSession = await checkHasSupabaseAuthSession(client);
-      console.warn(`[DB_DIAGNOSTIC] fetchPlatformExecutiveKpis error: ${error.message}`);
-      return emptyKpis('error', error.message || 'Executive KPIs access failed.', classifyErrorState(error, hasAuthSession));
+      const state = classifyErrorState(err, hasAuthSession);
+      const diag = recordTelemetryDiagnostic({
+        correlationId,
+        widgetName: 'Platform Executive KPIs',
+        rpcName: 'get_platform_executive_kpis',
+        sqlstate: extractSafeSqlstate(err),
+        durationMs: elapsedMs(),
+        dateRangeDays: 'ALL',
+        role: callerRole,
+        tenantScope: 'ALL',
+        outcome: isAbortError(err, options?.signal)
+          ? 'ABORTED'
+          : state === 'timeout'
+          ? 'TIMEOUT'
+          : state === 'restricted' || state === 'demo_session_rls'
+          ? 'RESTRICTED'
+          : 'ERROR',
+      });
+      return emptyKpis(
+        'error',
+        formatTelemetryDiagnosticError(diag, err?.message || 'Unexpected exception fetching executive KPIs.'),
+        state
+      );
     }
-    if (data && typeof data === 'object') {
-      return {
-        settledVolumeYtd: Number(data.settledVolumeYtd) || 0,
-        institutionalMrr: Number(data.institutionalMrr) || 0,
-        preventedFraudVolume: Number(data.preventedFraudVolume) || 0,
-        slaCompliancePct: Number(data.slaCompliancePct) || 0,
-        complianceScore: Number(data.complianceScore) || 0,
-        activeUsers: Number(data.activeUsers) || 0,
-        netLiquidBalance: Number(data.netLiquidBalance) || 0,
-        riskExposureScore: Number(data.riskExposureScore) || 0,
-        source: 'supabase',
-        state: 'live_records',
-        error: null,
-      };
-    }
-    return emptyKpis('error', 'No executive KPI data returned from Supabase.');
-  } catch (err: any) {
-    const hasAuthSession = await checkHasSupabaseAuthSession(client);
-    console.warn(`[DB_DIAGNOSTIC] fetchPlatformExecutiveKpis exception: ${err.message}`);
-    return emptyKpis('error', err?.message || 'Unexpected exception fetching executive KPIs.', classifyErrorState(err, hasAuthSession));
+  };
+
+  if (options?.signal) {
+    return runKpis();
   }
+  return dedupeInFlight(`platform_kpis:${getClientScopeKey(client)}`, runKpis);
 }

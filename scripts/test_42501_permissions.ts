@@ -178,10 +178,13 @@ async function runTests() {
     },
   };
 
+  const { fetchKycRecordsResultFromDb, fetchKycAggregatesResultFromDb } = await import('../src/services/finovaDatabase');
   const anonFraud = await fetchFraudCasesResultFromDb('tenant_apex_bank', undefined, anonTrackingClient);
   const anonFraudAgg = await fetchFraudAggregatesResultFromDb('tenant_apex_bank', undefined, anonTrackingClient);
   const anonTxAgg = await fetchTransactionAggregatesResultFromDb('tenant_apex_bank', undefined, anonTrackingClient);
-  const anonSupAgg = await fetchSupportAggregatesResultFromDb('tenant_apex_bank', anonTrackingClient);
+  const anonSupAgg = await fetchSupportAggregatesResultFromDb('tenant_apex_bank', undefined, anonTrackingClient);
+  const anonKyc = await fetchKycRecordsResultFromDb('tenant_apex_bank', undefined, anonTrackingClient);
+  const anonKycAgg = await fetchKycAggregatesResultFromDb('tenant_apex_bank', anonTrackingClient);
   const anonKpis = await fetchPlatformExecutiveKpis(anonTrackingClient);
 
   assert('Unauthenticated services skip table/RPC queries completely', !anonQueriedTable);
@@ -191,8 +194,10 @@ async function runTests() {
       anonFraudAgg.state === 'demo_session_rls' &&
       anonTxAgg.state === 'demo_session_rls' &&
       anonSupAgg.state === 'demo_session_rls' &&
+      anonKyc.state === 'demo_session_rls' &&
+      anonKycAgg.state === 'demo_session_rls' &&
       anonKpis.state === 'demo_session_rls',
-    `states=${JSON.stringify({ fraud: anonFraud.state, fraudAgg: anonFraudAgg.state, txAgg: anonTxAgg.state, supAgg: anonSupAgg.state, kpis: anonKpis.state })}`
+    `states=${JSON.stringify({ fraud: anonFraud.state, fraudAgg: anonFraudAgg.state, txAgg: anonTxAgg.state, supAgg: anonSupAgg.state, kyc: anonKyc.state, kycAgg: anonKycAgg.state, kpis: anonKpis.state })}`
   );
 
   const auth42501Client = createMockSupabaseClient({
@@ -205,6 +210,8 @@ async function runTests() {
   const authFraudAgg = await fetchFraudAggregatesResultFromDb('tenant_apex_bank', undefined, auth42501Client);
   const authTxAgg = await fetchTransactionAggregatesResultFromDb('tenant_apex_bank', undefined, auth42501Client);
   const authSupAgg = await fetchSupportAggregatesResultFromDb('tenant_apex_bank', undefined, auth42501Client);
+  const authKyc = await fetchKycRecordsResultFromDb('tenant_apex_bank', undefined, auth42501Client);
+  const authKycAgg = await fetchKycAggregatesResultFromDb('tenant_apex_bank', auth42501Client);
   const authKpis = await fetchPlatformExecutiveKpis(auth42501Client);
 
   assert(
@@ -213,8 +220,10 @@ async function runTests() {
       authFraudAgg.state === 'restricted' &&
       authTxAgg.state === 'restricted' &&
       authSupAgg.state === 'restricted' &&
+      authKyc.state === 'restricted' &&
+      authKycAgg.state === 'restricted' &&
       authKpis.state === 'restricted',
-    `states=${JSON.stringify({ fraud: authFraud.state, fraudAgg: authFraudAgg.state, txAgg: authTxAgg.state, supAgg: authSupAgg.state, kpis: authKpis.state })}`
+    `states=${JSON.stringify({ fraud: authFraud.state, fraudAgg: authFraudAgg.state, txAgg: authTxAgg.state, supAgg: authSupAgg.state, kyc: authKyc.state, kycAgg: authKycAgg.state, kpis: authKpis.state })}`
   );
 
   // 4. Live Anon Connectivity & Boundary Probe (No private credentials required)

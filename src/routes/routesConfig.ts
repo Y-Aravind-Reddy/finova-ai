@@ -171,6 +171,13 @@ export const ROUTES: Record<string, RouteMeta> = {
     allowedRoles: ['ADMIN'],
     breadcrumb: ['Finova AI', 'Admin', 'Customer Management'],
   },
+  '/admin/knowledge-base': {
+    path: '/admin/knowledge-base',
+    title: 'Knowledge Base Management',
+    category: 'Admin',
+    allowedRoles: ['ADMIN'],
+    breadcrumb: ['Finova AI', 'Admin', 'Knowledge Base Management'],
+  },
   '/admin/reports': {
     path: '/admin/reports',
     title: 'Operations Reports',

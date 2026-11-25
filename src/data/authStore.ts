@@ -637,6 +637,19 @@ export function authenticateDemoPersona(personaRoleOrEmail: string): {
   session?: AuthSession;
   error?: string;
 } {
+  const isProdBuild =
+    typeof import.meta !== 'undefined' &&
+    Boolean((import.meta as unknown as { env?: { PROD?: boolean } }).env?.PROD);
+
+  if (isProdBuild || isSupabaseConfigured()) {
+    return {
+      success: false,
+      error: isProdBuild
+        ? 'Demo personas are disabled in production builds. Please authenticate with institutional Supabase credentials.'
+        : 'Institutional database is active. Demo personas are restricted to local-only mode. Please sign in with your corporate Supabase credentials.',
+    };
+  }
+
   const norm = personaRoleOrEmail.trim().toLowerCase();
 
   const personas: Record<string, UserAccount> = {
@@ -742,15 +755,6 @@ export function authenticateDemoPersona(personaRoleOrEmail: string): {
 
   if (!target) {
     return { success: false, error: 'Unrecognized evaluator demo role.' };
-  }
-
-  // Strict Configuration Alignment:
-  // We do not allow local demo personas if Supabase is active, as it leads to stale 401 requests.
-  if (isSupabaseConfigured()) {
-    return { 
-      success: false, 
-      error: 'Institutional database is active. Demo personas are restricted to local-only mode. Please sign in with your corporate Supabase credentials.' 
-    };
   }
 
   // Strict Single Super Admin check

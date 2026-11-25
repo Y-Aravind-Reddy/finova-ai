@@ -15,6 +15,7 @@ import {
   canRoleAccessFraudTelemetry,
   canRoleAccessSupportTelemetry,
   mapResultStateToTelemetryStatus,
+  getDefaultBoundedDateRange,
 } from '../../services/finovaDatabase';
 
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
@@ -22,6 +23,7 @@ import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
 import { DashboardFilterBar, DashboardFilters } from './DashboardFilterBar';
 import { ModuleSkeleton, KpiSkeleton } from './DashboardSkeletons';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 
 // Lazy load heavy intelligence modules
 const TransactionIntelligence = lazy(() => import('./intelligence/TransactionIntelligence'));
@@ -99,12 +101,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [changeRoleOpen, setChangeRoleOpen] = useState(false);
   const [adminNotice, setAdminNotice] = useState<{ type: 'error' | 'info'; message: string } | null>(null);
 
-  const [filters, setFilters] = useState<DashboardFilters>({
-    startDate: '',
-    endDate: '',
+  const [filters, setFilters] = useState<DashboardFilters>(() => ({
+    ...getDefaultBoundedDateRange('YTD'),
     currency: 'ALL',
     branchCity: 'Global Operations',
-  });
+  }));
 
   const tenantId = currentUser?.tenantId || 'tenant_apex_bank';
   const tenant = useMemo(() => getTenantById(tenantId), [tenantId]);
@@ -113,73 +114,99 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const fraudAuthorized = canRoleAccessFraudTelemetry(currentRole);
   const supportAuthorized = canRoleAccessSupportTelemetry(currentRole);
 
-  // --- REACT QUERY DATA FETCHING ---
+  // --- REACT QUERY DATA FETCHING (with bounded range & AbortSignal) ---
 
-  const { data: kpis, isLoading: kpisLoading } = useQuery({
+  const { data: kpis, isLoading: kpisLoading, isFetching: kpisFetching, refetch: refetchKpis } = useQuery({
     queryKey: ['platform-kpis', currentUser?.id, currentRole],
-    queryFn: () => fetchPlatformExecutiveKpis(),
+    queryFn: ({ signal }) => fetchPlatformExecutiveKpis({ signal }),
     enabled: currentRole === 'SUPER_ADMIN',
   });
 
-  const { data: txAgg, isLoading: txLoading } = useQuery({
+  const { data: txAgg, isLoading: txLoading, isFetching: txFetching, refetch: refetchTx } = useQuery({
     queryKey: ['tx-aggregates', currentUser?.id, currentRole, tenantId, filters],
-    queryFn: () => fetchTransactionAggregatesResultFromDb(tenantId, { ...filters }),
+    queryFn: ({ signal }) => fetchTransactionAggregatesResultFromDb(tenantId, { ...filters, signal }),
   });
 
-  const { data: sAgg, isLoading: sLoading } = useQuery({
-    queryKey: ['support-aggregates', currentUser?.id, currentRole, tenantId],
-    queryFn: () => fetchSupportAggregatesResultFromDb(tenantId),
+  const { data: sAgg, isLoading: sLoading, isFetching: sFetching, refetch: refetchSupport } = useQuery({
+    queryKey: ['support-aggregates', currentUser?.id, currentRole, tenantId, filters.startDate, filters.endDate],
+    queryFn: ({ signal }) =>
+      fetchSupportAggregatesResultFromDb(tenantId, {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        signal,
+      }),
     enabled: supportAuthorized,
   });
 
-  const { data: fAgg, isLoading: fLoading } = useQuery({
-    queryKey: ['fraud-aggregates', currentUser?.id, currentRole, tenantId, filters.currency],
-    queryFn: () => fetchFraudAggregatesResultFromDb(tenantId, { currency: filters.currency }),
+  const { data: fAgg, isLoading: fLoading, isFetching: fFetching, refetch: refetchFraud } = useQuery({
+    queryKey: ['fraud-aggregates', currentUser?.id, currentRole, tenantId, filters.currency, filters.startDate, filters.endDate],
+    queryFn: ({ signal }) =>
+      fetchFraudAggregatesResultFromDb(tenantId, {
+        currency: filters.currency,
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        signal,
+      }),
     enabled: fraudAuthorized,
   });
 
-  const { data: kAgg, isLoading: kLoading } = useQuery({
+  const { data: kAgg, isLoading: kLoading, isFetching: kFetching, refetch: refetchKyc } = useQuery({
     queryKey: ['kyc-aggregates', currentUser?.id, currentRole, tenantId],
-    queryFn: () => fetchKycAggregatesResultFromDb(tenantId),
+    queryFn: ({ signal }) => fetchKycAggregatesResultFromDb(tenantId, { signal }),
   });
 
-  const nodeStatuses = useMemo(() => ({
+  const telemetryStatuses = useMemo(() => ({
     kpis:
       currentRole !== 'SUPER_ADMIN'
-        ? 'restricted'
-        : kpisLoading
-        ? 'loading'
-        : mapResultStateToTelemetryStatus(kpis?.state, kpis?.source, kpisLoading).toLowerCase(),
-    transactions: txLoading
-      ? 'loading'
-      : mapResultStateToTelemetryStatus(txAgg?.state, txAgg?.source, txLoading).toLowerCase(),
+        ? ('RESTRICTED' as const)
+        : mapResultStateToTelemetryStatus(kpis?.state, kpis?.source, kpisLoading),
+    transactions: mapResultStateToTelemetryStatus(txAgg?.state, txAgg?.source, txLoading),
     support: !supportAuthorized
-      ? 'restricted'
-      : sLoading
-      ? 'loading'
-      : mapResultStateToTelemetryStatus(sAgg?.state, sAgg?.source, sLoading).toLowerCase(),
+      ? ('RESTRICTED' as const)
+      : mapResultStateToTelemetryStatus(sAgg?.state, sAgg?.source, sLoading),
     fraud: !fraudAuthorized
-      ? 'restricted'
-      : fLoading
-      ? 'loading'
-      : mapResultStateToTelemetryStatus(fAgg?.state, fAgg?.source, fLoading).toLowerCase(),
-    kyc: kLoading
-      ? 'loading'
-      : mapResultStateToTelemetryStatus(kAgg?.state, kAgg?.source, kLoading).toLowerCase(),
+      ? ('RESTRICTED' as const)
+      : mapResultStateToTelemetryStatus(fAgg?.state, fAgg?.source, fLoading),
+    kyc: mapResultStateToTelemetryStatus(kAgg?.state, kAgg?.source, kLoading),
   }), [currentRole, fraudAuthorized, supportAuthorized, kpisLoading, kpis, txLoading, txAgg, sLoading, sAgg, fLoading, fAgg, kLoading, kAgg]);
 
-  const combinedDbError = useMemo(() => {
+  const nodeStatuses = useMemo(() => ({
+    kpis: kpisLoading ? 'loading' : telemetryStatuses.kpis.toLowerCase(),
+    transactions: txLoading ? 'loading' : telemetryStatuses.transactions.toLowerCase(),
+    support: sLoading ? 'loading' : telemetryStatuses.support.toLowerCase(),
+    fraud: fLoading ? 'loading' : telemetryStatuses.fraud.toLowerCase(),
+    kyc: kLoading ? 'loading' : telemetryStatuses.kyc.toLowerCase(),
+  }), [kpisLoading, txLoading, sLoading, fLoading, kLoading, telemetryStatuses]);
+
+  const hasTimeoutNode = useMemo(
+    () => Object.values(telemetryStatuses).some((s) => s === 'TIMEOUT'),
+    [telemetryStatuses]
+  );
+
+  const { combinedDbError, failingWidgetLabel } = useMemo(() => {
     const entries = [
-      { state: kpis?.state, error: kpis?.error },
-      { state: txAgg?.state, error: txAgg?.error },
-      { state: sAgg?.state, error: sAgg?.error },
-      { state: fAgg?.state, error: fAgg?.error },
-      { state: kAgg?.state, error: kAgg?.error },
+      { label: 'Executive KPIs (get_platform_executive_kpis)', state: kpis?.state, error: kpis?.error },
+      { label: 'Transactions (get_transaction_aggregates)', state: txAgg?.state, error: txAgg?.error },
+      { label: 'Support (get_support_aggregates)', state: sAgg?.state, error: sAgg?.error },
+      { label: 'Fraud (get_fraud_aggregates)', state: fAgg?.state, error: fAgg?.error },
+      { label: 'KYC (get_kyc_aggregates)', state: kAgg?.state, error: kAgg?.error },
     ];
-    const errs = entries
-      .filter((item) => item.error && item.state !== 'restricted')
-      .map((item) => item.error as string);
-    return errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null;
+    const activeFailures = entries.filter((item) => item.error && item.state !== 'restricted');
+    const timeoutLabels = activeFailures
+      .filter((item) => item.state === 'timeout')
+      .map((item) => item.label);
+    const allLabels = activeFailures.map((item) => item.label);
+    const errs = activeFailures.map((item) => `${item.label}: ${item.error}`);
+    const labelSummary =
+      timeoutLabels.length > 0
+        ? `Telemetry Timeout [${timeoutLabels.join(', ')}]`
+        : allLabels.length > 0
+        ? `Telemetry Failure [${allLabels.join(', ')}]`
+        : 'Database Telemetry';
+    return {
+      combinedDbError: errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null,
+      failingWidgetLabel: labelSummary,
+    };
   }, [kpis, txAgg, sAgg, fAgg, kAgg]);
 
   const handleSaveUser = async (userData: Partial<UserAccount>) => {
@@ -255,14 +282,27 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="space-y-6">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Summary Settlement Velocity */}
-                  <div className="rounded-2xl bg-[#1A1A1A]/80 border border-[#3A3A3A] p-6 shadow-xl">
-                    <div className="flex items-center justify-between mb-4">
+                  <div className="rounded-2xl bg-[#1A1A1A]/80 border border-[#3A3A3A] p-6 shadow-xl space-y-4">
+                    <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="font-cinzel text-lg font-bold text-[#E6C78B]">Settlement Flux</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-cinzel text-lg font-bold text-[#E6C78B]">Settlement Flux</h3>
+                          <WidgetStatusBadge status={txLoading ? 'LOADING' : telemetryStatuses.transactions} />
+                        </div>
                         <p className="text-[10px] text-[#9CA3AF] uppercase tracking-widest font-mono">Cross-tenant clearing velocity</p>
                       </div>
                       <TrendingUp size={20} className="text-[#D4A017]" />
                     </div>
+                    {!txLoading && telemetryStatuses.transactions !== 'OPERATIONAL' && (
+                      <WidgetFailureNotice
+                        widgetName="Transactions Telemetry"
+                        status={telemetryStatuses.transactions}
+                        error={txAgg?.error}
+                        onRetry={() => refetchTx()}
+                        isRetrying={txFetching}
+                        compact
+                      />
+                    )}
                     {txAgg && (
                       <ThreeDAreaChart
                         data={txAgg.volumeByDay?.map(d => ({ label: d.date.split('-')[2], value: d.volumeInr / 1000000 })) || []}
@@ -274,14 +314,27 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
 
                   {/* Summary Fraud Risk */}
-                  <div className="rounded-2xl bg-[#1A1A1A]/80 border border-[#3A3A3A] p-6 shadow-xl">
-                    <div className="flex items-center justify-between mb-4">
+                  <div className="rounded-2xl bg-[#1A1A1A]/80 border border-[#3A3A3A] p-6 shadow-xl space-y-4">
+                    <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="font-cinzel text-lg font-bold text-[#E6C78B]">Risk Distribution</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-cinzel text-lg font-bold text-[#E6C78B]">Risk Distribution</h3>
+                          <WidgetStatusBadge status={fLoading ? 'LOADING' : telemetryStatuses.fraud} />
+                        </div>
                         <p className="text-[10px] text-[#9CA3AF] uppercase tracking-widest font-mono">Real-time threat vectors</p>
                       </div>
                       <ShieldAlert size={20} className="text-[#D4A017]" />
                     </div>
+                    {!fLoading && telemetryStatuses.fraud !== 'OPERATIONAL' && (
+                      <WidgetFailureNotice
+                        widgetName="Fraud & AML Surveillance"
+                        status={telemetryStatuses.fraud}
+                        error={fAgg?.error}
+                        onRetry={fraudAuthorized ? () => refetchFraud() : undefined}
+                        isRetrying={fFetching}
+                        compact
+                      />
+                    )}
                     {fAgg && (
                       <ThreeDDonutChart
                         segments={fAgg.riskTierDistribution?.map(r => ({ label: r.tier, value: r.count, subtext: `₹${(r.volumeInr / 1000000).toFixed(1)}M` })) || []}
@@ -296,45 +349,74 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {/* Additional Insight Row */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   {/* KYC Summary */}
-                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between">
+                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2 text-[#D4A017] mb-2">
-                        <Fingerprint size={16} />
-                        <span className="text-[10px] font-black uppercase tracking-widest">Compliance</span>
+                      <div className="flex items-center justify-between gap-2 text-[#D4A017] mb-2">
+                        <div className="flex items-center gap-2">
+                          <Fingerprint size={16} />
+                          <span className="text-[10px] font-black uppercase tracking-widest">Compliance</span>
+                        </div>
+                        <WidgetStatusBadge status={kLoading ? 'LOADING' : telemetryStatuses.kyc} />
                       </div>
                       <h4 className="text-sm font-bold text-[#FAF7F0]">KYC Onboarding Queue</h4>
                     </div>
-                    <div className="mt-4">
+                    {!kLoading && telemetryStatuses.kyc !== 'OPERATIONAL' && (
+                      <WidgetFailureNotice
+                        widgetName="KYC Queue"
+                        status={telemetryStatuses.kyc}
+                        error={kAgg?.error}
+                        onRetry={() => refetchKyc()}
+                        isRetrying={kFetching}
+                        compact
+                      />
+                    )}
+                    <div>
                       <span className="text-3xl font-black text-[#E6C78B]">{kAgg?.pendingCount ?? 0}</span>
                       <span className="text-[10px] text-[#9CA3AF] ml-2">Pending Review ({kAgg?.totalCount ?? 0} Total)</span>
                     </div>
                   </div>
 
                   {/* Support Summary */}
-                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between">
+                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2 text-[#D4A017] mb-2">
-                        <LifeBuoy size={16} />
-                        <span className="text-[10px] font-black uppercase tracking-widest">Operations</span>
+                      <div className="flex items-center justify-between gap-2 text-[#D4A017] mb-2">
+                        <div className="flex items-center gap-2">
+                          <LifeBuoy size={16} />
+                          <span className="text-[10px] font-black uppercase tracking-widest">Operations</span>
+                        </div>
+                        <WidgetStatusBadge status={sLoading ? 'LOADING' : telemetryStatuses.support} />
                       </div>
                       <h4 className="text-sm font-bold text-[#FAF7F0]">Concierge Desk Health</h4>
                     </div>
-                    <div className="mt-4">
+                    {!sLoading && telemetryStatuses.support !== 'OPERATIONAL' && (
+                      <WidgetFailureNotice
+                        widgetName="Support Telemetry"
+                        status={telemetryStatuses.support}
+                        error={sAgg?.error}
+                        onRetry={supportAuthorized ? () => refetchSupport() : undefined}
+                        isRetrying={sFetching}
+                        compact
+                      />
+                    )}
+                    <div>
                       <span className="text-3xl font-black text-[#E6C78B]">{sAgg?.slaCompliancePct ?? 0}%</span>
                       <span className="text-[10px] text-[#9CA3AF] ml-2">SLA Compliance</span>
                     </div>
                   </div>
 
                   {/* Liquidity Summary */}
-                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between">
+                  <div className="p-5 rounded-2xl bg-[#1A1A1A]/50 border border-[#3A3A3A] flex flex-col justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2 text-[#D4A017] mb-2">
-                        <Wallet size={16} />
-                        <span className="text-[10px] font-black uppercase tracking-widest">Treasury</span>
+                      <div className="flex items-center justify-between gap-2 text-[#D4A017] mb-2">
+                        <div className="flex items-center gap-2">
+                          <Wallet size={16} />
+                          <span className="text-[10px] font-black uppercase tracking-widest">Treasury</span>
+                        </div>
+                        <WidgetStatusBadge status={txLoading ? 'LOADING' : telemetryStatuses.transactions} />
                       </div>
                       <h4 className="text-sm font-bold text-[#FAF7F0]">Net Liquid Balance</h4>
                     </div>
-                    <div className="mt-4 flex items-baseline gap-1">
+                    <div className="flex items-baseline gap-1">
                       <span className="text-3xl font-black text-[#E6C78B]">₹{((txAgg?.netLiquidBalanceInr || 0) / 10000000).toFixed(1)}</span>
                       <span className="text-[10px] text-[#9CA3AF]">Cr</span>
                     </div>
@@ -559,6 +641,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               >
                 <div className={`w-1.5 h-1.5 rounded-full ${
                   status === 'operational' ? 'bg-emerald-500/80' :
+                  status === 'timeout' ? 'bg-orange-500 animate-pulse' :
                   status === 'degraded' ? 'bg-amber-500 animate-pulse' :
                   status === 'restricted' ? 'bg-blue-400' :
                   status === 'loading' ? 'bg-[#9CA3AF] animate-spin h-1.5 w-1.5 border-b border-[#D4A017] rounded-full' :
@@ -566,10 +649,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 }`} />
                 <span className={`text-[9px] font-bold font-mono uppercase ${
                   status === 'operational' ? 'text-[#9CA3AF]' :
+                  status === 'timeout' ? 'text-orange-300' :
                   status === 'restricted' ? 'text-blue-300' :
                   status === 'unavailable' ? 'text-red-300' :
                   'text-[#FAF7F0]'
-                }`}>{key}{status === 'restricted' ? ' (Restricted)' : status === 'unavailable' ? ' (Unavailable)' : ''}</span>
+                }`}>
+                  {key}
+                  {status === 'timeout'
+                    ? ' (Timeout)'
+                    : status === 'restricted'
+                    ? ' (Restricted)'
+                    : status === 'unavailable'
+                    ? ' (Unavailable)'
+                    : status === 'degraded'
+                    ? ' (Degraded)'
+                    : ''}
+                </span>
               </div>
             ))}
           </div>
@@ -592,18 +687,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {combinedDbError && (
-        <div className="rounded-xl px-4 py-3 bg-amber-950/50 border border-amber-500/40 text-amber-200 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={15} className="text-amber-400 shrink-0" />
-            <span>Database Telemetry Notice: {combinedDbError}</span>
-          </div>
-          <button
-            onClick={() => queryClient.invalidateQueries()}
-            className="px-2.5 py-1 rounded bg-[#121212] border border-amber-500/50 text-amber-300 text-[10px] shrink-0"
-          >
-            Retry
-          </button>
-        </div>
+        <WidgetFailureNotice
+          widgetName={failingWidgetLabel}
+          status={hasTimeoutNode ? 'TIMEOUT' : 'DEGRADED'}
+          error={combinedDbError}
+          onRetry={() => {
+            if (currentRole === 'SUPER_ADMIN' && telemetryStatuses.kpis !== 'OPERATIONAL') refetchKpis();
+            if (telemetryStatuses.transactions !== 'OPERATIONAL') refetchTx();
+            if (supportAuthorized && telemetryStatuses.support !== 'OPERATIONAL') refetchSupport();
+            if (fraudAuthorized && telemetryStatuses.fraud !== 'OPERATIONAL') refetchFraud();
+            if (telemetryStatuses.kyc !== 'OPERATIONAL') refetchKyc();
+          }}
+          isRetrying={kpisFetching || txFetching || sFetching || fFetching || kFetching}
+        />
       )}
 
       <div className="min-h-[600px]">

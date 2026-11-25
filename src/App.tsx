@@ -63,6 +63,7 @@ const SuperAdminCompanyWorkspacesPage = lazy(() => import('./components/superadm
 const AdminOperationsPage = lazy(() => import('./components/admin/AdminOperationsPage'));
 const AdminCustomerManagementPage = lazy(() => import('./components/admin/AdminCustomerManagementPage'));
 const AdminUserManagementPage = lazy(() => import('./components/admin/AdminUserManagementPage'));
+const AdminKnowledgeBasePage = lazy(() => import('./components/admin/AdminKnowledgeBasePage'));
 
 // Finance Analyst Pages
 const FinanceTransactionAnalyticsPage = lazy(() => import('./components/finance/FinanceTransactionAnalyticsPage'));
@@ -115,7 +116,7 @@ const PageLoader = () => (
 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
-  const [impersonatingAdmin, setImpersonatingAdmin] = useState<UserAccount | null>(null);
+  const [previewUser, setPreviewUser] = useState<UserAccount | null>(null);
   const [currentView, setCurrentView] = useState<'landing' | 'login' | 'signup' | 'app'>('landing');
   const [currentRoute, setCurrentRoute] = useState<string>('/customer/dashboard');
   const [usersList, setUsersList] = useState<UserAccount[]>([]);
@@ -330,7 +331,7 @@ export default function App() {
   }, []);
 
   const handleLoginSuccess = async () => {
-    setImpersonatingAdmin(null);
+    setPreviewUser(null);
     const profileRes = await loadCurrentUserProfileAsync();
     if (profileRes.success && profileRes.session) {
       activeUserIdRef.current = profileRes.session.user.id;
@@ -345,34 +346,59 @@ export default function App() {
     }
   };
 
+  // Pure Read-Only UI Layout Preview for SUPER_ADMIN:
+  // Never synthesizes fake JWT tokens, never mutates AuthSession, and never writes to localStorage.
   const handleSuperAdminSwitchRole = (targetUser: UserAccount) => {
-    if (session && session.user.role === 'SUPER_ADMIN') setImpersonatingAdmin(session.user);
-    const newSession: AuthSession = { token: `jwt_${targetUser.id}`, user: targetUser, expiresAt: Date.now() + 86400000 };
-    setSession(newSession);
-    saveSession(newSession);
+    if (
+      !session ||
+      session.user.role !== 'SUPER_ADMIN' ||
+      session.user.email.toLowerCase().trim() !== AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()
+    ) {
+      return;
+    }
+    setPreviewUser(targetUser);
     navigateTo(ROLE_DEFAULT_ROUTES[targetUser.role]);
   };
 
   const handleReturnToSuperAdmin = () => {
-    if (impersonatingAdmin) {
-      const adminSession: AuthSession = { token: `jwt_${impersonatingAdmin.id}`, user: impersonatingAdmin, expiresAt: Date.now() + 86400000 };
-      setSession(adminSession);
-      saveSession(adminSession);
-      setImpersonatingAdmin(null);
+    if (previewUser) {
+      setPreviewUser(null);
       navigateTo('/super-admin/user-management');
     }
   };
 
+  const isPreviewAuthorized =
+    Boolean(
+      previewUser &&
+        session?.user.role === 'SUPER_ADMIN' &&
+        session.user.email.toLowerCase().trim() === AUTHORIZED_SUPER_ADMIN_EMAIL.toLowerCase()
+    );
+
   const handleProfileUpdated = (updatedUser: UserAccount) => {
+    if (isPreviewAuthorized) {
+      console.warn('Blocked profile mutation during Read-Only UI Preview mode.');
+      return;
+    }
     if (session) setSession({ ...session, user: updatedUser });
     setUsersList((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
   };
+
+  const safeUpdateUsers = useCallback(
+    (newUsers: UserAccount[]) => {
+      if (isPreviewAuthorized) {
+        console.warn('Blocked user roster mutation during Read-Only UI Preview mode.');
+        return;
+      }
+      handleUpdateUsers(newUsers);
+    },
+    [handleUpdateUsers, isPreviewAuthorized]
+  );
 
   const handleLogout = () => {
     signOutUserAsync().catch(() => {});
     clearSession();
     setSession(null);
-    setImpersonatingAdmin(null);
+    setPreviewUser(null);
     setCurrentView('landing');
     setMobileMenuOpen(false);
     window.history.pushState(null, '', '/');
@@ -392,7 +418,8 @@ export default function App() {
     );
   }
 
-  const currentUser = session.user;
+  const isReadOnlyPreview = isPreviewAuthorized && previewUser !== null;
+  const currentUser = isReadOnlyPreview && previewUser ? previewUser : session.user;
   const userRole = currentUser.role;
   const routeMeta = getRouteMeta(currentRoute, userRole);
   const routeAllowed = isRouteAllowed(currentRoute, userRole);
@@ -443,10 +470,11 @@ export default function App() {
               case '/admin/user-management':
               case '/admin/operations-management':
               case '/admin/customer-management':
-                return <AdminDashboard currentRole={userRole} users={usersList} onUpdateUsers={handleUpdateUsers} onRefreshUsers={refreshUsersListAsync} currentUser={currentUser} activeSection={currentRoute.split('/').pop()} />;
+                return <AdminDashboard currentRole={userRole} users={usersList} onUpdateUsers={safeUpdateUsers} onRefreshUsers={refreshUsersListAsync} currentUser={currentUser} activeSection={currentRoute.split('/').pop()} />;
+              case '/admin/knowledge-base': return <AdminKnowledgeBasePage currentUser={currentUser} />;
               case '/admin/reports': return <ReportsView currentUser={currentUser} />;
               case '/admin/profile': return <ProfileView currentRole={userRole} userName={currentUser.name} currentUser={currentUser} onUpdateUser={handleProfileUpdated} />;
-              case '/admin/ai-assistant': return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} />;
+              case '/admin/ai-assistant': return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} onNavigate={navigateTo} />;
               case '/admin/document-ocr': return <DocumentOcrPage />;
               case '/admin/transaction-classification': return <TransactionClassificationPage />;
               case '/admin/kyc-verification': return <KycVerificationPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
@@ -460,12 +488,12 @@ export default function App() {
               case '/admin/data-transfer/reconciliation': return <Reconciliation />;
               case '/admin/data-transfer/exceptions': return <TransferExceptions />;
 
-              default: return <AdminDashboard currentRole={userRole} users={usersList} onUpdateUsers={handleUpdateUsers} onRefreshUsers={refreshUsersListAsync} currentUser={currentUser} />;
+              default: return <AdminDashboard currentRole={userRole} users={usersList} onUpdateUsers={safeUpdateUsers} onRefreshUsers={refreshUsersListAsync} currentUser={currentUser} />;
             }
           }
           if (userRole === 'FINANCE_ANALYST') {
             switch (currentRoute) {
-              case '/finance/dashboard': return <FinanceAnalystDashboard currentRole={userRole} users={usersList} onUpdateUsers={handleUpdateUsers} currentUser={currentUser} />;
+              case '/finance/dashboard': return <FinanceAnalystDashboard currentRole={userRole} users={usersList} onUpdateUsers={safeUpdateUsers} currentUser={currentUser} />;
               case '/finance/transaction-analytics': return <FinanceTransactionAnalyticsPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
               case '/finance/fraud-detection': return <FinanceFraudDetectionPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
               case '/finance/aml-monitoring': return <FinanceAmlMonitoringPage />;
@@ -478,12 +506,12 @@ export default function App() {
               case '/finance/transaction-classification': return <TransactionClassificationPage />;
               case '/finance/fraud-aml': return <FraudAmlPage />;
               case '/finance/excel-visualization': return <ExcelVisualizationPage />;
-              default: return <FinanceAnalystDashboard currentRole={userRole} users={usersList} onUpdateUsers={handleUpdateUsers} currentUser={currentUser} />;
+              default: return <FinanceAnalystDashboard currentRole={userRole} users={usersList} onUpdateUsers={safeUpdateUsers} currentUser={currentUser} />;
             }
           }
           if (userRole === 'SUPPORT_EXECUTIVE') {
             switch (currentRoute) {
-              case '/support/dashboard': return <SupportExecutiveDashboard currentRole={userRole} users={usersList} onUpdateUsers={handleUpdateUsers} currentUser={currentUser} />;
+              case '/support/dashboard': return <SupportExecutiveDashboard currentRole={userRole} users={usersList} onUpdateUsers={safeUpdateUsers} currentUser={currentUser} />;
               case '/support/tickets': return <SupportTicketsPage currentUser={currentUser} tenantId={currentUser?.tenantId} />;
               case '/support/customer-queries': return <SupportCustomerQueriesPage />;
               case '/support/complaint-resolution': return <SupportComplaintResolutionPage />;
@@ -493,7 +521,7 @@ export default function App() {
               case '/support/profile': return <ProfileView currentRole={userRole} userName={currentUser.name} currentUser={currentUser} onUpdateUser={handleProfileUpdated} />;
               case '/support/ai-assistant': return <FinovaAiAssistantPage currentRole={userRole} userName={currentUser.name} />;
               case '/support/document-ocr': return <DocumentOcrPage />;
-              default: return <SupportExecutiveDashboard currentRole={userRole} users={usersList} onUpdateUsers={handleUpdateUsers} currentUser={currentUser} />;
+              default: return <SupportExecutiveDashboard currentRole={userRole} users={usersList} onUpdateUsers={safeUpdateUsers} currentUser={currentUser} />;
             }
           }
           if (userRole === 'CUSTOMER') {
@@ -561,10 +589,15 @@ export default function App() {
           </div>
         </header>
 
-        {impersonatingAdmin && (
-          <div className="flex-shrink-0 bg-gradient-to-r from-[#301B05] via-[#4A2C0A] to-[#301B05] border-b border-[#D4A017] px-4 sm:px-8 py-2.5 flex items-center justify-between text-xs font-mono text-[#FFF8E7] shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
-            <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-[#F5C542] animate-ping" /><span><strong>Governance Session:</strong> Auditing as <span className="text-[#F5C542] font-bold">{currentUser.name}</span></span></div>
-            <button onClick={handleReturnToSuperAdmin} className="px-3 py-1 rounded-lg bg-gradient-to-r from-[#D4A017] to-[#F5C542] text-[#111111] font-bold text-[11px] hover:brightness-110">← Return to Super Admin</button>
+        {isReadOnlyPreview && previewUser && (
+          <div className="flex-shrink-0 bg-gradient-to-r from-[#301B05] via-[#4A2C0A] to-[#301B05] border-b border-[#D4A017] px-4 sm:px-8 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-[#FFF8E7] shadow-[0_4px_15px_rgba(0,0,0,0.5)]">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#F5C542] animate-pulse shrink-0" />
+              <span>
+                <strong>Read-Only UI Preview:</strong> Rendering <span className="text-[#F5C542] font-bold">{previewUser.role.replace('_', ' ')}</span> layout ({previewUser.name}). Backend session remains <span className="text-[#F5C542] font-bold">SUPER_ADMIN</span> ({session.user.email}); mutations are disabled.
+              </span>
+            </div>
+            <button onClick={handleReturnToSuperAdmin} className="px-3 py-1 rounded-lg bg-gradient-to-r from-[#D4A017] to-[#F5C542] text-[#111111] font-bold text-[11px] hover:brightness-110 shrink-0">← Exit Read-Only Preview</button>
           </div>
         )}
 

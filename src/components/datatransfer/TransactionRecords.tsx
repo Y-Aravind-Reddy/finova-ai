@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { transferIntelligenceService } from '../../services/transferIntelligenceService';
+import {
+  getDefaultBoundedDateRange,
+  isPermissionDeniedError,
+  isStatementTimeoutError,
+} from '../../services/finovaDatabase';
 import { DataTransferFilterBar, DataTransferFilters } from './DataTransferFilterBar';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 import { 
   Download, 
   FileText, 
@@ -18,31 +24,42 @@ import {
   CreditCard,
   User,
   Building2,
-  Info,
-  AlertTriangle
+  Info
 } from 'lucide-react';
 
 const TransactionRecords: React.FC = () => {
-  const [filters, setFilters] = useState<DataTransferFilters>({
-    startDate: '',
-    endDate: '',
+  const [filters, setFilters] = useState<DataTransferFilters>(() => ({
+    ...getDefaultBoundedDateRange('YTD'),
     currency: 'ALL',
     type: 'ALL',
     channel: 'ALL',
     status: 'ALL',
     search: '',
     tenantId: 'ALL'
-  });
+  }));
 
   const [page, setPage] = useState(1);
   const pageSize = 15;
   const [selectedTx, setSelectedTx] = useState<any | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
 
-  const { data: txData, isLoading, isError, error, refetch } = useQuery({
+  const { data: txData, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['transaction-records', filters, page],
-    queryFn: () => transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, page, pageSize }),
+    queryFn: ({ signal }) =>
+      transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, page, pageSize, signal }),
   });
+
+  const ledgerStatus = isLoading
+    ? 'LOADING'
+    : isError
+    ? isStatementTimeoutError(error)
+      ? 'TIMEOUT'
+      : isPermissionDeniedError(error)
+      ? 'RESTRICTED'
+      : 'DEGRADED'
+    : txData?.source === 'supabase'
+    ? 'OPERATIONAL'
+    : 'UNAVAILABLE';
 
   const handleExport = () => {
     const rows = txData?.data || [];
@@ -73,9 +90,12 @@ const TransactionRecords: React.FC = () => {
     <div className="space-y-6 animate-in fade-in duration-700 relative min-h-[800px]">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="font-cinzel text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
-            Transaction Surveillance Ledger
-          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="font-cinzel text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
+              Transaction Surveillance Ledger
+            </h1>
+            <WidgetStatusBadge label="Ledger" status={ledgerStatus} />
+          </div>
           <p className="text-xs text-[#9CA3AF] font-mono mt-1 uppercase tracking-widest">
             Institutional Audit Trail • Verified Forensic Records
           </p>
@@ -93,7 +113,7 @@ const TransactionRecords: React.FC = () => {
         filters={filters} 
         onFilterChange={(f) => { setFilters(f); setPage(1); }} 
         onRefresh={() => refetch()} 
-        isLoading={isLoading} 
+        isLoading={isLoading || isFetching} 
       />
 
       {exportNotice && (
@@ -103,19 +123,14 @@ const TransactionRecords: React.FC = () => {
         </div>
       )}
 
-      {isError && (
-        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={16} className="text-red-400 shrink-0" />
-            <span>Ledger Query Error: {(error as Error)?.message || 'Unable to load transaction records.'}</span>
-          </div>
-          <button
-            onClick={() => refetch()}
-            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
-          >
-            Retry
-          </button>
-        </div>
+      {isError && ledgerStatus !== 'LOADING' && (
+        <WidgetFailureNotice
+          widgetName="Transaction Surveillance Ledger"
+          status={ledgerStatus === 'OPERATIONAL' ? 'DEGRADED' : ledgerStatus}
+          error={(error as Error)?.message || 'Unable to load transaction records.'}
+          onRetry={() => refetch()}
+          isRetrying={isFetching}
+        />
       )}
 
       <div className="rounded-2xl bg-[#1A1A1A]/95 border border-[#D4A017]/30 shadow-2xl overflow-hidden">

@@ -3,24 +3,9 @@ import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import './index.css';
+import { isNonRetryableTelemetryError } from './services/finovaDatabase';
 
-const isNonRetryableError = (error: unknown): boolean => {
-  if (!error) return false;
-  const anyErr = error as Record<string, any>;
-  const code = String(anyErr?.code || '').toUpperCase();
-  const status = Number(anyErr?.status || 0);
-  const msg = String(anyErr?.message || (typeof error === 'string' ? error : '')).toLowerCase();
-  return (
-    code === '42501' ||
-    code === 'PGRST301' ||
-    status === 401 ||
-    status === 403 ||
-    msg.includes('permission denied') ||
-    msg.includes('access denied') ||
-    msg.includes('unauthorized') ||
-    msg.includes('row-level security')
-  );
-};
+const isNonRetryableError = (error: unknown): boolean => isNonRetryableTelemetryError(error);
 
 const queryClient = new QueryClient({
   defaultOptions: {

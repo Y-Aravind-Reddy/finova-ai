@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   FinanceFraudTransaction,
   UserAccount,
@@ -6,15 +7,16 @@ import {
 } from '../../data/finovaDatasets';
 import {
   fetchFraudCasesResultFromDb,
-  fetchKycRecordsResultFromDb,
+  fetchKycAggregatesResultFromDb,
   updateFraudCaseStatusInDb,
   fetchFraudAggregatesResultFromDb,
   fetchTransactionAggregatesResultFromDb,
-  TransactionAggregates,
-  FraudAggregates,
   mapResultStateToTelemetryStatus,
   TelemetryNodeStatus,
+  DateRangePreset,
+  getDefaultBoundedDateRange,
 } from '../../services/finovaDatabase';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 import { convertToInr } from '../../services/currencyService';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
@@ -51,67 +53,90 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
   activeSection = 'dashboard',
   currentUser,
 }) => {
+  const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
+  const [datePreset, setDatePreset] = useState<DateRangePreset>('YTD');
+  const dateRange = useMemo(() => getDefaultBoundedDateRange(datePreset), [datePreset]);
 
   const tenantId = currentUser?.tenantId || 'tenant_apex_bank';
   const tenant = getTenantById(tenantId);
   const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
 
-  // State for live database records and complete dataset aggregates
-  const [fraudCases, setFraudCases] = useState<FinanceFraudTransaction[]>([]);
-  const [transactionAggregates, setTransactionAggregates] = useState<TransactionAggregates | null>(null);
-  const [fraudAggregates, setFraudAggregates] = useState<FraudAggregates | null>(null);
-  const [kycQueueCount, setKycQueueCount] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
-  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryNodeStatus>('OPERATIONAL');
-  const [dbError, setDbError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [activeTableTab, setActiveTableTab] = useState<'suspicious' | 'high_risk' | 'merchants' | 'reports'>('suspicious');
 
-  const loadAllData = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      // Load both transaction and fraud complete datasets concurrently
-      const [fResult, fAgg, tAgg, kResult] = await Promise.all([
-        fetchFraudCasesResultFromDb(tenantId),
-        fetchFraudAggregatesResultFromDb(tenantId),
-        fetchTransactionAggregatesResultFromDb(tenantId),
-        fetchKycRecordsResultFromDb(tenantId),
-      ]);
+  const { data: fResult, isLoading: fListLoading, isFetching: fListFetching, refetch: refetchFraudCases } = useQuery({
+    queryKey: ['analyst-fraud-cases', tenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchFraudCasesResultFromDb(tenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        countMode: 'estimated',
+        signal,
+      }),
+  });
 
-      const errs = [fResult.error, fAgg.error, tAgg.error, kResult.error].filter(
-        (msg): msg is string => Boolean(msg)
-      );
-      setDbSource(fResult.source === 'supabase' && tAgg.source === 'supabase' ? 'supabase' : 'fallback');
-      const states = [fResult.state, fAgg.state, tAgg.state, kResult.state];
-      if (states.some((s) => s === 'unconfigured')) {
-        setTelemetryStatus('UNAVAILABLE');
-      } else if (states.some((s) => s === 'query_error')) {
-        setTelemetryStatus('DEGRADED');
-      } else if (states.some((s) => s === 'restricted' || s === 'demo_session_rls')) {
-        setTelemetryStatus('RESTRICTED');
-      } else {
-        setTelemetryStatus(mapResultStateToTelemetryStatus(fResult.state, fResult.source));
-      }
-      setDbError(errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null);
-      setFraudCases(fResult.data);
-      setFraudAggregates(fAgg);
-      setTransactionAggregates(tAgg);
-      setKycQueueCount(kResult.totalCount ?? kResult.count ?? 0);
-    } catch (err: any) {
-      console.warn('Finance Analyst data load notice:', err);
-      setTelemetryStatus('DEGRADED');
-      setDbError(err?.message || 'Error loading live finance telemetry');
-    } finally {
-      setLoading(false);
-    }
-  }, [tenantId]);
+  const { data: fraudAggregates, isLoading: fAggLoading, isFetching: fAggFetching, refetch: refetchFraudAgg } = useQuery({
+    queryKey: ['analyst-fraud-agg', tenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchFraudAggregatesResultFromDb(tenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      }),
+  });
 
-  React.useEffect(() => {
-    loadAllData();
-  }, [loadAllData]);
+  const { data: transactionAggregates, isLoading: tAggLoading, isFetching: tAggFetching, refetch: refetchTxAgg } = useQuery({
+    queryKey: ['analyst-tx-agg', tenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchTransactionAggregatesResultFromDb(tenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      }),
+  });
 
-  React.useEffect(() => {
+  const { data: kycAggregates, isLoading: kycLoading, isFetching: kycFetching, refetch: refetchKycAgg } = useQuery({
+    queryKey: ['analyst-kyc-agg', tenantId],
+    queryFn: ({ signal }) => fetchKycAggregatesResultFromDb(tenantId, { signal }),
+  });
+
+  const fraudCases: FinanceFraudTransaction[] = fResult?.data || [];
+  const kycQueueCount = kycAggregates?.totalCount ?? 0;
+  const loading = fListLoading || fAggLoading || tAggLoading || kycLoading;
+  const dbSource = fResult?.source === 'supabase' && transactionAggregates?.source === 'supabase' ? 'supabase' : 'fallback';
+
+  const domainStatuses = useMemo(() => ({
+    fraudCases: mapResultStateToTelemetryStatus(fResult?.state, fResult?.source, fListLoading),
+    fraudAgg: mapResultStateToTelemetryStatus(fraudAggregates?.state, fraudAggregates?.source, fAggLoading),
+    txAgg: mapResultStateToTelemetryStatus(transactionAggregates?.state, transactionAggregates?.source, tAggLoading),
+    kycAgg: mapResultStateToTelemetryStatus(kycAggregates?.state, kycAggregates?.source, kycLoading),
+  }), [fResult, fListLoading, fraudAggregates, fAggLoading, transactionAggregates, tAggLoading, kycAggregates, kycLoading]);
+
+  const telemetryStatus: TelemetryNodeStatus = useMemo(() => {
+    const vals = Object.values(domainStatuses);
+    if (vals.includes('UNAVAILABLE')) return 'UNAVAILABLE';
+    if (vals.includes('TIMEOUT')) return 'TIMEOUT';
+    if (vals.includes('DEGRADED')) return 'DEGRADED';
+    if (vals.includes('RESTRICTED')) return 'RESTRICTED';
+    return 'OPERATIONAL';
+  }, [domainStatuses]);
+
+  const dbError = useMemo(() => {
+    const errs = [fResult?.error, fraudAggregates?.error, transactionAggregates?.error, kycAggregates?.error].filter(
+      (msg): msg is string => Boolean(msg)
+    );
+    return errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null;
+  }, [fResult, fraudAggregates, transactionAggregates, kycAggregates]);
+
+  const loadAllData = () => {
+    refetchFraudCases();
+    refetchFraudAgg();
+    refetchTxAgg();
+    refetchKycAgg();
+  };
+
+  useEffect(() => {
     if (activeSection === 'finance_customer_insights') {
       setActiveTableTab('high_risk');
     } else if (activeSection === 'reports') {
@@ -224,23 +249,28 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
   }, [fraudCases, tenantId, currentUser]);
 
   const handleEscalateOrFreeze = async (txnId: string, action: 'Freeze' | 'Clear') => {
+    setActionError(null);
     const newStatus = action === 'Freeze' ? 'Frozen Escrow' : 'Cleared';
     const res = await updateFraudCaseStatusInDb(txnId, newStatus);
     if (!res.success) {
-      setDbError(`Failed to update fraud case ${txnId}: ${res.error || 'Database update rejected.'}`);
+      setActionError(`Failed to update fraud case ${txnId}: ${res.error || 'Database update rejected.'}`);
       return;
     }
-    setFraudCases((prev) =>
-      prev.map((t) =>
-        t.id === txnId
-          ? {
-              ...t,
-              status: newStatus as any,
-              riskScore: action === 'Clear' ? 12 : t.riskScore,
-            }
-          : t
-      )
-    );
+    queryClient.setQueryData(['analyst-fraud-cases', tenantId, dateRange], (prev: any) => {
+      if (!prev || !Array.isArray(prev.data)) return prev;
+      return {
+        ...prev,
+        data: prev.data.map((t: FinanceFraudTransaction) =>
+          t.id === txnId
+            ? {
+                ...t,
+                status: newStatus as any,
+                riskScore: action === 'Clear' ? 12 : t.riskScore,
+              }
+            : t
+        ),
+      };
+    });
   };
 
   const totalSettledInr = transactionAggregates?.settledVolumeInr ?? 0;
@@ -300,7 +330,23 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1 bg-[#141414] border border-[#3A3A3A] rounded-xl p-1">
+            {(['30D', '90D', 'YTD', 'ALL'] as DateRangePreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setDatePreset(preset)}
+                className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+                  datePreset === preset
+                    ? 'bg-[#D4A017] text-[#1A1A1A]'
+                    : 'text-[#9CA3AF] hover:text-[#FAF7F0]'
+                }`}
+              >
+                {preset === 'ALL' ? 'All History' : preset}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => loadAllData()}
             disabled={loading}
@@ -320,20 +366,64 @@ const FinanceAnalystDashboard: React.FC<FinanceAnalystDashboardProps> = ({
         </div>
       </div>
 
-      {dbError && (
+      {/* Per-Domain Telemetry Health Strip */}
+      <div className="flex flex-wrap items-center gap-2 px-1">
+        <WidgetStatusBadge label="Transactions" status={tAggLoading ? 'LOADING' : domainStatuses.txAgg} />
+        <WidgetStatusBadge label="Fraud Aggregates" status={fAggLoading ? 'LOADING' : domainStatuses.fraudAgg} />
+        <WidgetStatusBadge label="Fraud Queue" status={fListLoading ? 'LOADING' : domainStatuses.fraudCases} />
+        <WidgetStatusBadge label="KYC Queue" status={kycLoading ? 'LOADING' : domainStatuses.kycAgg} />
+      </div>
+
+      {actionError && (
         <div className="rounded-xl p-3.5 bg-red-950/60 border border-red-500/50 text-red-200 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={16} className="text-red-400 shrink-0" />
-            <span>Finance Telemetry Error: {dbError}</span>
-          </div>
-          <button
-            onClick={() => loadAllData()}
-            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
-          >
-            Retry
-          </button>
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="text-[10px] underline shrink-0">Dismiss</button>
         </div>
       )}
+
+      {/* Isolated Per-Widget Failure / Timeout Notices */}
+      <div className="space-y-2">
+        {!tAggLoading && domainStatuses.txAgg !== 'OPERATIONAL' && transactionAggregates?.error && (
+          <WidgetFailureNotice
+            widgetName="Transactions Analytics"
+            status={domainStatuses.txAgg}
+            error={transactionAggregates.error}
+            onRetry={() => refetchTxAgg()}
+            isRetrying={tAggFetching}
+            compact
+          />
+        )}
+        {!fAggLoading && domainStatuses.fraudAgg !== 'OPERATIONAL' && fraudAggregates?.error && (
+          <WidgetFailureNotice
+            widgetName="Fraud Aggregates"
+            status={domainStatuses.fraudAgg}
+            error={fraudAggregates.error}
+            onRetry={() => refetchFraudAgg()}
+            isRetrying={fAggFetching}
+            compact
+          />
+        )}
+        {!fListLoading && domainStatuses.fraudCases !== 'OPERATIONAL' && fResult?.error && (
+          <WidgetFailureNotice
+            widgetName="Suspicious Transactions Queue"
+            status={domainStatuses.fraudCases}
+            error={fResult.error}
+            onRetry={() => refetchFraudCases()}
+            isRetrying={fListFetching}
+            compact
+          />
+        )}
+        {!kycLoading && domainStatuses.kycAgg !== 'OPERATIONAL' && kycAggregates?.error && (
+          <WidgetFailureNotice
+            widgetName="KYC Review Queue"
+            status={domainStatuses.kycAgg}
+            error={kycAggregates.error}
+            onRetry={() => refetchKycAgg()}
+            isRetrying={kycFetching}
+            compact
+          />
+        )}
+      </div>
 
       {/* 5 KPI Cards: Monitored Transactions, Fraud Prevented, AML Alerts, Risk Score, KYC Queue */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">

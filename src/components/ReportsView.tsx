@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { FinovaLogo } from './FinovaLogo';
 import { ThreeDColumnChart } from './charts3d/ThreeDColumnChart';
 import { ThreeDDonutChart } from './charts3d/ThreeDDonutChart';
@@ -10,11 +11,13 @@ import {
   fetchFraudAggregatesResultFromDb,
   fetchProfilesResultFromDb,
   fetchTransactionsResultFromDb,
-  TransactionAggregates,
-  FraudAggregates,
   canRoleAccessFraudTelemetry,
+  DateRangePreset,
+  getDefaultBoundedDateRange,
+  mapResultStateToTelemetryStatus,
 } from '../services/finovaDatabase';
 import { CustomerTransaction, UserAccount } from '../data/finovaDatasets';
+import { WidgetFailureNotice, WidgetStatusBadge } from './common/WidgetTelemetryStatus';
 
 interface ReportsViewProps {
   currentUser?: UserAccount;
@@ -24,13 +27,8 @@ const ReportsView: React.FC<ReportsViewProps> = ({ currentUser }) => {
   const [reportType, setReportType] = useState<'EXECUTIVE' | 'AML_RISK' | 'CUSTOMER_WEALTH'>(
     'EXECUTIVE'
   );
-  const [loading, setLoading] = useState(false);
-  const [dbError, setDbError] = useState<string | null>(null);
-  const [queryLatencyMs, setQueryLatencyMs] = useState<number | null>(null);
-  const [aggregates, setAggregates] = useState<TransactionAggregates | null>(null);
-  const [fraudAggregates, setFraudAggregates] = useState<FraudAggregates | null>(null);
-  const [profiles, setProfiles] = useState<UserAccount[]>([]);
-  const [transactions, setTransactions] = useState<CustomerTransaction[]>([]);
+  const [datePreset, setDatePreset] = useState<DateRangePreset>('YTD');
+  const dateRange = useMemo(() => getDefaultBoundedDateRange(datePreset), [datePreset]);
 
   const tenantId =
     currentUser?.role === 'SUPER_ADMIN'
@@ -39,57 +37,86 @@ const ReportsView: React.FC<ReportsViewProps> = ({ currentUser }) => {
   const fraudAuthorized = canRoleAccessFraudTelemetry(currentUser?.role);
   const profilesAuthorized =
     currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN';
+  const customerUserId = currentUser?.role === 'CUSTOMER' && currentUser?.id ? currentUser.id : undefined;
 
-  const loadReportData = React.useCallback(async () => {
-    setLoading(true);
-    setDbError(null);
-    const t0 = performance.now();
-    try {
-      const txOptions =
-        currentUser?.role === 'CUSTOMER' && currentUser?.id
-          ? { userId: currentUser.id }
-          : undefined;
+  const { data: aggregates, isLoading: aggLoading, isFetching: aggFetching, refetch: refetchAgg } = useQuery({
+    queryKey: ['report-tx-agg', tenantId, customerUserId, dateRange],
+    queryFn: async ({ signal }) => {
+      const t0 = performance.now();
+      const res = await fetchTransactionAggregatesResultFromDb(tenantId, {
+        userId: customerUserId,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      });
+      return { res, latencyMs: Math.round(performance.now() - t0) };
+    },
+    select: (wrapped) => wrapped,
+  });
 
-      const [aggRes, fraudRes, profRes, txnRes] = await Promise.all([
-        fetchTransactionAggregatesResultFromDb(tenantId, txOptions),
-        fraudAuthorized
-          ? fetchFraudAggregatesResultFromDb(tenantId)
-          : Promise.resolve(null),
-        profilesAuthorized
-          ? fetchProfilesResultFromDb(tenantId === 'ALL' ? undefined : tenantId)
-          : Promise.resolve(null),
-        fetchTransactionsResultFromDb(tenantId, txOptions),
-      ]);
-      setQueryLatencyMs(Math.round(performance.now() - t0));
-      setAggregates(aggRes);
-      setFraudAggregates(fraudRes);
-      setProfiles(profRes?.data || (currentUser ? [currentUser] : []));
-      setTransactions(txnRes.data || []);
-      const errs = [aggRes.error, fraudRes?.error, profRes?.error, txnRes.error].filter(
-        (msg): msg is string => Boolean(msg)
-      );
-      if (errs.length > 0) {
-        setDbError(Array.from(new Set(errs)).join(' | '));
-      }
-    } catch (e: any) {
-      console.warn('Error loading report telemetry:', e);
-      setDbError(e?.message || 'Error loading report telemetry');
-      setQueryLatencyMs(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentUser, tenantId, fraudAuthorized, profilesAuthorized]);
+  const { data: fraudAggregates, isLoading: fLoading, isFetching: fFetching, refetch: refetchFraud } = useQuery({
+    queryKey: ['report-fraud-agg', tenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchFraudAggregatesResultFromDb(tenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      }),
+    enabled: fraudAuthorized,
+  });
 
-  useEffect(() => {
-    loadReportData();
-  }, [loadReportData]);
+  const { data: profRes, isLoading: pLoading, isFetching: pFetching, refetch: refetchProfiles } = useQuery({
+    queryKey: ['report-profiles', tenantId],
+    queryFn: ({ signal }) =>
+      fetchProfilesResultFromDb(tenantId === 'ALL' ? undefined : tenantId, undefined, {
+        countMode: 'estimated',
+        signal,
+      }),
+    enabled: profilesAuthorized,
+  });
+
+  const { data: txnRes, isLoading: txLoading, isFetching: txFetching, refetch: refetchTxns } = useQuery({
+    queryKey: ['report-tx-list', tenantId, customerUserId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchTransactionsResultFromDb(tenantId, {
+        userId: customerUserId,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        countMode: 'estimated',
+        signal,
+      }),
+  });
+
+  const aggData = aggregates?.res ?? null;
+  const queryLatencyMs = aggregates?.latencyMs ?? null;
+  const profiles: UserAccount[] = profRes?.data || (currentUser ? [currentUser] : []);
+  const transactions: CustomerTransaction[] = txnRes?.data || [];
+  const loading = aggLoading || (fraudAuthorized && fLoading) || (profilesAuthorized && pLoading) || txLoading;
+
+  const domainStatuses = useMemo(() => ({
+    txAgg: mapResultStateToTelemetryStatus(aggData?.state, aggData?.source, aggLoading),
+    fraudAgg: !fraudAuthorized
+      ? ('RESTRICTED' as const)
+      : mapResultStateToTelemetryStatus(fraudAggregates?.state, fraudAggregates?.source, fLoading),
+    profiles: !profilesAuthorized
+      ? ('RESTRICTED' as const)
+      : mapResultStateToTelemetryStatus(profRes?.state, profRes?.source, pLoading),
+    txList: mapResultStateToTelemetryStatus(txnRes?.state, txnRes?.source, txLoading),
+  }), [aggData, aggLoading, fraudAuthorized, fraudAggregates, fLoading, profilesAuthorized, profRes, pLoading, txnRes, txLoading]);
+
+  const loadReportData = () => {
+    refetchAgg();
+    if (fraudAuthorized) refetchFraud();
+    if (profilesAuthorized) refetchProfiles();
+    refetchTxns();
+  };
 
   const handlePrint = () => {
     window.print();
   };
 
-  const totalSettledUsd = aggregates?.settledVolumeUsd ?? 0;
-  const totalSettledCount = aggregates?.settledCount ?? 0;
+  const totalSettledUsd = aggData?.settledVolumeUsd ?? 0;
+  const totalSettledCount = aggData?.settledCount ?? 0;
   const totalUsersCount = profiles.length;
   const preventedLossUsd = fraudAggregates?.preventedVolumeUsd ?? 0;
   const amlBreachesCount = fraudAggregates?.frozenCount ?? 0;
@@ -120,7 +147,24 @@ const ReportsView: React.FC<ReportsViewProps> = ({ currentUser }) => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 bg-[#111111] border border-[#D4A017]/30 rounded-xl p-1">
+            {(['YTD', 'ALL'] as DateRangePreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setDatePreset(preset)}
+                className={`px-2.5 py-1 text-[10px] font-mono font-bold rounded-lg transition-colors ${
+                  datePreset === preset
+                    ? 'bg-[#D4A017] text-[#111111]'
+                    : 'text-[#D4A017] hover:text-[#FAF7F0]'
+                }`}
+              >
+                {preset === 'ALL' ? 'All History' : 'YTD'}
+              </button>
+            ))}
+          </div>
+
           <div className="flex bg-[#111111] p-1 rounded-xl border border-[#D4A017]/30">
             <button
               onClick={() => setReportType('EXECUTIVE')}
@@ -172,20 +216,56 @@ const ReportsView: React.FC<ReportsViewProps> = ({ currentUser }) => {
         </div>
       </div>
 
-      {dbError && (
-        <div className="rounded-xl p-3.5 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={15} className="text-red-400 shrink-0" />
-            <span>Report Telemetry Warning: {dbError}</span>
-          </div>
-          <button
-            onClick={loadReportData}
-            className="px-3 py-1 rounded-lg bg-[#111111] border border-red-400/50 text-red-200 text-[10px] shrink-0"
-          >
-            Retry
-          </button>
-        </div>
-      )}
+      {/* Per-Source Telemetry Status */}
+      <div className="flex flex-wrap items-center gap-2">
+        <WidgetStatusBadge label="Transactions Summary" status={aggLoading ? 'LOADING' : domainStatuses.txAgg} />
+        <WidgetStatusBadge label="Ledger Rows" status={txLoading ? 'LOADING' : domainStatuses.txList} />
+        <WidgetStatusBadge label="AML Risk" status={fLoading ? 'LOADING' : domainStatuses.fraudAgg} />
+        <WidgetStatusBadge label="Profiles" status={pLoading ? 'LOADING' : domainStatuses.profiles} />
+      </div>
+
+      <div className="space-y-2">
+        {!aggLoading && domainStatuses.txAgg !== 'OPERATIONAL' && aggData?.error && (
+          <WidgetFailureNotice
+            widgetName="Executive Settlement Aggregates"
+            status={domainStatuses.txAgg}
+            error={aggData.error}
+            onRetry={() => refetchAgg()}
+            isRetrying={aggFetching}
+            compact
+          />
+        )}
+        {!txLoading && domainStatuses.txList !== 'OPERATIONAL' && txnRes?.error && (
+          <WidgetFailureNotice
+            widgetName="Transactions Breakdown"
+            status={domainStatuses.txList}
+            error={txnRes.error}
+            onRetry={() => refetchTxns()}
+            isRetrying={txFetching}
+            compact
+          />
+        )}
+        {fraudAuthorized && !fLoading && domainStatuses.fraudAgg !== 'OPERATIONAL' && fraudAggregates?.error && (
+          <WidgetFailureNotice
+            widgetName="AML Forensic Aggregates"
+            status={domainStatuses.fraudAgg}
+            error={fraudAggregates.error}
+            onRetry={() => refetchFraud()}
+            isRetrying={fFetching}
+            compact
+          />
+        )}
+        {profilesAuthorized && !pLoading && domainStatuses.profiles !== 'OPERATIONAL' && profRes?.error && (
+          <WidgetFailureNotice
+            widgetName="Profiles Directory"
+            status={domainStatuses.profiles}
+            error={profRes.error}
+            onRetry={() => refetchProfiles()}
+            isRetrying={pFetching}
+            compact
+          />
+        )}
+      </div>
 
       {/* Printable Institutional Report Document */}
       <div className="rounded-2xl bg-[#1E1E1E] border border-[#F5C542]/40 p-6 sm:p-10 shadow-[0_20px_60px_rgba(0,0,0,0.8)] space-y-8">
@@ -229,7 +309,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({ currentUser }) => {
               <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
                 <span className="text-[#6B7280]">TOTAL TRANSACTIONS</span>
                 <p className="font-cinzel text-lg font-bold text-[#FFF8E7] mt-1">
-                  {aggregates ? aggregates.totalCount.toLocaleString() : '0'}
+                  {aggData ? aggData.totalCount.toLocaleString() : '0'}
                 </p>
                 <span className="text-[#C08A00] text-[10px]">Verified Records</span>
               </div>
@@ -355,15 +435,15 @@ const ReportsView: React.FC<ReportsViewProps> = ({ currentUser }) => {
               <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
                 <span className="text-[#6B7280]">LIQUID BALANCE</span>
                 <p className="font-cinzel text-lg font-bold text-[#F5C542] mt-1">
-                  {aggregates && aggregates.totalCount > 0
-                    ? `$${aggregates.netLiquidBalanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  {aggData && aggData.totalCount > 0
+                    ? `$${aggData.netLiquidBalanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                     : '$0.00'}
                 </p>
               </div>
               <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">
                 <span className="text-[#6B7280]">SETTLED TRANSACTIONS</span>
                 <p className="font-cinzel text-lg font-bold text-[#C08A00] mt-1">
-                  {aggregates?.settledCount ?? 0}
+                  {aggData?.settledCount ?? 0}
                 </p>
               </div>
               <div className="p-3.5 rounded-xl bg-[#141414] border border-[#D4A017]/30">

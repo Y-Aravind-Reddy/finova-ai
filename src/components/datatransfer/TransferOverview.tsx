@@ -1,12 +1,18 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { transferIntelligenceService } from '../../services/transferIntelligenceService';
+import {
+  getDefaultBoundedDateRange,
+  isPermissionDeniedError,
+  isStatementTimeoutError,
+} from '../../services/finovaDatabase';
 import { DataTransferFilterBar, DataTransferFilters } from './DataTransferFilterBar';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
 import { ModuleSkeleton } from '../dashboards/DashboardSkeletons';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 import { 
   DollarSign, 
   CheckCircle2, 
@@ -20,21 +26,32 @@ import {
 } from 'lucide-react';
 
 const TransferOverview: React.FC = () => {
-  const [filters, setFilters] = useState<DataTransferFilters>({
-    startDate: '',
-    endDate: '',
+  const [filters, setFilters] = useState<DataTransferFilters>(() => ({
+    ...getDefaultBoundedDateRange('YTD'),
     currency: 'ALL',
     type: 'ALL',
     channel: 'ALL',
     status: 'ALL',
     search: '',
     tenantId: 'ALL'
+  }));
+
+  const { data: aggregates, isLoading, isFetching, isError, error, refetch } = useQuery({
+    queryKey: ['transfer-overview', filters],
+    queryFn: ({ signal }) => transferIntelligenceService.fetchOverviewAggregates(filters.tenantId, { ...filters, signal }),
   });
 
-  const { data: aggregates, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['transfer-overview', filters],
-    queryFn: () => transferIntelligenceService.fetchOverviewAggregates(filters.tenantId, filters),
-  });
+  const overviewStatus = isLoading
+    ? 'LOADING'
+    : isError
+    ? isStatementTimeoutError(error)
+      ? 'TIMEOUT'
+      : isPermissionDeniedError(error)
+      ? 'RESTRICTED'
+      : 'DEGRADED'
+    : aggregates?.source === 'supabase'
+    ? 'OPERATIONAL'
+    : 'UNAVAILABLE';
 
   if (isLoading && !aggregates) {
     return (
@@ -145,11 +162,14 @@ const TransferOverview: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="font-cinzel text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
-            Transfer Intelligence Center
-          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="font-cinzel text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
+              Transfer Intelligence Center
+            </h1>
+            <WidgetStatusBadge status={overviewStatus} />
+          </div>
           <p className="text-xs text-[#9CA3AF] font-mono mt-1 uppercase tracking-widest flex items-center gap-2">
-            Institutional Telemetry • Node {aggregates?.source === 'supabase' ? 'Live' : 'Fallback'} • Secure Environment
+            Institutional Telemetry • Node {aggregates?.source === 'supabase' ? 'Live' : overviewStatus} • Secure Environment
             {aggregates?.isPartial && (
               <span className="px-1.5 py-0.5 rounded bg-amber-950/40 text-amber-400 border border-amber-500/30 text-[10px] animate-pulse">
                 Partial Data
@@ -173,18 +193,13 @@ const TransferOverview: React.FC = () => {
       />
 
       {isError && (
-        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={16} className="text-red-400 shrink-0" />
-            <span>Transfer Telemetry Error: {(error as Error)?.message || 'Unable to query transfer overview aggregates.'}</span>
-          </div>
-          <button
-            onClick={() => refetch()}
-            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
-          >
-            Retry
-          </button>
-        </div>
+        <WidgetFailureNotice
+          widgetName="Transfer Overview Aggregates"
+          status={isStatementTimeoutError(error) ? 'TIMEOUT' : isPermissionDeniedError(error) ? 'RESTRICTED' : 'DEGRADED'}
+          error={(error as Error)?.message || 'Unable to query transfer overview aggregates.'}
+          onRetry={() => refetch()}
+          isRetrying={isFetching}
+        />
       )}
 
       {/* KPI Grid */}

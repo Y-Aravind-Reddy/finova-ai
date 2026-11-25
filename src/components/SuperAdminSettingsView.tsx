@@ -392,9 +392,9 @@ const SuperAdminSettingsView: React.FC<SuperAdminSettingsViewProps> = ({
                           <button
                             onClick={() => onImpersonateUser(u)}
                             className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-[#D4A017] to-[#F5C542] text-[#111111] font-bold text-[11px] hover:brightness-110 shadow-[0_0_8px_rgba(212,160,23,0.3)]"
-                            title={`Switch Active Session to ${u.role.replace('_', ' ')} for audit`}
+                            title={`Preview ${u.role.replace('_', ' ')} UI layout in Read-Only mode (active SUPER_ADMIN session unchanged)`}
                           >
-                            Switch to {u.role.replace('_', ' ')}
+                            Preview UI ({u.role.replace('_', ' ')})
                           </button>
                         )}
                         <button

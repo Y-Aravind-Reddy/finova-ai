@@ -1,9 +1,15 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { transferIntelligenceService } from '../../services/transferIntelligenceService';
+import {
+  getDefaultBoundedDateRange,
+  isPermissionDeniedError,
+  isStatementTimeoutError,
+} from '../../services/finovaDatabase';
 import { DataTransferFilterBar, DataTransferFilters } from './DataTransferFilterBar';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 import { 
   CheckCircle2, 
   Clock, 
@@ -14,25 +20,24 @@ import {
 } from 'lucide-react';
 
 const Reconciliation: React.FC = () => {
-  const [filters, setFilters] = useState<DataTransferFilters>({
-    startDate: '',
-    endDate: '',
+  const [filters, setFilters] = useState<DataTransferFilters>(() => ({
+    ...getDefaultBoundedDateRange('YTD'),
     currency: 'ALL',
     type: 'ALL',
     channel: 'ALL',
     status: 'ALL',
     search: '',
     tenantId: 'ALL'
-  });
+  }));
 
-  const { data: metrics, isLoading, isError, error, refetch } = useQuery({
+  const { data: metrics, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['reconciliation-metrics', filters],
-    queryFn: () => transferIntelligenceService.fetchReconciliationMetrics(filters.tenantId, filters),
+    queryFn: ({ signal }) => transferIntelligenceService.fetchReconciliationMetrics(filters.tenantId, { ...filters, signal }),
   });
 
-  const { data: txData, isError: txIsError, error: txErrObj, refetch: refetchTx } = useQuery({
+  const { data: txData, isFetching: txFetching, isError: txIsError, error: txErrObj, refetch: refetchTx } = useQuery({
     queryKey: ['reconciliation-records', filters],
-    queryFn: () => transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, pageSize: 10 }),
+    queryFn: ({ signal }) => transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, pageSize: 10, signal }),
   });
 
   const kpis = [
@@ -42,43 +47,49 @@ const Reconciliation: React.FC = () => {
     { title: 'Recon. Difference', value: `$${((metrics?.totalDifference || 0) / 1000).toFixed(1)}K`, sub: 'Aggregate variance', icon: <DollarSign size={20} /> },
   ];
 
-  const combinedErr = isError
-    ? (error as Error)?.message
-    : txIsError
-    ? (txErrObj as Error)?.message
-    : null;
+  const activeErrorObj = isError ? error : txIsError ? txErrObj : null;
+  const combinedErr = activeErrorObj ? (activeErrorObj as Error)?.message : null;
+  const reconStatus = isLoading
+    ? 'LOADING'
+    : activeErrorObj
+    ? isStatementTimeoutError(activeErrorObj)
+      ? 'TIMEOUT'
+      : isPermissionDeniedError(activeErrorObj)
+      ? 'RESTRICTED'
+      : 'DEGRADED'
+    : metrics?.source === 'supabase'
+    ? 'OPERATIONAL'
+    : 'UNAVAILABLE';
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
-      <div>
-        <h1 className="font-cinzel text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
-          Banking Reconciliation
-        </h1>
-        <p className="text-xs text-[#9CA3AF] font-mono mt-1 uppercase tracking-widest">
-          Institutional Ledger Integrity • Multi-Rail Match Engine
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="font-cinzel text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
+            Banking Reconciliation
+          </h1>
+          <p className="text-xs text-[#9CA3AF] font-mono mt-1 uppercase tracking-widest">
+            Institutional Ledger Integrity • Multi-Rail Match Engine
+          </p>
+        </div>
+        <WidgetStatusBadge label="Reconciliation" status={reconStatus} />
       </div>
 
       <DataTransferFilterBar 
         filters={filters} 
         onFilterChange={setFilters} 
         onRefresh={() => { refetch(); refetchTx(); }} 
-        isLoading={isLoading} 
+        isLoading={isLoading || isFetching || txFetching} 
       />
 
-      {combinedErr && (
-        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={16} className="text-red-400 shrink-0" />
-            <span>Reconciliation Telemetry Error: {combinedErr}</span>
-          </div>
-          <button
-            onClick={() => { refetch(); refetchTx(); }}
-            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
-          >
-            Retry
-          </button>
-        </div>
+      {combinedErr && reconStatus !== 'LOADING' && (
+        <WidgetFailureNotice
+          widgetName={isError ? 'Reconciliation Metrics' : 'Reconciliation Ledger'}
+          status={reconStatus === 'OPERATIONAL' ? 'DEGRADED' : reconStatus}
+          error={combinedErr}
+          onRetry={() => { refetch(); refetchTx(); }}
+          isRetrying={isFetching || txFetching}
+        />
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -1,0 +1,91 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 3186 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Account Closure Policy) Tj T*
+() Tj T*
+(Apex Global Bank - Retail and Institutional Banking) Tj T*
+(Document ID: POL-ACC-004 | Version 3.1 | Owner: Operations Control) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This policy defines how customer accounts are closed, whether the closure is requested by the) Tj T*
+(customer or initiated by the bank, so that balances are settled correctly, records are) Tj T*
+(retained, and no closure is used to hide suspicious activity.) Tj T*
+() Tj T*
+(2. Customer-Requested Closure) Tj T*
+() Tj T*
+(1. The customer submits a closure request through net banking, the mobile app, or a signed) Tj T*
+(branch form.) Tj T*
+(2. Support verifies identity using two factors: registered mobile OTP plus one of date of) Tj T*
+(birth, PAN, or the last transaction amount.) Tj T*
+(3. The account must have no pending debits, no open disputes, no active standing instructions,) Tj T*
+(and no linked loan or overdraft balance.) Tj T*
+(4. Any remaining credit balance is transferred to a verified account in the customer's own) Tj T*
+(name. Cash payout is allowed only up to INR 50,000 at a branch.) Tj T*
+(5. Cheque books and debit cards are cancelled in the core system on the same day.) Tj T*
+(6. The customer receives a closure confirmation letter within 2 business days.) Tj T*
+() Tj T*
+(Standard turnaround: closure is completed within 5 business days of a complete request.) Tj T*
+() Tj T*
+(3. Bank-Initiated Closure) Tj T*
+() Tj T*
+(The bank may close an account when:) Tj T*
+() Tj T*
+(- KYC remains incomplete 90 days after the re-KYC due date, after three written reminders.) Tj T*
+(- The account is dormant for more than 24 months with a zero balance.) Tj T*
+(- The account is linked to confirmed fraud or a regulatory directive.) Tj T*
+() Tj T*
+(A bank-initiated closure requires approval from a Branch Manager and the Compliance Officer.) Tj T*
+(The customer receives at least 30 days' written notice, except where a regulatory or) Tj T*
+(law-enforcement directive requires immediate action.) Tj T*
+() Tj T*
+(4. Restrictions) Tj T*
+() Tj T*
+(- An account under an open fraud case, AML review, or legal hold must not be closed. The) Tj T*
+(closure request is parked until Compliance releases it.) Tj T*
+(- Accounts with a risk score of 80 or above must be reviewed by the Fraud Operations team) Tj T*
+(before closure.) Tj T*
+(- Joint accounts require consent from all holders.) Tj T*
+() Tj T*
+(5. Record Retention) Tj T*
+() Tj T*
+(Account opening documents, KYC records and transaction history are retained for 10 years after) Tj T*
+(the closure date. Closed accounts are flagged read-only and cannot be reactivated; a returning) Tj T*
+(customer must open a new account with fresh KYC.) Tj T*
+() Tj T*
+(6. Roles and Responsibilities) Tj T*
+() Tj T*
+(- Support Executive: verifies identity, checks closure prerequisites, raises the request.) Tj T*
+(- Operations: settles balances, cancels instruments, closes the account in core banking.) Tj T*
+(- Compliance: approves bank-initiated closures and releases accounts on hold.) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000212 00000 n 
+0000003450 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+3576
+%%EOF

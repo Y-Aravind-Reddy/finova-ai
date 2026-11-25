@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   UserAccount,
   UserRole,
@@ -7,7 +8,6 @@ import {
   TenantWorkspace,
   getStoredTenants,
   toggleTenantStatus,
-  getPlatformSaaSMetrics,
   getTenantById,
 } from '../../data/tenantStore';
 import {
@@ -17,9 +17,11 @@ import {
   fetchFraudAggregatesResultFromDb,
   fetchTransactionAggregatesResultFromDb,
   fetchSupportAggregatesResultFromDb,
-  TransactionAggregates,
-  SupportAggregates,
+  DateRangePreset,
+  getDefaultBoundedDateRange,
+  mapResultStateToTelemetryStatus,
 } from '../../services/finovaDatabase';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
@@ -71,74 +73,68 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [filterRole, setFilterRole] = useState<string>('ALL');
 
   // Multi-Tenant Inspector State
-  const [tenants, setTenants] = useState<TenantWorkspace[]>(getStoredTenants());
+  const [fallbackTenants, setFallbackTenants] = useState<TenantWorkspace[]>(getStoredTenants());
   const [internalTenantId, setInternalTenantId] = useState<string>('ALL');
+  const [datePreset, setDatePreset] = useState<DateRangePreset>('YTD');
   const activeTenantId = externalSelectedTenantId || internalTenantId;
+  const dateRange = useMemo(() => getDefaultBoundedDateRange(datePreset), [datePreset]);
 
   const currentInspectedTenant = activeTenantId !== 'ALL' ? getTenantById(activeTenantId) : undefined;
-  const saasMetrics = getPlatformSaaSMetrics();
-
-  // Real Database Metrics State
-  const [dbFraudPreventedInr, setDbFraudPreventedInr] = useState<number>(0);
-  const [dbFraudCaseCount, setDbFraudCaseCount] = useState<number>(0);
-  const [dbSettledVolumeInr, setDbSettledVolumeInr] = useState<number>(0);
-  const [dbTxnCount, setDbTxnCount] = useState<number>(0);
-  const [dbSupportTicketCount, setDbSupportTicketCount] = useState<number>(0);
-  const [dbOpenSupportTickets, setDbOpenSupportTickets] = useState<number>(0);
-  const [dbSupportSla, setDbSupportSla] = useState<number>(0);
-  const [transactionAggregates, setTransactionAggregates] = useState<TransactionAggregates | null>(null);
-  const [supportAggregates, setSupportAggregates] = useState<SupportAggregates | null>(null);
-  const [dbLoading, setDbLoading] = useState<boolean>(false);
-  const [dbError, setDbError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<{ type: 'error' | 'info'; message: string } | null>(null);
   const [pendingDeleteUserId, setPendingDeleteUserId] = useState<string | null>(null);
 
-  const loadSuperAdminData = useCallback(async () => {
-    setDbLoading(true);
-    setDbError(null);
-    try {
-      const [wRes, fAgg, tAgg, sAgg] = await Promise.all([
-        fetchTenantWorkspacesResultFromDb(),
-        fetchFraudAggregatesResultFromDb('ALL'),
-        fetchTransactionAggregatesResultFromDb('ALL'),
-        fetchSupportAggregatesResultFromDb('ALL'),
-      ]);
+  const { data: workspacesRes, isLoading: wLoading, isFetching: wFetching, refetch: refetchWorkspaces } = useQuery({
+    queryKey: ['super-admin-workspaces'],
+    queryFn: () => fetchTenantWorkspacesResultFromDb(),
+  });
 
-      if (wRes.data && wRes.data.length > 0) {
-        setTenants(wRes.data);
-      }
+  const { data: fAgg, isLoading: fLoading, isFetching: fFetching, refetch: refetchFraud } = useQuery({
+    queryKey: ['super-admin-fraud-agg', activeTenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchFraudAggregatesResultFromDb(activeTenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      }),
+  });
 
-      setDbFraudPreventedInr(fAgg.preventedVolumeInr);
-      setDbFraudCaseCount(fAgg.totalCases);
-      setDbSettledVolumeInr(tAgg.settledVolumeInr);
-      setDbTxnCount(tAgg.totalCount);
-      setDbSupportTicketCount(sAgg.totalTickets);
-      setDbOpenSupportTickets(sAgg.openCount);
-      setDbSupportSla(sAgg.slaCompliancePct);
-      setTransactionAggregates(tAgg);
-      setSupportAggregates(sAgg);
+  const { data: transactionAggregates, isLoading: tLoading, isFetching: tFetching, refetch: refetchTx } = useQuery({
+    queryKey: ['super-admin-tx-agg', activeTenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchTransactionAggregatesResultFromDb(activeTenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      }),
+  });
 
-      const errs = [wRes.error, fAgg.error, tAgg.error, sAgg.error].filter(
-        (msg): msg is string => Boolean(msg)
-      );
-      if (errs.length > 0) {
-        setDbError(Array.from(new Set(errs)).join(' | '));
-      }
-    } catch (e: any) {
-      console.warn('Super Admin DB query note:', e);
-      setDbError(e?.message || 'Database query error');
-    } finally {
-      setDbLoading(false);
-    }
-  }, []);
+  const { data: supportAggregates, isLoading: sLoading, isFetching: sFetching, refetch: refetchSupport } = useQuery({
+    queryKey: ['super-admin-support-agg', activeTenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchSupportAggregatesResultFromDb(activeTenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      }),
+  });
 
+  const tenants = workspacesRes?.data && workspacesRes.data.length > 0 ? workspacesRes.data : fallbackTenants;
+  const dbFraudPreventedInr = fAgg?.preventedVolumeInr ?? 0;
+  const dbFraudCaseCount = fAgg?.totalCases ?? 0;
+  const dbSettledVolumeInr = transactionAggregates?.settledVolumeInr ?? 0;
+  const dbTxnCount = transactionAggregates?.totalCount ?? 0;
+  const dbSupportTicketCount = supportAggregates?.totalTickets ?? 0;
+  const dbOpenSupportTickets = supportAggregates?.openCount ?? 0;
+  const dbSupportSla = supportAggregates?.slaCompliancePct ?? 0;
 
-  useEffect(() => {
-    loadSuperAdminData();
-    if (onRefreshUsers) {
-      onRefreshUsers();
-    }
-  }, [loadSuperAdminData, onRefreshUsers]);
+  const domainStatuses = useMemo(() => ({
+    workspaces: mapResultStateToTelemetryStatus(workspacesRes?.state, workspacesRes?.source, wLoading),
+    fraud: mapResultStateToTelemetryStatus(fAgg?.state, fAgg?.source, fLoading),
+    transactions: mapResultStateToTelemetryStatus(transactionAggregates?.state, transactionAggregates?.source, tLoading),
+    support: mapResultStateToTelemetryStatus(supportAggregates?.state, supportAggregates?.source, sLoading),
+  }), [workspacesRes, wLoading, fAgg, fLoading, transactionAggregates, tLoading, supportAggregates, sLoading]);
+
+  const dbLoading = wLoading || fLoading || tLoading || sLoading;
 
   // Count live Supabase records vs demo
   const liveCount = users.filter((u) => u.authSource === 'supabase').length;
@@ -151,7 +147,7 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const handleToggleTenant = (tId: string) => {
     const updated = toggleTenantStatus(tId);
     if (updated) {
-      setTenants(getStoredTenants());
+      setFallbackTenants(getStoredTenants());
     }
   };
 
@@ -282,8 +278,26 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </p>
         </div>
 
-        {/* Tenant Switcher & Quick Actions */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full lg:w-auto">
+        {/* Tenant Switcher, Temporal Window & Quick Actions */}
+        <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3 w-full lg:w-auto">
+          {/* Bounded Temporal Preset Selector */}
+          <div className="flex items-center gap-1 bg-[#121212] border border-[#3A3A3A] rounded-xl p-1">
+            {(['30D', '90D', 'YTD', 'ALL'] as DateRangePreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setDatePreset(preset)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+                  datePreset === preset
+                    ? 'bg-[#D4A017] text-[#1A1A1A]'
+                    : 'text-[#9CA3AF] hover:text-[#FAF7F0]'
+                }`}
+              >
+                {preset === 'ALL' ? 'All History' : preset}
+              </button>
+            ))}
+          </div>
+
           {/* Tenant Inspector Selector */}
           <div className="bg-[#121212] p-1.5 rounded-xl border border-[#3A3A3A] flex items-center gap-2 w-full sm:w-auto">
             <Building2 size={15} className="text-[#D4A017] ml-1 shrink-0" />
@@ -327,6 +341,14 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         </div>
       </div>
 
+      {/* Per-Domain Telemetry Health Bar */}
+      <div className="flex flex-wrap items-center gap-2 px-1">
+        <WidgetStatusBadge label="Workspaces" status={wLoading ? 'LOADING' : domainStatuses.workspaces} />
+        <WidgetStatusBadge label="Transactions" status={tLoading ? 'LOADING' : domainStatuses.transactions} />
+        <WidgetStatusBadge label="Fraud" status={fLoading ? 'LOADING' : domainStatuses.fraud} />
+        <WidgetStatusBadge label="Support" status={sLoading ? 'LOADING' : domainStatuses.support} />
+      </div>
+
       {/* Inspected Tenant Banner if specific tenant selected */}
       {currentInspectedTenant && (
         <div className="p-4 rounded-xl bg-[#262626] border border-[#D4A017]/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
@@ -358,36 +380,49 @@ const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         </div>
       )}
 
-      {/* Database / RLS Status Banner */}
-      {dbError && (
-        <div className="rounded-xl p-4 bg-[#1E1A10] border border-[#D4A017]/50 text-[#FAF7F0] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
-          <div className="flex items-start gap-3">
-            <ShieldAlert size={18} className="text-[#D4A017] shrink-0 mt-0.5" />
-            <div>
-              <p className="font-bold text-[#E6C78B] text-xs">
-                Platform Root Database Telemetry Notice
-              </p>
-              <p className="text-[11px] text-[#FAF7F0]/80 mt-0.5 max-w-3xl">
-                {dbError}
-              </p>
-              <p className="text-[10px] text-[#9CA3AF] mt-1">
-                PostgreSQL Row-Level Security restricts table queries to authenticated sessions. Authenticate with a confirmed <code className="text-[#E6C78B]">SUPER_ADMIN</code> account to stream live global telemetry.
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => {
-              loadSuperAdminData();
-              if (onRefreshUsers) onRefreshUsers();
-            }}
-            disabled={dbLoading}
-            className="px-3 py-1.5 rounded-lg bg-[#121212] border border-[#D4A017]/60 text-[#D4A017] text-xs hover:bg-[#262626] flex items-center gap-1.5 shrink-0 transition-all disabled:opacity-50"
-          >
-            <RotateCw size={12} className={dbLoading ? 'animate-spin' : ''} />
-            <span>Retry Query</span>
-          </button>
-        </div>
-      )}
+      {/* Isolated Per-Domain Failure / Timeout Notices */}
+      <div className="space-y-2">
+        {!wLoading && domainStatuses.workspaces !== 'OPERATIONAL' && workspacesRes?.error && (
+          <WidgetFailureNotice
+            widgetName="Tenant Workspaces"
+            status={domainStatuses.workspaces}
+            error={workspacesRes.error}
+            onRetry={() => refetchWorkspaces()}
+            isRetrying={wFetching}
+            compact
+          />
+        )}
+        {!tLoading && domainStatuses.transactions !== 'OPERATIONAL' && transactionAggregates?.error && (
+          <WidgetFailureNotice
+            widgetName="Transactions Telemetry"
+            status={domainStatuses.transactions}
+            error={transactionAggregates.error}
+            onRetry={() => refetchTx()}
+            isRetrying={tFetching}
+            compact
+          />
+        )}
+        {!fLoading && domainStatuses.fraud !== 'OPERATIONAL' && fAgg?.error && (
+          <WidgetFailureNotice
+            widgetName="Fraud & AML Surveillance"
+            status={domainStatuses.fraud}
+            error={fAgg.error}
+            onRetry={() => refetchFraud()}
+            isRetrying={fFetching}
+            compact
+          />
+        )}
+        {!sLoading && domainStatuses.support !== 'OPERATIONAL' && supportAggregates?.error && (
+          <WidgetFailureNotice
+            widgetName="Support Telemetry"
+            status={domainStatuses.support}
+            error={supportAggregates.error}
+            onRetry={() => refetchSupport()}
+            isRetrying={sFetching}
+            compact
+          />
+        )}
+      </div>
 
       {actionNotice && (
         <div

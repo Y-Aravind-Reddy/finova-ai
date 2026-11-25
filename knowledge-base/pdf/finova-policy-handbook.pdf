@@ -1,0 +1,546 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R] /Count 10 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 582 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Finova Banking Policy Handbook) Tj T*
+() Tj T*
+(Apex Global Bank - all policy documents in one file.) Tj T*
+(Illustrative policies for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(Contents) Tj T*
+() Tj T*
+(1. Account Closure Policy) Tj T*
+(2. Anti-Money Laundering \(AML\) Escalation Policy) Tj T*
+(3. Fraud Case Handling Procedure) Tj T*
+(4. General Information for All Users) Tj T*
+(5. KYC Document Requirements) Tj T*
+(6. Customer Support SLA and Complaint Handling) Tj T*
+(7. Wire Transfer Approval Controls) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 3186 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Account Closure Policy) Tj T*
+() Tj T*
+(Apex Global Bank - Retail and Institutional Banking) Tj T*
+(Document ID: POL-ACC-004 | Version 3.1 | Owner: Operations Control) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This policy defines how customer accounts are closed, whether the closure is requested by the) Tj T*
+(customer or initiated by the bank, so that balances are settled correctly, records are) Tj T*
+(retained, and no closure is used to hide suspicious activity.) Tj T*
+() Tj T*
+(2. Customer-Requested Closure) Tj T*
+() Tj T*
+(1. The customer submits a closure request through net banking, the mobile app, or a signed) Tj T*
+(branch form.) Tj T*
+(2. Support verifies identity using two factors: registered mobile OTP plus one of date of) Tj T*
+(birth, PAN, or the last transaction amount.) Tj T*
+(3. The account must have no pending debits, no open disputes, no active standing instructions,) Tj T*
+(and no linked loan or overdraft balance.) Tj T*
+(4. Any remaining credit balance is transferred to a verified account in the customer's own) Tj T*
+(name. Cash payout is allowed only up to INR 50,000 at a branch.) Tj T*
+(5. Cheque books and debit cards are cancelled in the core system on the same day.) Tj T*
+(6. The customer receives a closure confirmation letter within 2 business days.) Tj T*
+() Tj T*
+(Standard turnaround: closure is completed within 5 business days of a complete request.) Tj T*
+() Tj T*
+(3. Bank-Initiated Closure) Tj T*
+() Tj T*
+(The bank may close an account when:) Tj T*
+() Tj T*
+(- KYC remains incomplete 90 days after the re-KYC due date, after three written reminders.) Tj T*
+(- The account is dormant for more than 24 months with a zero balance.) Tj T*
+(- The account is linked to confirmed fraud or a regulatory directive.) Tj T*
+() Tj T*
+(A bank-initiated closure requires approval from a Branch Manager and the Compliance Officer.) Tj T*
+(The customer receives at least 30 days' written notice, except where a regulatory or) Tj T*
+(law-enforcement directive requires immediate action.) Tj T*
+() Tj T*
+(4. Restrictions) Tj T*
+() Tj T*
+(- An account under an open fraud case, AML review, or legal hold must not be closed. The) Tj T*
+(closure request is parked until Compliance releases it.) Tj T*
+(- Accounts with a risk score of 80 or above must be reviewed by the Fraud Operations team) Tj T*
+(before closure.) Tj T*
+(- Joint accounts require consent from all holders.) Tj T*
+() Tj T*
+(5. Record Retention) Tj T*
+() Tj T*
+(Account opening documents, KYC records and transaction history are retained for 10 years after) Tj T*
+(the closure date. Closed accounts are flagged read-only and cannot be reactivated; a returning) Tj T*
+(customer must open a new account with fresh KYC.) Tj T*
+() Tj T*
+(6. Roles and Responsibilities) Tj T*
+() Tj T*
+(- Support Executive: verifies identity, checks closure prerequisites, raises the request.) Tj T*
+(- Operations: settles balances, cancels instruments, closes the account in core banking.) Tj T*
+(- Compliance: approves bank-initiated closures and releases accounts on hold.) Tj T*
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 2972 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Anti-Money Laundering \(AML\) Escalation Policy) Tj T*
+() Tj T*
+(Apex Global Bank - Financial Crime Compliance) Tj T*
+(Document ID: POL-AML-002 | Version 4.0 | Owner: Chief Compliance Officer) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This policy sets the mandatory thresholds and timelines for escalating suspicious activity) Tj T*
+(detected by transaction monitoring, staff observation, or customer reports.) Tj T*
+() Tj T*
+(2. Mandatory Escalation Thresholds) Tj T*
+() Tj T*
+(An alert must be escalated to the AML Investigations team when any of the following occur:) Tj T*
+() Tj T*
+(1. A single cash deposit or withdrawal of INR 10,00,000 or more.) Tj T*
+(2. Multiple cash transactions that together reach INR 10,00,000 or more within one calendar) Tj T*
+(month \(structuring\).) Tj T*
+(3. A cross-border transfer of USD 10,000 equivalent or more to or from a high-risk) Tj T*
+(jurisdiction.) Tj T*
+(4. A transaction monitoring risk score of 80 or above. These cases are also auto-frozen pending) Tj T*
+(review.) Tj T*
+(5. A risk score between 50 and 79 combined with any adverse media match or politically exposed) Tj T*
+(person \(PEP\) flag.) Tj T*
+(6. Rapid movement of funds: more than 80 percent of a credit moved out within 48 hours with no) Tj T*
+(clear business purpose.) Tj T*
+(7. Transactions inconsistent with the customer's declared income or business profile by more) Tj T*
+(than 3 times.) Tj T*
+() Tj T*
+(3. Escalation Timeline) Tj T*
+() Tj T*
+(- Level 1 \(Analyst\): reviews the alert within 24 hours and documents the rationale for closing) Tj T*
+(or escalating.) Tj T*
+(- Level 2 \(AML Investigations\): completes the investigation within 7 calendar days of) Tj T*
+(escalation.) Tj T*
+(- Level 3 \(Principal Officer\): decides whether to file a Suspicious Transaction Report \(STR\).) Tj T*
+(An STR must be filed with the Financial Intelligence Unit within 7 days of the suspicion being) Tj T*
+(confirmed.) Tj T*
+() Tj T*
+(4. Account Freeze Rules) Tj T*
+() Tj T*
+(- Risk score of 80 or above: debits are frozen automatically \(status "Frozen Escrow"\) until) Tj T*
+(Level 2 clears or confirms the case.) Tj T*
+(- A freeze longer than 30 days requires written approval from the Principal Officer.) Tj T*
+(- Credits may continue to post to a frozen account unless law enforcement instructs otherwise.) Tj T*
+() Tj T*
+(5. Tipping-Off Prohibition) Tj T*
+() Tj T*
+(Staff must never tell a customer that an alert, investigation or STR exists. Customer-facing) Tj T*
+(teams use the neutral wording: "Your transaction is under routine review.") Tj T*
+() Tj T*
+(6. Record Keeping) Tj T*
+() Tj T*
+(All alerts, investigation notes and STR decisions are retained for 10 years. Closed alerts must) Tj T*
+(contain a written rationale; "no issue found" alone is not acceptable.) Tj T*
+() Tj T*
+(7. Roles and Responsibilities) Tj T*
+() Tj T*
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 259 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(- Finance Analyst / AML Analyst: Level 1 review and documentation.) Tj T*
+(- Admin: ensures alert queues are staffed and SLA breaches are escalated.) Tj T*
+(- Principal Officer: STR decision and regulator communication.) Tj T*
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 2766 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Fraud Case Handling Procedure) Tj T*
+() Tj T*
+(Apex Global Bank - Fraud Risk Management) Tj T*
+(Document ID: PRC-FRD-003 | Version 3.0 | Owner: Head of Fraud Operations) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This procedure explains how fraud alerts raised by the surveillance engine or reported by) Tj T*
+(customers are triaged, investigated and resolved.) Tj T*
+() Tj T*
+(2. Case Statuses) Tj T*
+() Tj T*
+(- Flagged: raised by a surveillance rule; awaiting triage.) Tj T*
+(- In Review: assigned to an investigator.) Tj T*
+(- Frozen Escrow: funds held because the risk score is 80 or above, or an investigator ordered a) Tj T*
+(hold.) Tj T*
+(- Cleared: investigated and confirmed legitimate; any hold is released.) Tj T*
+(- Confirmed Fraud: fraud established; recovery and reporting begin.) Tj T*
+() Tj T*
+(3. Risk Tiers) Tj T*
+() Tj T*
+(- Critical \(risk score 80 to 100\): auto-freeze debits, triage within 1 hour.) Tj T*
+(- High \(risk score 50 to 79\): triage within 4 hours.) Tj T*
+(- Nominal \(below 50\): triage within 24 hours; may be batch-reviewed.) Tj T*
+() Tj T*
+(4. Investigation Steps) Tj T*
+() Tj T*
+(1. Review the triggering rule, transaction pattern, device and location data.) Tj T*
+(2. Contact the customer through the registered phone number only, never through contact details) Tj T*
+(in the suspicious transaction.) Tj T*
+(3. Decide Cleared or Confirmed Fraud and record the rationale.) Tj T*
+(4. For Confirmed Fraud: block the card or channel, raise a recall request with the beneficiary) Tj T*
+(bank, and file a police complaint where the loss is INR 1,00,000 or more.) Tj T*
+() Tj T*
+(5. Customer-Reported Fraud) Tj T*
+() Tj T*
+(- A customer reporting an unauthorised transaction within 3 working days bears zero liability) Tj T*
+(once the claim is validated.) Tj T*
+(- Reports made between 4 and 7 working days: customer liability is capped at INR 25,000.) Tj T*
+(- The bank credits the disputed amount \(shadow credit\) within 10 working days of the report) Tj T*
+(while the investigation continues.) Tj T*
+(- Final resolution must be completed within 90 days.) Tj T*
+() Tj T*
+(6. Escalation to AML) Tj T*
+() Tj T*
+(Any fraud case that also shows money-laundering indicators \(structuring, mule accounts, rapid) Tj T*
+(pass-through\) is referred to AML Investigations under POL-AML-002.) Tj T*
+() Tj T*
+(7. Roles and Responsibilities) Tj T*
+() Tj T*
+(- Finance Analyst: triage and investigation.) Tj T*
+(- Support Executive: records customer reports and gives status updates without disclosing) Tj T*
+(investigation details.) Tj T*
+(- Admin: monitors queue SLAs and approves freezes longer than 7 days.) Tj T*
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 12 0 R >>
+endobj
+14 0 obj
+<< /Length 2629 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(General Information for All Users) Tj T*
+() Tj T*
+(Apex Global Bank on the Finova Platform) Tj T*
+(Document ID: GEN-INF-001 | Version 1.0 | Owner: Customer Experience) Tj T*
+(Illustrative information for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. About Finova) Tj T*
+() Tj T*
+(Finova is the digital banking and operations platform used by Apex Global Bank. Customers use) Tj T*
+(it to view accounts, cards, transactions and support tickets. Bank staff use it for operations) Tj T*
+(dashboards, fraud monitoring, support and compliance.) Tj T*
+() Tj T*
+(2. Using the Website) Tj T*
+() Tj T*
+(- Sign in with your registered email and password. Your role decides which pages and data you) Tj T*
+(can see.) Tj T*
+(- The left sidebar lists the pages available to your role.) Tj T*
+(- The Finova AI Assistant answers questions about the topics allowed for your role, using live) Tj T*
+(data and the bank's policy documents.) Tj T*
+(- Use the date filter \(30D, 90D, YTD, All History\) at the top of dashboards to change the) Tj T*
+(reporting period.) Tj T*
+(- Sign out after every session on a shared device.) Tj T*
+() Tj T*
+(3. Contact and Service Hours) Tj T*
+() Tj T*
+(- Customer care: available 24x7 through the Support page in the Finova app.) Tj T*
+(- Branch banking hours: Monday to Saturday, 9:30 to 16:30 IST, except second and fourth) Tj T*
+(Saturdays and public holidays.) Tj T*
+(- Lost or stolen card: block it immediately from the Cards page, then raise an Urgent support) Tj T*
+(ticket.) Tj T*
+() Tj T*
+(4. Documents Needed to Open an Account) Tj T*
+() Tj T*
+(- PAN card \(mandatory\).) Tj T*
+(- One proof of identity: Aadhaar, passport, voter ID or driving licence.) Tj T*
+(- One proof of address: Aadhaar, passport, a utility bill from the last 3 months, or a) Tj T*
+(registered rent agreement.) Tj T*
+(- A recent photograph and a video-KYC or in-person verification.) Tj T*
+() Tj T*
+(5. Reporting an Unauthorised Transaction) Tj T*
+() Tj T*
+(- Report it immediately through Support or by blocking the card in the app.) Tj T*
+(- If you report within 3 working days, your liability is zero once the claim is validated.) Tj T*
+(- The disputed amount is usually credited back within 10 working days while the review) Tj T*
+(continues.) Tj T*
+() Tj T*
+(6. Staying Safe) Tj T*
+() Tj T*
+(- The bank will never ask for your PIN, CVV, OTP or full card number by phone, email or chat.) Tj T*
+(- Only use the official Finova app or website.) Tj T*
+(- If a transaction is held, you will see the message "Your transaction is under routine) Tj T*
+(review.") Tj T*
+ET
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 14 0 R >>
+endobj
+16 0 obj
+<< /Length 2715 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(KYC Document Requirements) Tj T*
+() Tj T*
+(Apex Global Bank - Customer Onboarding) Tj T*
+(Document ID: POL-KYC-001 | Version 5.2 | Owner: Onboarding and Compliance) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This policy lists the documents required to verify the identity and address of every customer) Tj T*
+(before an account is opened, and the schedule for periodic re-verification \(re-KYC\).) Tj T*
+() Tj T*
+(2. Individual Customers) Tj T*
+() Tj T*
+(One proof of identity AND one proof of address are required.) Tj T*
+() Tj T*
+(Accepted proof of identity:) Tj T*
+(- PAN card \(mandatory for all accounts\)) Tj T*
+(- Aadhaar card \(with masked number\) or e-KYC via Aadhaar OTP) Tj T*
+(- Passport) Tj T*
+(- Voter ID card) Tj T*
+(- Driving licence) Tj T*
+() Tj T*
+(Accepted proof of address \(must be dated within the last 3 months if a utility bill\):) Tj T*
+(- Aadhaar card or passport showing current address) Tj T*
+(- Utility bill \(electricity, water, gas, landline\)) Tj T*
+(- Registered rent agreement) Tj T*
+() Tj T*
+(A recent photograph and a live video-KYC session or in-person verification complete the) Tj T*
+(process.) Tj T*
+() Tj T*
+(3. Institutional and Corporate Customers) Tj T*
+() Tj T*
+(Institutional accounts require all of the following:) Tj T*
+() Tj T*
+(1. Certificate of Incorporation and Memorandum and Articles of Association.) Tj T*
+(2. Company PAN and GST registration certificate.) Tj T*
+(3. Board resolution authorising the account opening and naming authorised signatories.) Tj T*
+(4. KYC documents \(Section 2\) for every authorised signatory.) Tj T*
+(5. Beneficial ownership declaration identifying every person holding 10 percent or more) Tj T*
+(ownership or control.) Tj T*
+(6. Audited financial statements for the last 2 years.) Tj T*
+() Tj T*
+(4. Risk Tiers and Re-KYC Schedule) Tj T*
+() Tj T*
+(- Low risk \(salaried individuals, standard tier\): re-KYC every 10 years.) Tj T*
+(- Medium risk: re-KYC every 8 years.) Tj T*
+(- High risk \(PEPs, high-value private wealth tiers, cross-border businesses\): re-KYC every 2) Tj T*
+(years, with enhanced due diligence including source of funds.) Tj T*
+() Tj T*
+(5. Verification Status) Tj T*
+() Tj T*
+(- Pending: documents submitted, awaiting verification \(target 2 business days\).) Tj T*
+(- Under Review: discrepancy found; customer contacted for clarification.) Tj T*
+(- Verified: all checks passed.) Tj T*
+(- Rejected: documents invalid or forged. Forged documents are reported to Compliance.) Tj T*
+() Tj T*
+(Accounts with KYC still Pending after 30 days are restricted to credits only.) Tj T*
+() Tj T*
+ET
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 16 0 R >>
+endobj
+18 0 obj
+<< /Length 324 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(6. Roles and Responsibilities) Tj T*
+() Tj T*
+(- Support Executive: collects documents and explains requirements to the customer.) Tj T*
+(- Onboarding Officer: verifies documents and assigns the risk tier.) Tj T*
+(- Compliance: approves high-risk customers and enhanced due diligence.) Tj T*
+ET
+endstream
+endobj
+19 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 18 0 R >>
+endobj
+20 0 obj
+<< /Length 2471 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Customer Support SLA and Complaint Handling) Tj T*
+() Tj T*
+(Apex Global Bank - Customer Service) Tj T*
+(Document ID: PRC-SUP-005 | Version 2.2 | Owner: Head of Customer Experience) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This procedure sets response and resolution targets for customer support tickets and the) Tj T*
+(escalation path for complaints.) Tj T*
+() Tj T*
+(2. Ticket Priorities and SLA Targets) Tj T*
+() Tj T*
+(Priority - Examples - First response - Resolution target) Tj T*
+(Urgent - Card fraud, account blocked, failed salary credit - 15 minutes - 4 hours) Tj T*
+(High - Failed transfer, wrong debit, KYC rejection - 1 hour - 24 hours) Tj T*
+(Medium - Statement request, limit change, address update - 4 hours - 3 business days) Tj T*
+(Low - General inquiry, product information - 1 business day - 5 business days) Tj T*
+() Tj T*
+(The default SLA target for an unclassified ticket is 4 hours.) Tj T*
+() Tj T*
+(3. Ticket Statuses) Tj T*
+() Tj T*
+(- Open: received, not yet picked up.) Tj T*
+(- In Progress: assigned to a support executive.) Tj T*
+(- Pending Client: waiting for information from the customer. The SLA clock pauses in this) Tj T*
+(status.) Tj T*
+(- Resolved: solution provided; customer has 7 days to reopen.) Tj T*
+(- Closed: resolved and confirmed, or auto-closed after 7 days.) Tj T*
+() Tj T*
+(4. Escalation Matrix) Tj T*
+() Tj T*
+(1. Level 1 - Support Executive: handles the ticket.) Tj T*
+(2. Level 2 - Team Lead: takes over automatically if the resolution target is breached.) Tj T*
+(3. Level 3 - Nodal Officer: handles complaints unresolved after 15 days or escalated by the) Tj T*
+(customer.) Tj T*
+(4. If the complaint is not resolved within 30 days, the customer may approach the Banking) Tj T*
+(Ombudsman.) Tj T*
+() Tj T*
+(5. Customer Satisfaction \(CSAT\)) Tj T*
+() Tj T*
+(After every resolved ticket the customer is invited to rate the service from 1 to 5. A rating) Tj T*
+(of 2 or below triggers a callback from a Team Lead within 2 business days. The CSAT target is) Tj T*
+(an average of 4.2 or higher.) Tj T*
+() Tj T*
+(6. Service Conduct) Tj T*
+() Tj T*
+(- Always verify identity before discussing account details.) Tj T*
+(- Never ask for full card numbers, PINs, CVV or OTPs.) Tj T*
+(- Never disclose fraud or AML investigation details; use "Your transaction is under routine) Tj T*
+(review.") Tj T*
+ET
+endstream
+endobj
+21 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 20 0 R >>
+endobj
+22 0 obj
+<< /Length 2558 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Wire Transfer Approval Controls) Tj T*
+() Tj T*
+(Apex Global Bank - Payments and Treasury Operations) Tj T*
+(Document ID: POL-PAY-007 | Version 2.4 | Owner: Head of Payments) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This policy defines approval limits and dual-authorisation \(maker-checker\) controls for) Tj T*
+(outgoing wire transfers, including RTGS, NEFT, IMPS and SWIFT cross-border payments.) Tj T*
+() Tj T*
+(2. Approval Limits) Tj T*
+() Tj T*
+(Amount \(INR equivalent\) - Required approval) Tj T*
+(Up to 5,00,000 - Single maker; system checks only) Tj T*
+(5,00,001 to 50,00,000 - Maker plus one checker \(dual authorisation\)) Tj T*
+(50,00,001 to 5,00,00,000 - Maker plus checker plus Branch or Desk Manager) Tj T*
+(Above 5,00,00,000 - Maker plus checker plus Head of Payments and Treasury) Tj T*
+() Tj T*
+(3. Dual-Authorisation Rules) Tj T*
+() Tj T*
+(1. The maker and checker must be two different employees. The system blocks the same user from) Tj T*
+(approving their own transfer.) Tj T*
+(2. The checker must independently verify the beneficiary name, account number, IFSC or SWIFT) Tj T*
+(BIC, amount and purpose code against the original instruction.) Tj T*
+(3. Any change to the beneficiary details after creation resets all approvals.) Tj T*
+(4. Approvals expire if the transfer is not released within 4 hours.) Tj T*
+() Tj T*
+(4. Cross-Border \(SWIFT\) Payments) Tj T*
+() Tj T*
+(- All SWIFT payments are screened against sanctions lists before release.) Tj T*
+(- Payments to high-risk jurisdictions require Compliance sign-off regardless of amount.) Tj T*
+(- Purpose code and supporting invoice or contract are mandatory for amounts above USD 25,000) Tj T*
+(equivalent.) Tj T*
+() Tj T*
+(5. Callback Verification) Tj T*
+() Tj T*
+(For any new beneficiary or any change of beneficiary bank details on an existing payee, the) Tj T*
+(bank performs a callback to the customer's registered phone number before release. Instructions) Tj T*
+(received only by email are never executed without a callback.) Tj T*
+() Tj T*
+(6. Cut-Off Times) Tj T*
+() Tj T*
+(- RTGS: 9:00 to 17:30 IST on working days.) Tj T*
+(- NEFT and IMPS: 24x7.) Tj T*
+(- SWIFT: instructions received after 15:00 IST are processed the next business day.) Tj T*
+() Tj T*
+(7. Exceptions) Tj T*
+() Tj T*
+(Exceptions to these limits require written approval from the Head of Payments and must be) Tj T*
+(logged in the exception register within 24 hours.) Tj T*
+ET
+endstream
+endobj
+23 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 22 0 R >>
+endobj
+xref
+0 24
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000177 00000 n 
+0000000274 00000 n 
+0000000907 00000 n 
+0000001033 00000 n 
+0000004271 00000 n 
+0000004397 00000 n 
+0000007421 00000 n 
+0000007547 00000 n 
+0000007858 00000 n 
+0000007986 00000 n 
+0000010805 00000 n 
+0000010933 00000 n 
+0000013615 00000 n 
+0000013743 00000 n 
+0000016511 00000 n 
+0000016639 00000 n 
+0000017015 00000 n 
+0000017143 00000 n 
+0000019667 00000 n 
+0000019795 00000 n 
+0000022406 00000 n 
+trailer
+<< /Size 24 /Root 1 0 R >>
+startxref
+22534
+%%EOF

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   SupportTicket,
   UserAccount,
@@ -8,10 +9,12 @@ import {
   fetchSupportTicketsResultFromDb,
   fetchSupportAggregatesResultFromDb,
   updateSupportTicketStatusInDb,
-  SupportAggregates,
   mapResultStateToTelemetryStatus,
   TelemetryNodeStatus,
+  DateRangePreset,
+  getDefaultBoundedDateRange,
 } from '../../services/finovaDatabase';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
@@ -50,56 +53,72 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
   activeSection = 'dashboard',
   currentUser,
 }) => {
+  const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
 
   const tenantId = currentUser?.tenantId || 'tenant_apex_bank';
   const tenant = getTenantById(tenantId);
   const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
 
-  // State for live support tickets and aggregates
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [supportAggregates, setSupportAggregates] = useState<SupportAggregates | null>(null);
-  const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
-  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryNodeStatus>('OPERATIONAL');
-  const [dbError, setDbError] = useState<string | null>(null);
   const [activeTableTab, setActiveTableTab] = useState<'requests' | 'followups' | 'complaints' | 'fraud'>('requests');
-  const [loading, setLoading] = useState(false);
+  const [datePreset, setDatePreset] = useState<DateRangePreset>('90D');
+  const dateRange = useMemo(() => getDefaultBoundedDateRange(datePreset), [datePreset]);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const loadDashboardData = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const [tResult, sAgg] = await Promise.all([
-        fetchSupportTicketsResultFromDb(tenantId),
-        fetchSupportAggregatesResultFromDb(tenantId),
-      ]);
+  const { data: tResult, isLoading: tLoading, isFetching: tFetching, refetch: refetchTickets } = useQuery({
+    queryKey: ['support-tickets', tenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchSupportTicketsResultFromDb(tenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        countMode: 'estimated',
+        signal,
+      }),
+  });
 
-      const errs = [tResult.error, sAgg.error].filter(
-        (msg): msg is string => Boolean(msg)
-      );
-      setDbSource(tResult.source === 'supabase' && sAgg.source === 'supabase' ? 'supabase' : 'fallback');
-      setTelemetryStatus(
-        tResult.state === 'restricted' || sAgg.state === 'restricted'
-          ? 'RESTRICTED'
-          : mapResultStateToTelemetryStatus(tResult.state, tResult.source)
-      );
-      setDbError(errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null);
-      setTickets(tResult.data);
-      setSupportAggregates(sAgg);
-    } catch (err: any) {
-      console.warn('Support executive load notice:', err);
-      setTelemetryStatus('DEGRADED');
-      setDbError(err?.message || 'Error loading dashboard data');
-    } finally {
-      setLoading(false);
-    }
-  }, [tenantId]);
+  const { data: supportAggregates, isLoading: sLoading, isFetching: sFetching, refetch: refetchSupportAgg } = useQuery({
+    queryKey: ['support-agg', tenantId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchSupportAggregatesResultFromDb(tenantId, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      }),
+  });
 
-  React.useEffect(() => {
-    loadDashboardData();
-  }, [loadDashboardData]);
+  const tickets: SupportTicket[] = tResult?.data || [];
+  const loading = tLoading || sLoading;
+  const dbSource = tResult?.source === 'supabase' && supportAggregates?.source === 'supabase' ? 'supabase' : 'fallback';
 
-  React.useEffect(() => {
+  const ticketsStatus = useMemo(
+    () => mapResultStateToTelemetryStatus(tResult?.state, tResult?.source, tLoading),
+    [tResult, tLoading]
+  );
+  const aggStatus = useMemo(
+    () => mapResultStateToTelemetryStatus(supportAggregates?.state, supportAggregates?.source, sLoading),
+    [supportAggregates, sLoading]
+  );
+
+  const telemetryStatus: TelemetryNodeStatus = useMemo(() => {
+    const vals = [ticketsStatus, aggStatus];
+    if (vals.includes('UNAVAILABLE')) return 'UNAVAILABLE';
+    if (vals.includes('TIMEOUT')) return 'TIMEOUT';
+    if (vals.includes('DEGRADED')) return 'DEGRADED';
+    if (vals.includes('RESTRICTED')) return 'RESTRICTED';
+    return 'OPERATIONAL';
+  }, [ticketsStatus, aggStatus]);
+
+  const dbError = useMemo(() => {
+    const errs = [tResult?.error, supportAggregates?.error].filter((msg): msg is string => Boolean(msg));
+    return errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null;
+  }, [tResult, supportAggregates]);
+
+  const loadDashboardData = () => {
+    refetchTickets();
+    refetchSupportAgg();
+  };
+
+  useEffect(() => {
     if (activeSection === 'support_followups') {
       setActiveTableTab('followups');
     } else if (activeSection === 'support_complaints') {
@@ -170,9 +189,15 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
         setActionError(`Failed to resolve ticket ${ticketId}: ${res.error || 'Database update rejected.'}`);
         return;
       }
-      setTickets((prev) =>
-        prev.map((t) => (t.ticketId === ticketId ? { ...t, status: 'Resolved', csatRating: 5.0 } : t))
-      );
+      queryClient.setQueryData(['support-tickets', tenantId, dateRange], (prev: any) => {
+        if (!prev || !Array.isArray(prev.data)) return prev;
+        return {
+          ...prev,
+          data: prev.data.map((t: SupportTicket) =>
+            t.ticketId === ticketId ? { ...t, status: 'Resolved', csatRating: 5.0 } : t
+          ),
+        };
+      });
     } catch (e: any) {
       setActionError(`Failed to resolve ticket ${ticketId}: ${e?.message || 'Unexpected database error.'}`);
     }
@@ -228,7 +253,23 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1 bg-[#121212] border border-[#3A3A3A] rounded-xl p-1">
+            {(['30D', '90D', 'YTD', 'ALL'] as DateRangePreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setDatePreset(preset)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+                  datePreset === preset
+                    ? 'bg-[#D4A017] text-[#1A1A1A]'
+                    : 'text-[#9CA3AF] hover:text-[#FAF7F0]'
+                }`}
+              >
+                {preset === 'ALL' ? 'All History' : preset}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => loadDashboardData()}
             disabled={loading}
@@ -248,6 +289,12 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
         </div>
       </div>
 
+      {/* Per-Domain Telemetry Status Badges */}
+      <div className="flex flex-wrap items-center gap-2 px-1">
+        <WidgetStatusBadge label="Ticket Queue" status={tLoading ? 'LOADING' : ticketsStatus} />
+        <WidgetStatusBadge label="Desk Aggregates" status={sLoading ? 'LOADING' : aggStatus} />
+      </div>
+
       {actionError && (
         <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-500/60 text-red-200 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -263,20 +310,29 @@ const SupportExecutiveDashboard: React.FC<SupportExecutiveDashboardProps> = ({
         </div>
       )}
 
-      {dbError && (
-        <div className="p-3.5 rounded-xl bg-amber-950/50 border border-amber-500/50 text-amber-200 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={16} className="text-amber-400 shrink-0" />
-            <span>Support Telemetry Notice: {dbError}</span>
-          </div>
-          <button
-            onClick={() => loadDashboardData()}
-            className="px-3 py-1 rounded-lg bg-[#121212] border border-amber-400/50 text-amber-200 text-[10px] hover:bg-[#262626] shrink-0"
-          >
-            Retry
-          </button>
-        </div>
-      )}
+      {/* Isolated Failure / Timeout Notices */}
+      <div className="space-y-2">
+        {!tLoading && ticketsStatus !== 'OPERATIONAL' && tResult?.error && (
+          <WidgetFailureNotice
+            widgetName="Support Ticket Queue"
+            status={ticketsStatus}
+            error={tResult.error}
+            onRetry={() => refetchTickets()}
+            isRetrying={tFetching}
+            compact
+          />
+        )}
+        {!sLoading && aggStatus !== 'OPERATIONAL' && supportAggregates?.error && (
+          <WidgetFailureNotice
+            widgetName="Support Desk Aggregates"
+            status={aggStatus}
+            error={supportAggregates.error}
+            onRetry={() => refetchSupportAgg()}
+            isRetrying={sFetching}
+            compact
+          />
+        )}
+      </div>
 
       {/* 4 3D KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

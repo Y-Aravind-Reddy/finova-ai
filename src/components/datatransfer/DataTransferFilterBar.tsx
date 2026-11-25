@@ -1,5 +1,6 @@
 import React from 'react';
 import { Search, Filter, RotateCw, Calendar, Globe, Building2, ShieldAlert } from 'lucide-react';
+import { DateRangePreset, getDefaultBoundedDateRange } from '../../services/finovaDatabase';
 
 export interface DataTransferFilters {
   startDate: string;
@@ -19,6 +20,13 @@ interface DataTransferFilterBarProps {
   isLoading?: boolean;
 }
 
+const PRESETS: { id: DateRangePreset; label: string }[] = [
+  { id: '30D', label: '30D' },
+  { id: '90D', label: '90D' },
+  { id: 'YTD', label: 'YTD' },
+  { id: 'ALL', label: 'All History' },
+];
+
 export const DataTransferFilterBar: React.FC<DataTransferFilterBarProps> = ({
   filters,
   onFilterChange,
@@ -27,6 +35,20 @@ export const DataTransferFilterBar: React.FC<DataTransferFilterBarProps> = ({
 }) => {
   const handleChange = (key: keyof DataTransferFilters, value: any) => {
     onFilterChange({ ...filters, [key]: value });
+  };
+
+  const applyPreset = (preset: DateRangePreset) => {
+    const range = getDefaultBoundedDateRange(preset);
+    onFilterChange({
+      ...filters,
+      startDate: range.startDate,
+      endDate: range.endDate,
+    });
+  };
+
+  const isPresetActive = (preset: DateRangePreset) => {
+    const range = getDefaultBoundedDateRange(preset);
+    return filters.startDate === range.startDate && filters.endDate === range.endDate;
   };
 
   return (
@@ -43,6 +65,22 @@ export const DataTransferFilterBar: React.FC<DataTransferFilterBarProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 bg-[#121212] border border-[#3A3A3A] rounded-xl p-1">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyPreset(preset.id)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+                  isPresetActive(preset.id)
+                    ? 'bg-[#D4A017] text-[#121212]'
+                    : 'text-[#9CA3AF] hover:text-[#FAF7F0]'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           <button
             onClick={onRefresh}
             disabled={isLoading}

@@ -1,0 +1,84 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 2558 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Wire Transfer Approval Controls) Tj T*
+() Tj T*
+(Apex Global Bank - Payments and Treasury Operations) Tj T*
+(Document ID: POL-PAY-007 | Version 2.4 | Owner: Head of Payments) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This policy defines approval limits and dual-authorisation \(maker-checker\) controls for) Tj T*
+(outgoing wire transfers, including RTGS, NEFT, IMPS and SWIFT cross-border payments.) Tj T*
+() Tj T*
+(2. Approval Limits) Tj T*
+() Tj T*
+(Amount \(INR equivalent\) - Required approval) Tj T*
+(Up to 5,00,000 - Single maker; system checks only) Tj T*
+(5,00,001 to 50,00,000 - Maker plus one checker \(dual authorisation\)) Tj T*
+(50,00,001 to 5,00,00,000 - Maker plus checker plus Branch or Desk Manager) Tj T*
+(Above 5,00,00,000 - Maker plus checker plus Head of Payments and Treasury) Tj T*
+() Tj T*
+(3. Dual-Authorisation Rules) Tj T*
+() Tj T*
+(1. The maker and checker must be two different employees. The system blocks the same user from) Tj T*
+(approving their own transfer.) Tj T*
+(2. The checker must independently verify the beneficiary name, account number, IFSC or SWIFT) Tj T*
+(BIC, amount and purpose code against the original instruction.) Tj T*
+(3. Any change to the beneficiary details after creation resets all approvals.) Tj T*
+(4. Approvals expire if the transfer is not released within 4 hours.) Tj T*
+() Tj T*
+(4. Cross-Border \(SWIFT\) Payments) Tj T*
+() Tj T*
+(- All SWIFT payments are screened against sanctions lists before release.) Tj T*
+(- Payments to high-risk jurisdictions require Compliance sign-off regardless of amount.) Tj T*
+(- Purpose code and supporting invoice or contract are mandatory for amounts above USD 25,000) Tj T*
+(equivalent.) Tj T*
+() Tj T*
+(5. Callback Verification) Tj T*
+() Tj T*
+(For any new beneficiary or any change of beneficiary bank details on an existing payee, the) Tj T*
+(bank performs a callback to the customer's registered phone number before release. Instructions) Tj T*
+(received only by email are never executed without a callback.) Tj T*
+() Tj T*
+(6. Cut-Off Times) Tj T*
+() Tj T*
+(- RTGS: 9:00 to 17:30 IST on working days.) Tj T*
+(- NEFT and IMPS: 24x7.) Tj T*
+(- SWIFT: instructions received after 15:00 IST are processed the next business day.) Tj T*
+() Tj T*
+(7. Exceptions) Tj T*
+() Tj T*
+(Exceptions to these limits require written approval from the Head of Payments and must be) Tj T*
+(logged in the exception register within 24 hours.) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000212 00000 n 
+0000002822 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2948
+%%EOF

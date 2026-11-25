@@ -248,6 +248,7 @@ export const RoleSidebar: React.FC<RoleSidebarProps> = ({
       {renderNavItem('Staff Management', '/admin/user-management', <Users size={16} />)}
       {renderNavItem('Operations Management', '/admin/operations-management', <Activity size={16} />)}
       {renderNavItem('Customer Management', '/admin/customer-management', <Users size={16} />)}
+      {renderNavItem('Knowledge Base', '/admin/knowledge-base', <Database size={16} />)}
       {renderNavItem('Reports', '/admin/reports', <FileText size={16} />)}
 
       {/* Platform Engines */}

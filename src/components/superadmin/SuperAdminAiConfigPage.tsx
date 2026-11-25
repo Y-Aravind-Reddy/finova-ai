@@ -268,10 +268,13 @@ const SuperAdminAiConfigPage: React.FC<SuperAdminAiConfigPageProps> = ({ current
                 disabled={loading || saving}
                 className="w-full bg-[#111111] border border-[#D4A017]/40 rounded-xl px-4 py-2.5 text-xs text-[#FAF7F0] focus:outline-none focus:border-[#F5C542] disabled:opacity-50"
               >
-                <option value="Finova-Sentinel-Ultra-4.2">Finova Sentinel Ultra 4.2 (Zero-Hallucination Tier)</option>
-                <option value="Finova-Forensic-Vision-6.1">Finova Forensic Vision 6.1 (Document & MRZ OCR)</option>
-                <option value="Finova-Yield-Optimizer-3.9">Finova Sovereign Yield Optimizer 3.9 (Quantitative)</option>
+                <option value="Finova-Sentinel-Ultra-4.2">Finova Sentinel Ultra 4.2 → gemini-4-hydrogen (Zero-Hallucination Tier)</option>
+                <option value="Finova-Forensic-Vision-6.1">Finova Forensic Vision 6.1 → gemini-4-hydrogen / gemini-3.1-flash-lite</option>
+                <option value="Finova-Yield-Optimizer-3.9">Finova Sovereign Yield Optimizer 3.9 → gemini-3.1-flash-lite (Quantitative)</option>
               </select>
+              <span className="text-[10px] text-[#9CA3AF] block mt-1">
+                Runtime failover chain: Primary → gemini-3.1-flash-lite → gemini-3.5-flash-lite • Embeddings: gemini-embedding-2 (768-dim).
+              </span>
             </div>
 
             {/* Temperature Slider */}

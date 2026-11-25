@@ -19,11 +19,19 @@ import {
   Building2,
 } from 'lucide-react';
 import { CustomerTransaction, UserAccount } from '../../data/finovaDatasets';
-import { fetchTransactionsResultFromDb, DatabaseQueryResult } from '../../services/finovaDatabase';
+import {
+  fetchTransactionsResultFromDb,
+  DatabaseQueryResult,
+  QueryResultState,
+  getDefaultBoundedDateRange,
+  mapResultStateToTelemetryStatus,
+  isAbortError,
+} from '../../services/finovaDatabase';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 
 interface FinanceTransactionAnalyticsPageProps {
   currentUser?: UserAccount;
@@ -39,12 +47,13 @@ const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyticsPageP
   const companyName = tenant?.name || currentUser?.tenantName || 'Apex Global Bank';
 
   // Filters & Pagination State
+  const defaultRange = getDefaultBoundedDateRange('YTD');
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState<'Credit' | 'Debit' | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDate, setStartDate] = useState(defaultRange.startDate);
+  const [endDate, setEndDate] = useState(defaultRange.endDate);
   const [page, setPage] = useState(1);
   const pageSize = 15;
 
@@ -54,10 +63,10 @@ const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyticsPageP
   const [totalPages, setTotalPages] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
-  const [queryState, setQueryState] = useState<string>('unconfigured');
+  const [queryState, setQueryState] = useState<QueryResultState>('unconfigured');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -72,26 +81,42 @@ const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyticsPageP
           status: statusFilter,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
+          countMode: 'estimated',
+          signal,
         }
       );
+
+      if (signal?.aborted) return;
 
       setDbSource(res.source);
       setQueryState(res.state);
       setTransactions(res.data);
       setTotalCount(res.totalCount ?? res.count);
       setTotalPages(res.totalPages || Math.max(1, Math.ceil((res.totalCount ?? res.count) / pageSize)));
-      if (res.error && res.state === 'query_error') {
+      if (
+        res.error &&
+        (res.state === 'timeout' ||
+          res.state === 'query_error' ||
+          res.state === 'restricted' ||
+          res.state === 'demo_session_rls')
+      ) {
         setErrorMsg(res.error);
       }
     } catch (err: any) {
+      if (isAbortError(err, signal)) return;
+      setQueryState('query_error');
       setErrorMsg(err?.message || 'Failed loading transactions');
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }, [activeTenantId, page, pageSize, searchTerm, categoryFilter, typeFilter, statusFilter, startDate, endDate]);
 
   useEffect(() => {
-    loadData();
+    const controller = new AbortController();
+    loadData(controller.signal);
+    return () => controller.abort();
   }, [loadData]);
 
   // Derived KPI computations from query results
@@ -171,15 +196,15 @@ const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyticsPageP
               {companyName}
             </span>
             <span className="text-xs text-[#D4A017]">Public Transactions Ledger</span>
-            {dbSource === 'supabase' && queryState === 'live_records' ? (
+            {dbSource === 'supabase' && (queryState === 'live_records' || queryState === 'zero_records') ? (
               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 Live DB ({totalCount.toLocaleString()} TXNs)
               </span>
             ) : (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
-                Workspace Scoped
-              </span>
+              <WidgetStatusBadge
+                status={loading ? 'LOADING' : mapResultStateToTelemetryStatus(queryState, dbSource, loading)}
+              />
             )}
           </div>
           <h1 className="font-cinzel text-xl sm:text-2xl md:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017] mt-1">
@@ -351,17 +376,18 @@ const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyticsPageP
             {(startDate || endDate || searchTerm || categoryFilter !== 'ALL' || typeFilter !== 'ALL' || statusFilter !== 'ALL') && (
               <button
                 onClick={() => {
+                  const ytd = getDefaultBoundedDateRange('YTD');
                   setSearchTerm('');
                   setCategoryFilter('ALL');
                   setTypeFilter('ALL');
                   setStatusFilter('ALL');
-                  setStartDate('');
-                  setEndDate('');
+                  setStartDate(ytd.startDate);
+                  setEndDate(ytd.endDate);
                   setPage(1);
                 }}
                 className="text-[10px] text-[#D4A017] hover:underline whitespace-nowrap"
               >
-                Reset
+                Reset to YTD
               </button>
             )}
           </div>
@@ -374,13 +400,13 @@ const FinanceTransactionAnalyticsPage: React.FC<FinanceTransactionAnalyticsPageP
             <p className="text-xs">Querying transactions from Supabase database...</p>
           </div>
         ) : errorMsg ? (
-          <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/40 text-red-200 flex items-center gap-3">
-            <ShieldAlert size={18} className="text-red-400 shrink-0" />
-            <div>
-              <p className="font-bold text-xs">Supabase Query Notice</p>
-              <p className="text-[11px] text-red-300">{errorMsg}</p>
-            </div>
-          </div>
+          <WidgetFailureNotice
+            widgetName="Transactions Ledger Query"
+            status={mapResultStateToTelemetryStatus(queryState, dbSource, loading)}
+            error={errorMsg}
+            onRetry={() => loadData()}
+            isRetrying={loading}
+          />
         ) : transactions.length === 0 ? (
           <div className="py-12 text-center text-[#9CA3AF]">
             <Database size={28} className="mx-auto mb-2 text-[#D4A017] opacity-60" />

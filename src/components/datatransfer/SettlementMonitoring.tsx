@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { transferIntelligenceService } from '../../services/transferIntelligenceService';
+import {
+  getDefaultBoundedDateRange,
+  isPermissionDeniedError,
+  isStatementTimeoutError,
+} from '../../services/finovaDatabase';
 import { DataTransferFilterBar, DataTransferFilters } from './DataTransferFilterBar';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDAreaChart } from '../charts3d/ThreeDAreaChart';
 import { ThreeDDonutChart } from '../charts3d/ThreeDDonutChart';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 import { 
   ShieldCheck, 
   Activity, 
@@ -19,16 +25,15 @@ import {
 } from 'lucide-react';
 
 const SettlementMonitoring: React.FC = () => {
-  const [filters, setFilters] = useState<DataTransferFilters>({
-    startDate: '',
-    endDate: '',
+  const [filters, setFilters] = useState<DataTransferFilters>(() => ({
+    ...getDefaultBoundedDateRange('YTD'),
     currency: 'ALL',
     type: 'ALL',
     channel: 'ALL',
     status: 'ALL',
     search: '',
     tenantId: 'ALL'
-  });
+  }));
 
   const [page, setPage] = useState(1);
   const pageSize = 12;
@@ -37,30 +42,46 @@ const SettlementMonitoring: React.FC = () => {
   const {
     data: metrics,
     isLoading: metricsLoading,
+    isFetching: metricsFetching,
     isError: metricsError,
     error: metricsErrObj,
     refetch: refetchMetrics,
   } = useQuery({
     queryKey: ['settlement-metrics', filters],
-    queryFn: () => transferIntelligenceService.fetchSettlementMetrics(filters.tenantId, filters),
+    queryFn: ({ signal }) => transferIntelligenceService.fetchSettlementMetrics(filters.tenantId, { ...filters, signal }),
   });
 
   // 2. Fetch Aggregates for Velocity Chart
-  const { data: aggregates, refetch: refetchAgg } = useQuery({
+  const {
+    data: aggregates,
+    isLoading: aggLoading,
+    isFetching: aggFetching,
+    isError: aggError,
+    error: aggErrObj,
+    refetch: refetchAgg,
+  } = useQuery({
     queryKey: ['transfer-overview', filters],
-    queryFn: () => transferIntelligenceService.fetchOverviewAggregates(filters.tenantId, filters),
+    queryFn: ({ signal }) => transferIntelligenceService.fetchOverviewAggregates(filters.tenantId, { ...filters, signal }),
   });
 
   // 3. Fetch Transactions for the table
   const {
     data: txData,
     isLoading: txLoading,
+    isFetching: txFetching,
     isError: txError,
     error: txErrObj,
     refetch: refetchTx,
   } = useQuery({
     queryKey: ['paginated-transactions', filters, page],
-    queryFn: () => transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, { ...filters, page, pageSize }),
+    queryFn: ({ signal }) =>
+      transferIntelligenceService.fetchPaginatedTransactions(filters.tenantId, {
+        ...filters,
+        page,
+        pageSize,
+        countMode: 'estimated',
+        signal,
+      }),
   });
 
   const handleRefreshAll = () => {
@@ -69,6 +90,13 @@ const SettlementMonitoring: React.FC = () => {
     refetchTx();
   };
 
+  const getErrStatus = (err: unknown) =>
+    isStatementTimeoutError(err) ? 'TIMEOUT' : isPermissionDeniedError(err) ? 'RESTRICTED' : 'DEGRADED';
+
+  const metricsStatus = metricsLoading ? 'LOADING' : metricsError ? getErrStatus(metricsErrObj) : metrics?.source === 'supabase' ? 'OPERATIONAL' : 'UNAVAILABLE';
+  const aggStatus = aggLoading ? 'LOADING' : aggError ? getErrStatus(aggErrObj) : aggregates?.source === 'supabase' ? 'OPERATIONAL' : 'UNAVAILABLE';
+  const txStatus = txLoading ? 'LOADING' : txError ? getErrStatus(txErrObj) : txData?.source === 'supabase' ? 'OPERATIONAL' : 'UNAVAILABLE';
+
   const kpis = [
     { title: 'Confirmed Settlements', value: `$${((metrics?.totalSettlementVolume || 0) / 1000000).toFixed(2)}M`, sub: 'Liquidity confirmed', icon: <ShieldCheck size={20} />, variant: 'gold-accent' as const },
     { title: 'Successful Clearing', value: metrics?.successfulSettlements.toLocaleString() || '0', sub: 'SLA Compliant', icon: <CheckCircle2 size={20} /> },
@@ -76,18 +104,17 @@ const SettlementMonitoring: React.FC = () => {
     { title: 'Settlement Exceptions', value: metrics?.exceptionsCount.toLocaleString() || '0', sub: 'Action required', icon: <AlertTriangle size={20} /> },
   ];
 
-  const combinedErr = metricsError
-    ? (metricsErrObj as Error)?.message
-    : txError
-    ? (txErrObj as Error)?.message
-    : null;
-
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
       <div>
-        <h1 className="font-cinzel text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
-          Settlement Monitoring
-        </h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="font-cinzel text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017]">
+            Settlement Monitoring
+          </h1>
+          <WidgetStatusBadge label="Metrics" status={metricsStatus} />
+          <WidgetStatusBadge label="Velocity" status={aggStatus} />
+          <WidgetStatusBadge label="Ledger" status={txStatus} />
+        </div>
         <p className="text-xs text-[#9CA3AF] font-mono mt-1 uppercase tracking-widest">
           Institutional Clearing Workspace • Real-time SLA Surveillance
         </p>
@@ -100,20 +127,38 @@ const SettlementMonitoring: React.FC = () => {
         isLoading={metricsLoading || txLoading} 
       />
 
-      {combinedErr && (
-        <div className="rounded-xl p-4 bg-red-950/60 border border-red-500/50 text-red-200 font-mono text-xs flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={16} className="text-red-400 shrink-0" />
-            <span>Settlement Telemetry Error: {combinedErr}</span>
-          </div>
-          <button
-            onClick={handleRefreshAll}
-            className="px-3 py-1 rounded-lg bg-[#121212] border border-red-400/50 text-red-200 text-[10px] hover:bg-[#262626] shrink-0"
-          >
-            Retry
-          </button>
-        </div>
-      )}
+      <div className="space-y-2">
+        {metricsError && (
+          <WidgetFailureNotice
+            widgetName="Settlement Metrics"
+            status={getErrStatus(metricsErrObj)}
+            error={(metricsErrObj as Error)?.message}
+            onRetry={() => refetchMetrics()}
+            isRetrying={metricsFetching}
+            compact
+          />
+        )}
+        {aggError && (
+          <WidgetFailureNotice
+            widgetName="Hourly Velocity Chart"
+            status={getErrStatus(aggErrObj)}
+            error={(aggErrObj as Error)?.message}
+            onRetry={() => refetchAgg()}
+            isRetrying={aggFetching}
+            compact
+          />
+        )}
+        {txError && (
+          <WidgetFailureNotice
+            widgetName="Settlement Ledger Table"
+            status={getErrStatus(txErrObj)}
+            error={(txErrObj as Error)?.message}
+            onRetry={() => refetchTx()}
+            isRetrying={txFetching}
+            compact
+          />
+        )}
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi, idx) => (

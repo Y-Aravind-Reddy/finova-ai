@@ -16,10 +16,18 @@ import {
   Filter,
 } from 'lucide-react';
 import { FinanceFraudTransaction, UserAccount } from '../../data/finovaDatasets';
-import { fetchFraudCasesResultFromDb, updateFraudCaseStatusInDb, DatabaseQueryResult } from '../../services/finovaDatabase';
+import {
+  fetchFraudCasesResultFromDb,
+  updateFraudCaseStatusInDb,
+  DatabaseQueryResult,
+  QueryResultState,
+  mapResultStateToTelemetryStatus,
+  isAbortError,
+} from '../../services/finovaDatabase';
 import { getTenantById } from '../../data/tenantStore';
 import { ThreeDKpiCard } from '../charts3d/ThreeDKpiCard';
 import { ThreeDColumnChart } from '../charts3d/ThreeDColumnChart';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 
 interface FinanceFraudDetectionPageProps {
   currentUser?: UserAccount;
@@ -47,11 +55,11 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
   const [totalPages, setTotalPages] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
   const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
-  const [queryState, setQueryState] = useState<string>('unconfigured');
+  const [queryState, setQueryState] = useState<QueryResultState>('unconfigured');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
-  const loadFraudCases = useCallback(async () => {
+  const loadFraudCases = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -63,8 +71,12 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
           search: searchTerm,
           status: statusFilter,
           currency: currencyFilter,
+          countMode: 'estimated',
+          signal,
         }
       );
+
+      if (signal?.aborted) return;
 
       setDbSource(res.source);
       setQueryState(res.state);
@@ -72,18 +84,30 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
       setTotalCount(res.totalCount ?? res.count);
       setTotalPages(res.totalPages || Math.max(1, Math.ceil((res.totalCount ?? res.count) / pageSize)));
 
-      if (res.error && (res.state === 'query_error' || res.state === 'restricted' || res.state === 'demo_session_rls')) {
+      if (
+        res.error &&
+        (res.state === 'timeout' ||
+          res.state === 'query_error' ||
+          res.state === 'restricted' ||
+          res.state === 'demo_session_rls')
+      ) {
         setErrorMsg(res.error);
       }
     } catch (err: any) {
+      if (isAbortError(err, signal)) return;
+      setQueryState('query_error');
       setErrorMsg(err?.message || 'Failed querying fraud surveillance cases');
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }, [activeTenantId, page, pageSize, searchTerm, statusFilter, currencyFilter]);
 
   useEffect(() => {
-    loadFraudCases();
+    const controller = new AbortController();
+    loadFraudCases(controller.signal);
+    return () => controller.abort();
   }, [loadFraudCases]);
 
   // Handle case status update
@@ -157,14 +181,10 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 Live DB ({totalCount.toLocaleString()} Cases)
               </span>
-            ) : queryState === 'restricted' || queryState === 'demo_session_rls' ? (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-950/90 border border-blue-500/60 text-blue-300">
-                RESTRICTED
-              </span>
             ) : (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-950/90 border border-amber-500/60 text-amber-300">
-                {queryState === 'unconfigured' ? 'UNAVAILABLE' : 'DEGRADED'}
-              </span>
+              <WidgetStatusBadge
+                status={loading ? 'LOADING' : mapResultStateToTelemetryStatus(queryState, dbSource, loading)}
+              />
             )}
           </div>
           <h1 className="font-cinzel text-xl sm:text-2xl md:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#FFF8E7] via-[#F5C542] to-[#D4A017] mt-1">
@@ -328,21 +348,13 @@ const FinanceFraudDetectionPage: React.FC<FinanceFraudDetectionPageProps> = ({
             <p className="text-xs">Querying public.fraud_cases from Supabase...</p>
           </div>
         ) : errorMsg ? (
-          <div className={`p-4 rounded-xl border flex items-center gap-3 ${
-            queryState === 'restricted' || queryState === 'demo_session_rls'
-              ? 'bg-blue-950/40 border-blue-500/40 text-blue-200'
-              : 'bg-red-950/40 border-red-500/40 text-red-200'
-          }`}>
-            <ShieldAlert size={18} className={queryState === 'restricted' || queryState === 'demo_session_rls' ? 'text-blue-400 shrink-0' : 'text-red-400 shrink-0'} />
-            <div>
-              <p className="font-bold text-xs">
-                {queryState === 'restricted' || queryState === 'demo_session_rls' ? 'RESTRICTED CLEARANCE' : 'Query Error'}
-              </p>
-              <p className={`text-[11px] ${queryState === 'restricted' || queryState === 'demo_session_rls' ? 'text-blue-300' : 'text-red-300'}`}>
-                {errorMsg}
-              </p>
-            </div>
-          </div>
+          <WidgetFailureNotice
+            widgetName="Fraud Surveillance Ledger"
+            status={mapResultStateToTelemetryStatus(queryState, dbSource, loading)}
+            error={errorMsg}
+            onRetry={() => loadFraudCases()}
+            isRetrying={loading}
+          />
         ) : cases.length === 0 ? (
           <div className="py-12 text-center text-[#9CA3AF]">
             <Database size={28} className="mx-auto mb-2 text-[#D4A017] opacity-60" />

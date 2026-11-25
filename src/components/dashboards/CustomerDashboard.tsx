@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CustomerTransaction,
   CustomerDocument,
@@ -9,8 +10,11 @@ import {
   fetchKycRecordsResultFromDb,
   uploadKycRecordToDb,
   fetchTransactionAggregatesResultFromDb,
-  TransactionAggregates,
+  DateRangePreset,
+  getDefaultBoundedDateRange,
+  mapResultStateToTelemetryStatus,
 } from '../../services/finovaDatabase';
+import { WidgetFailureNotice, WidgetStatusBadge } from '../common/WidgetTelemetryStatus';
 import { convertToInr, convertToUsd } from '../../services/currencyService';
 
 import { getTenantById } from '../../data/tenantStore';
@@ -55,67 +59,70 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   const tenant = getTenantById(tenantId);
   const companyName = tenant?.name || (currentUser && 'tenantName' in currentUser ? currentUser.tenantName : undefined) || 'Apex Global Bank';
 
-  // Live customer transactions strictly scoped to database
-  const [tenantTransactions, setTenantTransactions] = useState<CustomerTransaction[]>([]);
-  const [customerAggregates, setCustomerAggregates] = useState<TransactionAggregates | null>(null);
-  const [loadingTransactions, setLoadingTransactions] = useState<boolean>(true);
-  const [dbSource, setDbSource] = useState<'supabase' | 'fallback'>('fallback');
-  const [dbError, setDbError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const [datePreset, setDatePreset] = useState<DateRangePreset>('YTD');
+  const dateRange = useMemo(() => getDefaultBoundedDateRange(datePreset), [datePreset]);
+  const customerUserId = currentUser && 'id' in currentUser ? (currentUser as any).id : undefined;
 
-  const loadCustomerData = React.useCallback(async () => {
-    setLoadingTransactions(true);
-    try {
-      const customerUserId = currentUser && 'id' in currentUser ? (currentUser as any).id : undefined;
-      // Scoped query for authenticated customer: historical imported records have user_id = NULL
-      const [result, aggResult] = await Promise.all([
-        fetchTransactionsResultFromDb(tenantId, { userId: customerUserId }),
-        fetchTransactionAggregatesResultFromDb(tenantId, { userId: customerUserId }),
-      ]);
-      const errs = [result.error, aggResult.error].filter((msg): msg is string => Boolean(msg));
-      setDbSource(result.source === 'supabase' && aggResult.source === 'supabase' ? 'supabase' : result.source);
-      setDbError(errs.length > 0 ? Array.from(new Set(errs)).join(' | ') : null);
-      setTenantTransactions(result.data || []);
-      setCustomerAggregates(aggResult);
-    } catch (err: any) {
-      setDbSource('fallback');
-      setDbError(err?.message || 'Failed to query customer transactions');
-      setTenantTransactions([]);
-      setCustomerAggregates(null);
-    } finally {
-      setLoadingTransactions(false);
-    }
-  }, [tenantId, currentUser]);
+  const { data: txListRes, isLoading: txListLoading, isFetching: txListFetching, refetch: refetchTxList } = useQuery({
+    queryKey: ['customer-transactions', tenantId, customerUserId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchTransactionsResultFromDb(tenantId, {
+        userId: customerUserId,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        countMode: 'estimated',
+        signal,
+      }),
+  });
 
-  React.useEffect(() => {
-    loadCustomerData();
-  }, [loadCustomerData]);
+  const { data: customerAggregates, isLoading: aggLoading, isFetching: aggFetching, refetch: refetchAgg } = useQuery({
+    queryKey: ['customer-tx-aggregates', tenantId, customerUserId, dateRange],
+    queryFn: ({ signal }) =>
+      fetchTransactionAggregatesResultFromDb(tenantId, {
+        userId: customerUserId,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        signal,
+      }),
+  });
+
+  const { data: kycRes, isLoading: kycLoading, isFetching: kycFetching, refetch: refetchKyc } = useQuery({
+    queryKey: ['customer-kyc-records', tenantId, customerUserId],
+    queryFn: ({ signal }) =>
+      fetchKycRecordsResultFromDb(tenantId, {
+        userId: customerUserId,
+        countMode: 'estimated',
+        signal,
+      }),
+  });
+
+  const tenantTransactions: CustomerTransaction[] = txListRes?.data || [];
+  const uploadedDocs: CustomerDocument[] = kycRes?.data || [];
+  const loadingTransactions = txListLoading || aggLoading;
+  const dbSource = txListRes?.source === 'supabase' && customerAggregates?.source === 'supabase' ? 'supabase' : (txListRes?.source || 'fallback');
+  const dbError = [txListRes?.error, customerAggregates?.error].filter(Boolean).join(' | ') || null;
+  const kycError = kycRes?.error || null;
+
+  const domainStatuses = useMemo(() => ({
+    txList: mapResultStateToTelemetryStatus(txListRes?.state, txListRes?.source, txListLoading),
+    txAgg: mapResultStateToTelemetryStatus(customerAggregates?.state, customerAggregates?.source, aggLoading),
+    kyc: mapResultStateToTelemetryStatus(kycRes?.state, kycRes?.source, kycLoading),
+  }), [txListRes, txListLoading, customerAggregates, aggLoading, kycRes, kycLoading]);
+
+  const loadCustomerData = () => {
+    refetchTxList();
+    refetchAgg();
+  };
+
+  const loadKycDocuments = () => {
+    refetchKyc();
+  };
 
   const [activeTab, setActiveTab] = useState<'transactions' | 'documents'>('transactions');
-  // Strict requirement 8: Keep public.kyc_records empty in UI until genuine records exist
-  const [uploadedDocs, setUploadedDocs] = useState<CustomerDocument[]>([]);
-  const [kycError, setKycError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-
-  const customerUserId = currentUser && 'id' in currentUser ? (currentUser as any).id : undefined;
-
-  const loadKycDocuments = React.useCallback(async () => {
-    setKycError(null);
-    const result = await fetchKycRecordsResultFromDb(tenantId, { userId: customerUserId });
-    if (result.error) {
-      setKycError(result.error);
-    }
-    if (result.data && result.data.length > 0) {
-      setUploadedDocs(result.data);
-    } else {
-      setUploadedDocs([]);
-    }
-  }, [tenantId, customerUserId]);
-
-  React.useEffect(() => {
-    loadKycDocuments();
-  }, [loadKycDocuments]);
 
   const displayName = currentUser?.name || 'Authorized Client';
   const currencySymbol = tenant?.currencySymbol || '$';
@@ -230,7 +237,13 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         status: 'Pending',
       });
       if (res.success && res.data) {
-        setUploadedDocs((prev) => [res.data!, ...prev]);
+        queryClient.setQueryData(['customer-kyc-records', tenantId, customerUserId], (prev: any) => {
+          const existingData = Array.isArray(prev?.data) ? prev.data : [];
+          return {
+            ...(prev || {}),
+            data: [res.data!, ...existingData],
+          };
+        });
         setUploadSuccess(true);
         setTimeout(() => setUploadSuccess(false), 3000);
       } else {
@@ -396,7 +409,23 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1 bg-[#141414] border border-[#3A3A3A] rounded-xl p-1">
+            {(['YTD', 'ALL'] as DateRangePreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setDatePreset(preset)}
+                className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition-all ${
+                  datePreset === preset
+                    ? 'bg-[#D4A017] text-[#1A1A1A]'
+                    : 'text-[#9CA3AF] hover:text-[#FAF7F0]'
+                }`}
+              >
+                {preset === 'ALL' ? 'All History' : 'YTD'}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => loadCustomerData()}
             disabled={loadingTransactions}
@@ -416,23 +445,45 @@ const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         </div>
       </div>
 
-      {(dbError || kycError) && (
-        <div className="rounded-xl p-3.5 bg-amber-950/50 border border-amber-500/50 text-amber-200 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={15} className="text-amber-400 shrink-0" />
-            <span>Database Notice: {[dbError, kycError].filter(Boolean).join(' | ')}</span>
-          </div>
-          <button
-            onClick={() => {
-              loadCustomerData();
-              loadKycDocuments();
-            }}
-            className="px-3 py-1 rounded-lg bg-[#121212] border border-amber-400/50 text-amber-200 text-[10px] hover:bg-[#262626] shrink-0"
-          >
-            Retry
-          </button>
-        </div>
-      )}
+      {/* Per-Widget Telemetry Status */}
+      <div className="flex flex-wrap items-center gap-2 px-1">
+        <WidgetStatusBadge label="Ledger Summary" status={aggLoading ? 'LOADING' : domainStatuses.txAgg} />
+        <WidgetStatusBadge label="Transactions List" status={txListLoading ? 'LOADING' : domainStatuses.txList} />
+        <WidgetStatusBadge label="KYC Vault" status={kycLoading ? 'LOADING' : domainStatuses.kyc} />
+      </div>
+
+      <div className="space-y-2">
+        {!aggLoading && domainStatuses.txAgg !== 'OPERATIONAL' && customerAggregates?.error && (
+          <WidgetFailureNotice
+            widgetName="Custody Balance Aggregates"
+            status={domainStatuses.txAgg}
+            error={customerAggregates.error}
+            onRetry={() => refetchAgg()}
+            isRetrying={aggFetching}
+            compact
+          />
+        )}
+        {!txListLoading && domainStatuses.txList !== 'OPERATIONAL' && txListRes?.error && (
+          <WidgetFailureNotice
+            widgetName="Transactions History"
+            status={domainStatuses.txList}
+            error={txListRes.error}
+            onRetry={() => refetchTxList()}
+            isRetrying={txListFetching}
+            compact
+          />
+        )}
+        {!kycLoading && domainStatuses.kyc !== 'OPERATIONAL' && kycRes?.error && (
+          <WidgetFailureNotice
+            widgetName="KYC Document Vault"
+            status={domainStatuses.kyc}
+            error={kycRes.error}
+            onRetry={() => refetchKyc()}
+            isRetrying={kycFetching}
+            compact
+          />
+        )}
+      </div>
 
       {/* Database Derived Custody Overview */}
       <div className="flex items-center justify-between text-xs text-[#9CA3AF] px-1">

@@ -1,0 +1,88 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Length 2766 >>
+stream
+BT /F1 10 Tf 13 TL 50 750 Td
+(Fraud Case Handling Procedure) Tj T*
+() Tj T*
+(Apex Global Bank - Fraud Risk Management) Tj T*
+(Document ID: PRC-FRD-003 | Version 3.0 | Owner: Head of Fraud Operations) Tj T*
+(Illustrative policy for the Finova demo workspace. Not legal or regulatory advice.) Tj T*
+() Tj T*
+(1. Purpose) Tj T*
+() Tj T*
+(This procedure explains how fraud alerts raised by the surveillance engine or reported by) Tj T*
+(customers are triaged, investigated and resolved.) Tj T*
+() Tj T*
+(2. Case Statuses) Tj T*
+() Tj T*
+(- Flagged: raised by a surveillance rule; awaiting triage.) Tj T*
+(- In Review: assigned to an investigator.) Tj T*
+(- Frozen Escrow: funds held because the risk score is 80 or above, or an investigator ordered a) Tj T*
+(hold.) Tj T*
+(- Cleared: investigated and confirmed legitimate; any hold is released.) Tj T*
+(- Confirmed Fraud: fraud established; recovery and reporting begin.) Tj T*
+() Tj T*
+(3. Risk Tiers) Tj T*
+() Tj T*
+(- Critical \(risk score 80 to 100\): auto-freeze debits, triage within 1 hour.) Tj T*
+(- High \(risk score 50 to 79\): triage within 4 hours.) Tj T*
+(- Nominal \(below 50\): triage within 24 hours; may be batch-reviewed.) Tj T*
+() Tj T*
+(4. Investigation Steps) Tj T*
+() Tj T*
+(1. Review the triggering rule, transaction pattern, device and location data.) Tj T*
+(2. Contact the customer through the registered phone number only, never through contact details) Tj T*
+(in the suspicious transaction.) Tj T*
+(3. Decide Cleared or Confirmed Fraud and record the rationale.) Tj T*
+(4. For Confirmed Fraud: block the card or channel, raise a recall request with the beneficiary) Tj T*
+(bank, and file a police complaint where the loss is INR 1,00,000 or more.) Tj T*
+() Tj T*
+(5. Customer-Reported Fraud) Tj T*
+() Tj T*
+(- A customer reporting an unauthorised transaction within 3 working days bears zero liability) Tj T*
+(once the claim is validated.) Tj T*
+(- Reports made between 4 and 7 working days: customer liability is capped at INR 25,000.) Tj T*
+(- The bank credits the disputed amount \(shadow credit\) within 10 working days of the report) Tj T*
+(while the investigation continues.) Tj T*
+(- Final resolution must be completed within 90 days.) Tj T*
+() Tj T*
+(6. Escalation to AML) Tj T*
+() Tj T*
+(Any fraud case that also shows money-laundering indicators \(structuring, mule accounts, rapid) Tj T*
+(pass-through\) is referred to AML Investigations under POL-AML-002.) Tj T*
+() Tj T*
+(7. Roles and Responsibilities) Tj T*
+() Tj T*
+(- Finance Analyst: triage and investigation.) Tj T*
+(- Support Executive: records customer reports and gives status updates without disclosing) Tj T*
+(investigation details.) Tj T*
+(- Admin: monitors queue SLAs and approves freezes longer than 7 days.) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000212 00000 n 
+0000003030 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+3156
+%%EOF
