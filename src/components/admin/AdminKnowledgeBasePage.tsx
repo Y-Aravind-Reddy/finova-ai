@@ -31,7 +31,6 @@ import {
   reindexKnowledgeDocument,
   updateKnowledgeDocument,
   uploadKnowledgeDocument,
-  KB_ACCEPTED_EXTENSIONS,
 } from '../../services/ragService';
 
 interface AdminKnowledgeBasePageProps {
@@ -79,7 +78,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
   const [docsError, setDocsError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null);
 
-  // Knowledge Base health, storage diagnostics & per-role coverage
+  // Railway RAG health, storage mount diagnostics & index status
   const [ragHealth, setRagHealth] = useState<RagHealthResponse | null>(null);
   const [ragHealthError, setRagHealthError] = useState<string | null>(null);
   const [kbStatus, setKbStatus] = useState<KnowledgeBaseStatusResponse | null>(null);
@@ -213,9 +212,8 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
     const errors: string[] = [];
 
     for (const file of incoming) {
-      const ext = (file.name.split('.').pop() || '').toLowerCase();
-      if (!(KB_ACCEPTED_EXTENSIONS as readonly string[]).includes(ext)) {
-        errors.push(`"${file.name}" rejected: supported formats are ${KB_ACCEPTED_EXTENSIONS.map((e) => '.' + e).join(', ')}.`);
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        errors.push(`"${file.name}" rejected: only .pdf files are supported.`);
         continue;
       }
       if (file.size === 0) {
@@ -242,7 +240,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
       setQueuedFiles((prev) => {
         const next = [...prev, ...additions];
         if (next.length === 1 && !titleInput.trim()) {
-          setTitleInput(next[0].file.name.replace(/\.[^.]+$/, ''));
+          setTitleInput(next[0].file.name.replace(/\.pdf$/i, ''));
         }
         return next;
       });
@@ -264,7 +262,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
     setNotice(null);
 
     if (queuedFiles.length === 0) {
-      setNotice({ type: 'error', text: 'Select or drop at least one document first.' });
+      setNotice({ type: 'error', text: 'Select or drop at least one PDF document first.' });
       return;
     }
     if (allowedRoles.length === 0) {
@@ -287,7 +285,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
       const resolvedTitle =
         queuedFiles.length === 1 && titleInput.trim().length >= 3
           ? titleInput.trim()
-          : item.file.name.replace(/\.[^.]+$/, '');
+          : item.file.name.replace(/\.pdf$/i, '');
 
       try {
         const result = await uploadKnowledgeDocument(
@@ -337,7 +335,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
     if (failCount === 0 && warnCount === 0) {
       setNotice({
         type: 'success',
-        text: `Uploaded and indexed ${successCount} document${successCount === 1 ? '' : 's'} for roles: ${allowedRoles.join(', ')}.`,
+        text: `Uploaded and indexed ${successCount} PDF document${successCount === 1 ? '' : 's'} for roles: ${allowedRoles.join(', ')}.`,
       });
       setTitleInput('');
       setDescriptionInput('');
@@ -442,17 +440,17 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
             <span aria-hidden="true">·</span>
             <span>
               {ragHealth
-                ? `Railway RAG v${ragHealth.version} (${ragHealth.indexes_built}/${ragHealth.indexes_total} role indexes built)`
+                ? `Railway RAG v${ragHealth.version} (${ragHealth.indexes_built}/${ragHealth.indexes_total} indexes built)`
                 : ragHealthError
-                ? `Knowledge Base Notice: ${ragHealthError}`
-                : 'Checking Knowledge Base'}
+                ? `RAG Service Notice: ${ragHealthError}`
+                : 'Checking RAG API'}
             </span>
           </div>
           <h1 className="font-cinzel text-2xl font-bold text-[#FAF7F0]">
             Knowledge Base Management
           </h1>
           <p className="text-xs text-[#9CA3AF] max-w-2xl leading-relaxed">
-            Upload PDF banking policies to the Railway Policy RAG, choose which roles may see each document, and audit indexing readiness for the Finova AI Assistant.
+            Upload PDF banking policies, configure explicit role visibility, and audit indexing readiness for Finova AI Assistant retrieval.
           </p>
         </div>
 
@@ -470,9 +468,9 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
       {/* Summary Metrics Strip (Tabular Numerals) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-xl p-4 bg-[#181818] border border-[#3A3A3A]">
-          <span className="text-[11px] text-[#9CA3AF]">Tenant Document Corpus</span>
+          <span className="text-[11px] text-[#9CA3AF]">Tenant PDF Corpus</span>
           <div className="mt-1 text-2xl font-bold text-[#F5C542] tabular-nums">{documents.length}</div>
-          <span className="text-[10px] text-[#9CA3AF]">Indexed documents</span>
+          <span className="text-[10px] text-[#9CA3AF]">Indexed PDF documents</span>
         </div>
         <div className="rounded-xl p-4 bg-[#181818] border border-[#3A3A3A]">
           <span className="text-[11px] text-[#9CA3AF]">Extracted Pages</span>
@@ -485,12 +483,12 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
           <span className="text-[10px] text-[#9CA3AF]">768-dim page segments</span>
         </div>
         <div className="rounded-xl p-4 bg-[#181818] border border-[#3A3A3A]">
-          <span className="text-[11px] text-[#9CA3AF]">Role Coverage</span>
+          <span className="text-[11px] text-[#9CA3AF]">Railway Role Indexes</span>
           <div className="mt-1 text-2xl font-bold text-[#E6C78B] tabular-nums">
             {ragHealth ? `${ragHealth.indexes_built} / ${ragHealth.indexes_total}` : '—'}
           </div>
           <span className="text-[10px] text-[#9CA3AF]">
-            {ragIndexes.length > 0 ? `${ragIndexes.filter((i) => i.index_built).length} role indexes active on Railway` : 'No role indexes built yet'}
+            {ragIndexes.length > 0 ? `${ragIndexes.filter((i) => i.index_built).length} active on Railway` : 'Offline ingest sync status'}
           </span>
         </div>
       </div>
@@ -521,7 +519,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
 
       {/* Main Split: Upload Form + Document Inventory */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-        {/* Left: Document Upload & Role Authorization Panel (5 cols) */}
+        {/* Left: PDF Upload & Role Authorization Panel (5 cols) */}
         <form
           onSubmit={handleUploadSubmit}
           className="xl:col-span-5 rounded-xl bg-[#181818] border border-[#3A3A3A] p-5 space-y-4"
@@ -570,7 +568,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
               Drag &amp; drop one or more PDF files here
             </p>
             <p className="text-[11px] text-[#9CA3AF] mt-1">
-              PDFs are indexed page by page on Railway for page-number citations
+              Validates .pdf extension, %PDF- signature, and extracts per-page text
             </p>
             <button
               type="button"
@@ -650,7 +648,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
                 value={titleInput}
                 onChange={(e) => setTitleInput(e.target.value)}
                 disabled={queuedFiles.length > 1}
-                placeholder={queuedFiles.length > 1 ? 'Derived from filenames' : 'e.g. Basel III Credit Policy'}
+                placeholder={queuedFiles.length > 1 ? 'Derived from PDF filenames' : 'e.g. Basel III Credit Policy'}
                 className="w-full bg-[#121212] border border-[#3A3A3A] focus:border-[#D4A017] rounded-lg px-3 py-2 text-[#FAF7F0] outline-none disabled:opacity-50"
               />
             </div>
@@ -722,12 +720,12 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
             className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-[#D4A017] via-[#F5C542] to-[#D4A017] text-[#111111] font-bold hover:brightness-110 disabled:opacity-40 transition-all"
           >
             {isUploading
-              ? 'Uploading & Indexing...'
-              : `Upload ${queuedFiles.length > 0 ? queuedFiles.length : ''} Document${queuedFiles.length === 1 ? '' : 's'}`}
+              ? 'Uploading & Indexing PDF...'
+              : `Upload ${queuedFiles.length > 0 ? queuedFiles.length : ''} PDF Document${queuedFiles.length === 1 ? '' : 's'}`}
           </button>
         </form>
 
-        {/* Right: Searchable Document Table & Role Coverage Panel (7 cols) */}
+        {/* Right: Searchable Document Table & Railway Index Panel (7 cols) */}
         <div className="xl:col-span-7 space-y-6">
           <div className="rounded-xl bg-[#181818] border border-[#3A3A3A] p-5 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#2E2E2E]">
@@ -790,12 +788,12 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
                 <FileText size={28} className="mx-auto text-[#D4A017]/50" />
                 <p className="text-xs font-bold text-[#FAF7F0]">
                   {documents.length === 0
-                    ? 'No documents uploaded yet'
+                    ? 'No PDF documents uploaded yet'
                     : 'No documents match your active filter criteria'}
                 </p>
                 <p className="text-[11px]">
                   {documents.length === 0
-                    ? 'Upload a banking policy using the panel on the left to populate this workspace Knowledge Base.'
+                    ? 'Upload a banking policy PDF using the panel on the left to populate this workspace Knowledge Base.'
                     : 'Try clearing the search query or switching role/status filters.'}
                 </p>
               </div>
@@ -893,22 +891,22 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
             )}
           </div>
 
-          {/* Knowledge Base Storage & Role Coverage */}
+          {/* Live Railway Persistent Storage & Role Index Telemetry */}
           {(kbStatus || ragIndexes.length > 0) && (
             <div className="rounded-xl bg-[#181818] border border-[#3A3A3A] p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#2E2E2E]">
                 <h3 className="font-cinzel text-sm font-bold text-[#E6C78B]">
-                  Railway Storage &amp; Role Index Status
+                  Railway Storage &amp; Role Index Telemetry
                 </h3>
                 <span className="text-[10px] text-[#9CA3AF]">
-                  Railway Policy RAG · role-scoped FAISS indexes
+                  GET /health · GET /admin/knowledge-base/status
                 </span>
               </div>
 
               {kbStatus && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
                   <div className="p-3 rounded-lg bg-[#121212] border border-[#2E2E2E] space-y-1">
-                    <span className="text-[10px] text-[#9CA3AF]">Persistent Volume</span>
+                    <span className="text-[10px] text-[#9CA3AF]">Persistent Volume Mount</span>
                     <div
                       className={`font-bold ${
                         kbStatus.storage.storage_root_is_mount
@@ -930,7 +928,7 @@ const AdminKnowledgeBasePage: React.FC<AdminKnowledgeBasePageProps> = ({ current
                     </div>
                   </div>
                   <div className="p-3 rounded-lg bg-[#121212] border border-[#2E2E2E] space-y-1">
-                    <span className="text-[10px] text-[#9CA3AF]">Vector Store</span>
+                    <span className="text-[10px] text-[#9CA3AF]">FAISS Vectorstore Path</span>
                     <div className="font-mono text-[#FAF7F0] truncate" title={kbStatus.storage.vectorstore_path}>
                       {kbStatus.storage.vectorstore_path}
                     </div>

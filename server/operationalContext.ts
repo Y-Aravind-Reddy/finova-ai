@@ -105,15 +105,8 @@ export async function getOperationalAiContext(params: {
     nodeStatuses: [],
   };
 
-  // 1. Transactions aggregate (all roles except SUPPORT_EXECUTIVE, whose assistant
-  //    scope is support only; strictly self-scoped for CUSTOMER)
-  if (role === 'SUPPORT_EXECUTIVE') {
-    ctx.nodeStatuses.push({
-      node: 'transactions',
-      status: 'RESTRICTED',
-      reason: 'Transaction analytics are outside the SUPPORT_EXECUTIVE assistant scope.',
-    });
-  } else try {
+  // 1. Transactions aggregate (Allowed for all 5 roles, strictly self-scoped for CUSTOMER)
+  try {
     const { data: txData, error: txErr } = await supabaseUser.rpc(
       'get_transaction_aggregates',
       {
@@ -332,13 +325,6 @@ export async function getOperationalAiContext(params: {
     } catch {
       ctx.nodeStatuses.push({ node: 'kyc_records', status: 'UNAVAILABLE' });
     }
-  } else if (role === 'FINANCE_ANALYST') {
-    // FINANCE_ANALYST assistant scope is fraud / AML / transaction risk only
-    ctx.nodeStatuses.push({
-      node: 'kyc_records',
-      status: 'RESTRICTED',
-      reason: 'KYC queue metrics are outside the FINANCE_ANALYST assistant scope.',
-    });
   } else {
     try {
       const { data: kycData, error: kycErr } = await supabaseUser.rpc(

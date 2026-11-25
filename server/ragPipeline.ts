@@ -14,62 +14,7 @@ export const ALLOWED_SOURCE_TYPES = [
 ] as const;
 
 export const MAX_KB_DOCUMENT_BYTES = 512 * 1024; // 512 KB explicit cap (never truncate silently)
-export const MAX_KB_PDF_BYTES = 10 * 1024 * 1024; // 10 MB raw PDF upload cap
 export const MAX_CHUNKS_PER_DOCUMENT = 60;
-
-export const KB_ROLES = [
-  'SUPER_ADMIN',
-  'ADMIN',
-  'FINANCE_ANALYST',
-  'SUPPORT_EXECUTIVE',
-  'CUSTOMER',
-] as const;
-
-/** Default visibility when the uploader does not choose roles: internal staff only. */
-export const DEFAULT_KB_ALLOWED_ROLES = ['SUPER_ADMIN', 'ADMIN', 'FINANCE_ANALYST', 'SUPPORT_EXECUTIVE'];
-
-/** Validate & normalise a role list from JSON array, comma string or array input. */
-export function parseAllowedRoles(raw: unknown): { ok: true; roles: string[] } | { ok: false; error: string } {
-  if (raw === undefined || raw === null || raw === '') return { ok: true, roles: [...DEFAULT_KB_ALLOWED_ROLES] };
-  let items: unknown[];
-  if (Array.isArray(raw)) {
-    items = raw;
-  } else {
-    const s = String(raw).trim();
-    try {
-      items = s.startsWith('[') ? JSON.parse(s) : s.split(',');
-    } catch {
-      return { ok: false, error: 'allowedRoles must be a JSON array or comma-separated list.' };
-    }
-  }
-  const roles: string[] = [];
-  for (const item of items) {
-    const role = String(item || '').trim().toUpperCase();
-    if (!role) continue;
-    if (!(KB_ROLES as readonly string[]).includes(role)) {
-      return { ok: false, error: `Invalid role "${item}". Permitted roles: ${KB_ROLES.join(', ')}.` };
-    }
-    if (!roles.includes(role)) roles.push(role);
-  }
-  if (roles.length === 0) return { ok: false, error: 'Select at least one authorized role.' };
-  return { ok: true, roles };
-}
-
-/** Extract text per page from a PDF buffer (page N = array index N-1). */
-export async function extractPdfPages(buffer: Uint8Array): Promise<string[]> {
-  const head = Buffer.from(buffer.slice(0, 5)).toString('latin1');
-  if (head !== '%PDF-') {
-    throw new Error('File is not a valid PDF (missing %PDF- signature).');
-  }
-  const { extractText, getDocumentProxy } = await import('unpdf');
-  const pdf = await getDocumentProxy(buffer);
-  const { text } = await extractText(pdf, { mergePages: false });
-  const pages = (Array.isArray(text) ? text : [text]).map((t) => String(t || '').replace(/\u0000/g, '').trim());
-  if (pages.every((p) => p.length === 0)) {
-    throw new Error('PDF contains no extractable text (scanned image PDFs are not supported).');
-  }
-  return pages;
-}
 
 export function computeContentHash(text: string): string {
   return createHash('sha256').update(text.trim(), 'utf8').digest('hex');
@@ -203,11 +148,6 @@ export interface IngestDocumentInput {
   fileType?: string;
   content: string;
   forceReingest?: boolean;
-  /** Pre-extracted PDF page texts; when set, `content` is ignored and chunks carry page numbers. */
-  pages?: string[];
-  allowedRoles?: string[];
-  filename?: string;
-  rawBytes?: number;
 }
 
 export interface IngestDocumentResult {
@@ -235,10 +175,6 @@ export async function ingestKnowledgeDocument(
     fileType = 'text/plain',
     content,
     forceReingest = false,
-    pages: pdfPages,
-    allowedRoles = DEFAULT_KB_ALLOWED_ROLES,
-    filename,
-    rawBytes,
   } = input;
 
   if (callerRole !== 'SUPER_ADMIN' && callerRole !== 'ADMIN') {
@@ -288,30 +224,13 @@ export async function ingestKnowledgeDocument(
     };
   }
 
-  let extracted: { text: string; fileType: string; bytes: number };
-  let pageTexts: string[];
-  if (pdfPages && pdfPages.length > 0) {
-    const fullText = pdfPages.join('\n\n');
-    if (Buffer.byteLength(fullText, 'utf8') > MAX_KB_DOCUMENT_BYTES) {
-      return {
-        statusCode: 413,
-        success: false,
-        error: `PDF text exceeds ${MAX_KB_DOCUMENT_BYTES} bytes. Split the PDF into smaller documents.`,
-      };
-    }
-    extracted = { text: fullText, fileType: 'application/pdf', bytes: rawBytes ?? Buffer.byteLength(fullText, 'utf8') };
-    pageTexts = pdfPages;
-  } else {
-    const textResult = extractTextSafely({ rawContent: content, fileType });
-    if (!textResult.ok) {
-      return {
-        statusCode: textResult.status,
-        success: false,
-        error: textResult.error,
-      };
-    }
-    extracted = textResult;
-    pageTexts = [textResult.text];
+  const extracted = extractTextSafely({ rawContent: content, fileType });
+  if (!extracted.ok) {
+    return {
+      statusCode: extracted.status,
+      success: false,
+      error: extracted.error,
+    };
   }
 
   const contentHash = computeContentHash(extracted.text);
@@ -344,22 +263,9 @@ export async function ingestKnowledgeDocument(
     };
   }
 
-  // Chunk page-by-page so every chunk knows its source page (text files = page 1)
   let chunks: string[];
-  const chunkPages: number[] = [];
   try {
-    chunks = [];
-    pageTexts.forEach((pageText, pageIdx) => {
-      for (const piece of chunkText(pageText, { chunkSize: 1000, overlap: 200 })) {
-        chunks.push(piece);
-        chunkPages.push(pageIdx + 1);
-      }
-    });
-    if (chunks.length > MAX_CHUNKS_PER_DOCUMENT) {
-      throw new Error(
-        `Chunk limit exceeded (${MAX_CHUNKS_PER_DOCUMENT} chunks max per document). Upload smaller segmented policies.`
-      );
-    }
+    chunks = chunkText(extracted.text, { chunkSize: 1000, overlap: 200 });
   } catch (chunkErr) {
     return {
       statusCode: 413,
@@ -386,11 +292,8 @@ export async function ingestKnowledgeDocument(
     metadata: {
       file_type: extracted.fileType,
       bytes: extracted.bytes,
-      filename: filename || null,
-      page_count: pageTexts.length,
-      chunk_strategy: 'per-page-recursive-1000-overlap-200',
+      chunk_strategy: 'recursive-1000-overlap-200',
     },
-    allowed_roles: allowedRoles,
     content_hash: contentHash,
     file_type: extracted.fileType,
     file_size_bytes: extracted.bytes,
@@ -449,8 +352,6 @@ export async function ingestKnowledgeDocument(
         metadata: {
           title: cleanTitle,
           source_type: normalizedSourceType,
-          filename: filename || null,
-          page: chunkPages[idx] ?? 1,
           chunk_index: idx,
           total_chunks: chunks.length,
         },
@@ -505,70 +406,5 @@ export async function ingestKnowledgeDocument(
       document: { ...docRow, status: 'FAILED', error_message: errMsg },
       error: errMsg,
     };
-  }
-}
-
-/**
- * Re-generate embeddings for every stored chunk of a document (e.g. after an
- * embedding-model change or a FAILED ingestion). Chunk text is kept as-is.
- */
-export async function reindexKnowledgeDocument(params: {
-  supabaseUser: any;
-  genAI: GoogleGenAI;
-  documentId: string;
-}): Promise<IngestDocumentResult> {
-  const { supabaseUser, genAI, documentId } = params;
-
-  const { data: chunkRows, error: chunkErr } = await supabaseUser
-    .from('ai_document_chunks')
-    .select('id, content')
-    .eq('document_id', documentId)
-    .order('chunk_index', { ascending: true });
-
-  if (chunkErr) {
-    return { statusCode: 500, success: false, error: `Failed loading chunks: ${chunkErr.message}` };
-  }
-  if (!chunkRows || chunkRows.length === 0) {
-    return {
-      statusCode: 409,
-      success: false,
-      error: 'Document has no stored chunks to re-index. Delete it and upload the file again.',
-    };
-  }
-
-  try {
-    for (const row of chunkRows) {
-      const vec = await generateEmbedding768(genAI, String(row.content || ''));
-      if (vec.length !== EMBEDDING_DIMENSION) {
-        throw new Error(`Invalid vector length ${vec.length} for chunk ${row.id}`);
-      }
-      const { error: updErr } = await supabaseUser
-        .from('ai_document_chunks')
-        .update({ embedding: vec })
-        .eq('id', row.id);
-      if (updErr) throw new Error(`Failed updating chunk ${row.id}: ${updErr.message}`);
-    }
-
-    const { data: doc, error: docErr } = await supabaseUser
-      .from('ai_knowledge_documents')
-      .update({
-        status: 'ACTIVE',
-        chunk_count: chunkRows.length,
-        error_message: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', documentId)
-      .select('*')
-      .single();
-    if (docErr) throw new Error(`Failed marking document ACTIVE: ${docErr.message}`);
-
-    return { statusCode: 200, success: true, document: doc, chunkCount: chunkRows.length };
-  } catch (err) {
-    const errMsg = (err as Error)?.message || 'Re-index failure';
-    await supabaseUser
-      .from('ai_knowledge_documents')
-      .update({ status: 'FAILED', error_message: errMsg.slice(0, 500), updated_at: new Date().toISOString() })
-      .eq('id', documentId);
-    return { statusCode: 502, success: false, error: errMsg };
   }
 }

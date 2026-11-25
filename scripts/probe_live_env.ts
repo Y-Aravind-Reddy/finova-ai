@@ -80,9 +80,7 @@ async function main() {
   }
 
   console.log('\n--- 3. LIVE EXPRESS API GATEWAY PROBE (EPHEMERAL PORT 3199) ---');
-  // Launch tsx's CLI through the current Node binary (no shell) so the
-  // process can be spawned and killed reliably on Windows as well as POSIX.
-  const srv = spawn(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'server.ts'], {
+  const srv = spawn('npx', ['tsx', 'server.ts'], {
     env: { ...process.env, PORT: '3199', NODE_ENV: 'production' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -127,9 +125,7 @@ async function main() {
   }
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

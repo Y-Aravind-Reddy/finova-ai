@@ -3,19 +3,10 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 export const AUTHORIZED_SUPER_ADMIN_EMAIL = 'aravindvicky629@gmail.com';
 
 export const DEFAULT_PRIMARY_GEMINI_MODEL = 'gemini-4-hydrogen';
-// gemini-3.5-flash-lite first: the most consistently available model under load
 export const DEFAULT_FALLBACK_GEMINI_MODELS = [
-  'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
+  'gemini-3.5-flash-lite',
 ] as const;
-/** Extra models tried after the configured ones when Gemini reports high demand. */
-export const EXTRA_OVERLOAD_FALLBACK_MODELS = ['gemini-3.8-flash'] as const;
-/** Passes over the whole model list before giving up on transient overload. */
-const OVERLOAD_RETRY_ROUNDS = 2;
-/** Pause between passes so a short Gemini demand spike can clear. */
-const OVERLOAD_ROUND_PAUSE_MS = 2000;
-/** Stop starting new attempts after this long, so the chat never hangs. */
-const GENERATION_TIME_BUDGET_MS = 45000;
 export const EMBEDDING_MODEL_ID = 'gemini-embedding-2';
 export const EMBEDDING_DIMENSION = 768;
 
@@ -55,11 +46,11 @@ const LOGICAL_MODEL_TO_RUNTIME: Record<
 > = {
   'Finova-Sentinel-Ultra-4.2': {
     primary: 'gemini-4-hydrogen',
-    fallbacks: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
+    fallbacks: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'],
   },
   'Finova-Forensic-Vision-6.1': {
     primary: 'gemini-4-hydrogen',
-    fallbacks: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
+    fallbacks: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'],
   },
   'Finova-Yield-Optimizer-3.9': {
     primary: 'gemini-3.1-flash-lite',
@@ -67,7 +58,7 @@ const LOGICAL_MODEL_TO_RUNTIME: Record<
   },
   'gemini-4-hydrogen': {
     primary: 'gemini-4-hydrogen',
-    fallbacks: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
+    fallbacks: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'],
   },
   'gemini-3.1-flash-lite': {
     primary: 'gemini-3.1-flash-lite',
@@ -244,28 +235,17 @@ export async function generateWithResilientFailover(params: {
 }> {
   const { genAI, config, contents, systemInstruction, retryOptions } = params;
   const candidateModels = Array.from(
-    new Set([config.primaryModel, ...config.fallbackModels, ...EXTRA_OVERLOAD_FALLBACK_MODELS])
+    new Set([config.primaryModel, ...config.fallbackModels])
   );
   const sleepFn = retryOptions?.sleepFn || defaultSleep;
   const baseDelay = retryOptions?.baseDelayMs ?? 300;
-  const startedAt = Date.now();
 
   let lastGenErr: unknown = null;
   let totalAttempts = 0;
 
-  // Two passes over the model list: Gemini "high demand" (503) / deadline (504)
-  // spikes usually clear within seconds, so after every model fails once we
-  // pause briefly and try the list again, within an overall time budget.
-  for (let round = 1; round <= OVERLOAD_RETRY_ROUNDS; round++) {
-  if (round > 1) {
-    if (Date.now() - startedAt > GENERATION_TIME_BUDGET_MS) break;
-    console.warn(`[Gemini Gateway] All models busy; retrying model list (round ${round}/${OVERLOAD_RETRY_ROUNDS}).`);
-    await sleepFn(OVERLOAD_ROUND_PAUSE_MS);
-  }
   for (let i = 0; i < candidateModels.length; i++) {
-    if (Date.now() - startedAt > GENERATION_TIME_BUDGET_MS) break;
     const modelId = candidateModels[i];
-    const maxAttempts = i === 0 && round === 1 ? 2 : 1;
+    const maxAttempts = i === 0 ? 2 : 1;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       totalAttempts++;
@@ -324,7 +304,6 @@ export async function generateWithResilientFailover(params: {
         }
       }
     }
-  }
   }
 
   throw lastGenErr instanceof Error

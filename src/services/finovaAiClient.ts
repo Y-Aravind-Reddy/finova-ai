@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase';
+
 export interface FinovaAiChatRequest {
   message: string;
   thread_id: string | null;
@@ -8,13 +10,7 @@ export interface FinovaAiChatResponse {
   thread_id?: string;
   model?: string;
   configuredProfile?: string;
-  citations?: Array<{ chunk_id: string; metadata?: unknown; similarity?: number; title?: string; page?: number }>;
-  /** Cited knowledge-base documents grouped with their page numbers */
-  sources?: Array<{ document: string; pages: number[] }>;
-  /** True when at least one role-authorized policy excerpt was retrieved */
-  found?: boolean;
-  /** Backend-verified caller role */
-  role?: string;
+  citations?: Array<{ chunk_id: string; metadata?: unknown; similarity?: number }>;
   latencyMs?: number;
   usage?: {
     promptTokenCount?: number;
@@ -45,6 +41,11 @@ export interface IngestKnowledgePayload {
   targetTenantId?: string;
   forceReingest?: boolean;
 }
+
+// Track within the browser session if the remote Supabase Edge Function failed
+// with an infrastructure/deployment/model error so subsequent requests avoid
+// waiting repeatedly on a stale or overloaded remote deployment.
+let preferLocalRelayInSession = false;
 
 async function callLocalAiRelay(
   accessToken: string,
@@ -77,15 +78,51 @@ async function callLocalAiRelay(
   return body as unknown as FinovaAiChatResponse;
 }
 
-/**
- * Unified Finova AI Assistant: always served by the Finova Express gateway
- * (/api/ai/chat), which combines role-scoped Knowledge Base retrieval with live
- * operational telemetry. The legacy Supabase Edge Function is no longer used.
- */
 export async function invokeFinovaAiChat(
   accessToken: string,
   payload: FinovaAiChatRequest
 ): Promise<FinovaAiChatResponse> {
+  if (preferLocalRelayInSession) {
+    return callLocalAiRelay(accessToken, payload);
+  }
+
+  const { data, error } = await supabase.functions.invoke('finova-ai-chat', {
+    body: payload,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!error && data && typeof data.answer === 'string' && data.answer.trim().length > 0) {
+    return data as FinovaAiChatResponse;
+  }
+
+  let statusCode = 0;
+  let details = error?.message || 'Edge Function invocation failed.';
+
+  try {
+    const errorContext = (error as { context?: Response } | null)?.context;
+    if (errorContext) {
+      statusCode = Number(errorContext.status || 0);
+      if (typeof errorContext.json === 'function') {
+        const body = (await errorContext.json()) as Record<string, unknown>;
+        details =
+          (typeof body.details === 'string' && body.details) ||
+          (typeof body.error === 'string' && body.error) ||
+          details;
+      }
+    }
+  } catch {
+    // Keep extracted message
+  }
+
+  // Never bypass explicit user/auth/security/rate-limit rejections
+  if (statusCode === 400 || statusCode === 401 || statusCode === 403 || statusCode === 429) {
+    throw new Error(details);
+  }
+
+  // Edge Function is missing, outdated, or failed upstream (5xx / network / AI generation failure)
+  preferLocalRelayInSession = true;
   return callLocalAiRelay(accessToken, payload);
 }
 

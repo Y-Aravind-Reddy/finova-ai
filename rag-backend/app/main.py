@@ -111,32 +111,17 @@ def _synthesize_grounded_answer(question: str, role: str, chunks: list) -> str:
         + f"\n</policy_context>\n\nQuestion: {question}"
     )
 
-    # Try the primary model, then each fallback, so one overloaded (503) or
-    # retired (404) Gemini model does not take the whole RAG answer path down.
-    models = list(dict.fromkeys([settings.chat_model, *settings.chat_fallback_models]))
-    response = None
-    last_exc: Exception | None = None
-    for model_name in models:
-        try:
-            llm = ChatGoogleGenerativeAI(
-                model=model_name,
-                google_api_key=settings.gemini_api_key,
-                temperature=0.1,
-                max_retries=1,
-            )
-            response = llm.invoke(
-                [
-                    ("system", system_prompt),
-                    ("human", user_prompt),
-                ]
-            )
-            break
-        except Exception as exc:  # noqa: BLE001 - fall through to next model
-            last_exc = exc
-            print(f"[RAG] chat model {model_name} failed: {str(exc)[:200]}", flush=True)
-    if response is None:
-        raise last_exc or RuntimeError("No Gemini chat model is available.")
-
+    llm = ChatGoogleGenerativeAI(
+        model=settings.chat_model,
+        google_api_key=settings.gemini_api_key,
+        temperature=0.1,
+    )
+    response = llm.invoke(
+        [
+            ("system", system_prompt),
+            ("human", user_prompt),
+        ]
+    )
     content = getattr(response, "content", "")
     if isinstance(content, list):
         return "".join(str(part.get("text", "") if isinstance(part, dict) else part) for part in content).strip()

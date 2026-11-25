@@ -44,7 +44,6 @@ class Settings:
     gemini_api_key: str
     embedding_model: str
     chat_model: str
-    chat_fallback_models: List[str]
     max_pdf_bytes: int
     cors_origins: List[str]
     cors_origin_regex: str
@@ -80,16 +79,7 @@ def load_settings() -> Settings:
             or os.getenv("GOOGLE_API_KEY", "").strip()
         ),
         embedding_model=os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001").strip(),
-        # gemini-2.5-flash was retired by Google (404); default to a current model.
-        chat_model=os.getenv("CHAT_MODEL", "gemini-3.5-flash-lite").strip(),
-        # Tried in order when the primary model is overloaded (503) or retired (404).
-        chat_fallback_models=[
-            m.strip()
-            for m in os.getenv(
-                "CHAT_FALLBACK_MODELS", "gemini-3.1-flash-lite,gemini-3.8-flash"
-            ).split(",")
-            if m.strip()
-        ],
+        chat_model=os.getenv("CHAT_MODEL", "gemini-2.5-flash").strip(),
         max_pdf_bytes=int(os.getenv("MAX_PDF_BYTES", str(10 * 1024 * 1024))),
         cors_origins=origins,
         cors_origin_regex=os.getenv(
